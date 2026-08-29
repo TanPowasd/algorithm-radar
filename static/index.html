@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>算法雷达站 · AI 洛谷解题能力对比</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">📡</span>
+    <div>
+      <h1>算法雷达站</h1>
+      <p class="sub">AI × 洛谷 · 解题能力对比</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-add" class="btn primary">＋ 提交记录</button>
+    <button id="btn-export" class="btn">导出 JSON</button>
+    <button id="btn-import" class="btn">导入 JSON</button>
+    <input type="file" id="import-file" accept=".json" hidden>
+  </div>
+</header>
+
+<section id="stats" class="stats">
+  <div class="stat"><b id="stat-records">0</b><span>测试数</span></div>
+  <div class="stat"><b id="stat-series">0</b><span>AI 组合</span></div>
+  <div class="stat"><b id="stat-problems">0</b><span>覆盖题目</span></div>
+  <div class="stat"><b id="stat-firstrate">–</b><span>首轮 AC 率</span></div>
+  <div class="stat"><b id="stat-finalrate">–</b><span>最终 AC 率</span></div>
+</section>
+
+<main>
+  <section class="card" id="radar-card">
+    <div class="card-head">
+      <h2>能力雷达</h2>
+      <div class="card-tools">
+        <div class="seg" id="radar-metric">
+          <button data-metric="first" class="active">首轮 AC</button>
+          <button data-metric="final">最终 AC</button>
+          <button data-metric="avgscore">平均分</button>
+        </div>
+        <div class="seg" id="radar-dim">
+          <button data-dim="category" class="active">按算法类别</button>
+          <button data-dim="difficulty">按难度等级</button>
+        </div>
+      </div>
+    </div>
+    <div class="radar-wrap">
+      <canvas id="radar"></canvas>
+    </div>
+    <div class="series-legend" id="series-legend"></div>
+    <p class="hint" id="radar-hint">轴值 = 该类别下的 AC 率（仅统计该 AI 有作答的类别；未作答显示为空缺）。</p>
+  </section>
+
+  <section class="card" id="matrix-card">
+    <div class="card-head">
+      <h2>AI × 题目 覆盖矩阵</h2>
+      <div class="card-tools">
+        <div class="seg" id="matrix-mode">
+          <button data-mode="status">提交状态</button>
+          <button data-mode="score" class="active">首轮均分</button>
+          <button data-mode="finalscore">最终轮均分</button>
+        </div>
+        <div class="matrix-legend" id="matrix-legend-status" hidden>
+          <span class="cell-chip ac">AC</span>
+          <span class="cell-chip fail">失败</span>
+          <span class="cell-chip giveup">未解出</span>
+          <span class="cell-chip none">未做</span>
+        </div>
+        <div class="matrix-legend" id="matrix-legend-score">
+          <span class="cell-chip score-hi">≥80</span>
+          <span class="cell-chip score-mid">60–79</span>
+          <span class="cell-chip score-lo">&lt;60</span>
+          <span class="cell-chip score-na">未计分</span>
+          <span class="cell-chip none">未做</span>
+        </div>
+      </div>
+    </div>
+    <div class="table-scroll" id="matrix-wrap"></div>
+    <p class="hint" id="matrix-hint"></p>
+  </section>
+
+  <section class="card" id="records-card">
+    <div class="card-head">
+      <h2>明细记录</h2>
+      <button id="btn-clear-filter" class="btn small">清空筛选</button>
+    </div>
+    <div class="filters">
+      <select id="f-series"><option value="">全部 AI 组合</option></select>
+      <select id="f-difficulty"><option value="">全部难度</option></select>
+      <select id="f-category"><option value="">全部算法类别</option></select>
+      <select id="f-result">
+        <option value="">全部状态</option>
+        <option value="first">首轮通过</option>
+        <option value="final">最终通过</option>
+        <option value="fail">最终未通过</option>
+      </select>
+      <input id="f-keyword" type="search" placeholder="搜索题号 / 题目 / 备注…">
+    </div>
+    <div class="table-scroll" id="records-wrap"></div>
+  </section>
+</main>
+
+<footer class="foot">
+  数据保存在本浏览器 localStorage · 请定期「导出 JSON」备份 ·
+  题目信息来自洛谷公开页面 · <span id="tag-version"></span>
+</footer>
+
+<!-- 提交 / 编辑记录 弹窗 -->
+<div class="modal-overlay" id="modal" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modal-title">提交记录</h2>
+      <button class="icon-btn" id="modal-close" title="关闭">✕</button>
+    </div>
+    <form id="record-form">
+      <div class="grid2">
+        <label>AI 名称 *<input id="f-model" list="dl-models" required placeholder="如 GLM-4.7 / GPT-5 / Claude…">
+          <datalist id="dl-models"></datalist>
+        </label>
+        <label>版本 / 策略<input id="f-variant" list="dl-variants" placeholder="如 深度思考 / 直出 / 换提示词…（可留空）">
+          <datalist id="dl-variants"></datalist>
+        </label>
+      </div>
+
+      <div class="grid2">
+        <label>洛谷题号 *
+          <div class="pid-row">
+            <input id="f-pid" required placeholder="如 P1001 / B2001 / CF10A" style="text-transform:uppercase">
+            <button type="button" id="btn-fetch" class="btn small">获取题目信息</button>
+          </div>
+          <span id="fetch-status" class="fetch-status"></span>
+        </label>
+        <label>题目名称<input id="f-title" placeholder="自动抓取或手填"></label>
+      </div>
+
+      <div class="grid2">
+        <label>难度 *
+          <select id="f-difficulty-input" required></select>
+          <span class="muted" style="font-size:11px">请手动选择（洛谷自动难度不可靠，以题目实际评级为准）</span>
+        </label>
+        <label>日期<input id="f-date" type="date" required></label>
+      </div>
+
+      <label>算法类别（自动归类，可增删）</label>
+      <div class="chips" id="cat-chips"></div>
+      <div class="cat-add">
+        <input id="f-cat-input" list="dl-cats" placeholder="添加类别，回车确认">
+        <datalist id="dl-cats"></datalist>
+      </div>
+
+      <label>提交记录（按时间顺序，每次洛谷提交一条）</label>
+      <div id="sub-rows"></div>
+      <div class="sub-actions">
+        <button type="button" id="btn-add-sub" class="btn small">＋ 添加一次提交</button>
+        <span id="sub-summary" class="muted"></span>
+      </div>
+
+      <div class="grid2">
+        <label>总用时（分钟，整个测试，选填）<input id="f-minutes" type="number" min="0" step="1"></label>
+        <label>备注（整个测试）<textarea id="f-note" rows="2" placeholder="提示词要点、测试方式…（选填）"></textarea></label>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn" id="btn-cancel">取消</button>
+        <button type="submit" class="btn primary" id="btn-save">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 导入方式选择弹窗 -->
+<div class="modal-overlay" id="import-modal" hidden>
+  <div class="modal small-modal">
+    <div class="modal-head"><h2>导入数据</h2><button class="icon-btn" id="import-close">✕</button></div>
+    <p id="import-desc" class="import-desc"></p>
+    <div class="modal-actions">
+      <button class="btn" id="import-cancel">取消</button>
+      <button class="btn" id="import-replace">替换现有数据</button>
+      <button class="btn primary" id="import-merge">合并导入</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/vendor/chart.umd.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
