@@ -126,7 +126,7 @@ function renderPending() {
   const pend = records.filter((r) => r.status === "pending")
     .filter((r) => !seriesFilter || seriesKey(r) === seriesFilter)
     .filter((r) => !kw ||
-      `${r.model} ${r.variant || ""} ${r.pid} ${r.title || ""} ${r.note || ""}`.toLowerCase().includes(kw))
+      `${r.model} ${r.variant || ""} ${r.agent || ""} ${r.tokenSource || ""} ${r.pid} ${r.title || ""} ${r.note || ""}`.toLowerCase().includes(kw))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.id - a.id));
 
   if (!pend.length) {
@@ -137,7 +137,8 @@ function renderPending() {
   const rows = pend.map((r) => `
     <tr>
       <td>${escapeHtml(r.date)}</td>
-      <td>${escapeHtml(seriesKey(r))}</td>
+      <td>${escapeHtml(seriesKey(r))}${r.variant ? ` <span class="muted">· ${escapeHtml(r.variant)}</span>` : ""}</td>
+      <td class="agent-cell">${escapeHtml(agentTokenText(r))}</td>
       <td><span class="think-tag">${escapeHtml(r.thinking || DEFAULT_THINKING)}</span></td>
       <td><a class="pid-link" href="https://www.luogu.com.cn/problem/${encodeURIComponent(r.pid)}" target="_blank" rel="noopener">${escapeHtml(r.pid)}</a></td>
       <td>${escapeHtml(r.title || "")}</td>
@@ -153,7 +154,7 @@ function renderPending() {
     </tr>`).join("");
 
   wrap.innerHTML = `<table class="review-table"><thead><tr>
-      <th>日期</th><th>AI 组合</th><th>思考</th><th>题号</th><th>题目</th><th>难度</th><th>提交轨迹</th><th>备注</th><th>操作</th>
+      <th>日期</th><th>AI 组合</th><th>Agent / Token</th><th>思考</th><th>题号</th><th>题目</th><th>难度</th><th>提交轨迹</th><th>备注</th><th>操作</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
 
   wrap.querySelectorAll("button[data-approve]").forEach((b) => {

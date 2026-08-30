@@ -64,6 +64,43 @@ function migrateRecord(r) {
 
 const passedOf = (r) => (radarMetric === "first" ? isFirstPassed(r) : isPassed(r));
 
+/* ================= 公告栏 ================= */
+
+/* 站点公告：改这里的文字即可（支持简单 HTML 如 <b>/<a>；内容固定在代码里，不含用户输入）。
+   显示规则：每天首次打开显示；「今天关闭」后当天不再出现；「本次关闭」仅当前标签页内不再出现（新标签页会再显示）。 */
+const ANNOUNCEMENT_HTML = `
+  <b>感谢数据提交 🙏</b>
+  提交时请填写 <b>Agent</b> 与 <b>Token 来源</b>（官方 API 或套餐请填写「官方」）；版本/策略请留空，谢谢。`;
+
+const LS_NOTICE_DAY = "radar.notice.dismissedDay";       // 「今天关闭」：记录关闭时的日期
+const SS_NOTICE_SESSION = "radar.notice.dismissedSession"; // 「本次关闭」：仅当前标签页有效
+
+function noticeDismissed() {
+  try {
+    if (localStorage.getItem(LS_NOTICE_DAY) === todayStr()) return true;
+  } catch { /* 隐私模式下忽略 */ }
+  try {
+    if (sessionStorage.getItem(SS_NOTICE_SESSION) === "1") return true;
+  } catch { /* 隐私模式下忽略 */ }
+  return false;
+}
+
+function maybeShowNotice() {
+  const el = $("#notice");
+  if (!el || !ANNOUNCEMENT_HTML.trim() || noticeDismissed()) return;
+  $("#notice-body").innerHTML = ANNOUNCEMENT_HTML;
+  el.hidden = false;
+}
+
+function dismissNotice(scope) {
+  try {
+    if (scope === "today") localStorage.setItem(LS_NOTICE_DAY, todayStr());
+    else sessionStorage.setItem(SS_NOTICE_SESSION, "1");
+  } catch { /* 存储不可用时仅隐藏当前页面 */ }
+  const el = $("#notice");
+  if (el) el.hidden = true;
+}
+
 /* ================= 会话 & 数据 ================= */
 
 async function loadSession() {
@@ -593,6 +630,7 @@ function renderTable(recs) {
   const cols = [
     { key: "date", label: "日期" },
     { key: "series", label: "AI 组合" },
+    { key: "agentToken", label: "Agent / Token" },
     { key: "thinking", label: "思考" },
     { key: "pid", label: "题号" },
     { key: "title", label: "题目" },
@@ -608,6 +646,7 @@ function renderTable(recs) {
     const k = sortState.key, dir = sortState.dir;
     let va, vb;
     if (k === "series") { va = seriesKey(a); vb = seriesKey(b); }
+    else if (k === "agentToken") { va = agentTokenText(a); vb = agentTokenText(b); }
     else if (k === "categories") { va = (a.categories || []).join(","); vb = (b.categories || []).join(","); }
     else if (k === "subs") { va = a.submissions.length; vb = b.submissions.length; }
     else { va = a[k]; vb = b[k]; }
@@ -639,7 +678,8 @@ function renderTable(recs) {
       (isFirstPassed(r) ? "；首轮即 AC" : `；首轮提交 ${firstSub(r).result}`);
     html += `<tr>
       <td>${escapeHtml(r.date)}</td>
-      <td>${escapeHtml(seriesKey(r))}</td>
+      <td>${escapeHtml(seriesKey(r))}${r.variant ? ` <span class="muted" title="版本/策略（不参与分组）">· ${escapeHtml(r.variant)}</span>` : ""}</td>
+      <td class="agent-cell">${escapeHtml(agentTokenText(r))}</td>
       <td><span class="think-tag" title="思考等级">${escapeHtml(r.thinking || DEFAULT_THINKING)}</span></td>
       <td><a class="pid-link" href="https://www.luogu.com.cn/problem/${encodeURIComponent(r.pid)}" target="_blank" rel="noopener">${escapeHtml(r.pid)}</a></td>
       <td>${escapeHtml(r.title || "")}</td>
@@ -757,6 +797,8 @@ function renderStats() {
 function renderDatalists() {
   $("#dl-models").innerHTML = [...new Set(records.map((r) => r.model))].map((m) => `<option value="${escapeHtml(m)}">`).join("");
   $("#dl-variants").innerHTML = [...new Set(records.map((r) => r.variant).filter(Boolean))].map((m) => `<option value="${escapeHtml(m)}">`).join("");
+  $("#dl-agents").innerHTML = [...new Set(records.map((r) => r.agent).filter(Boolean))].map((v) => `<option value="${escapeHtml(v)}">`).join("");
+  $("#dl-tokens").innerHTML = [...new Set(records.map((r) => r.tokenSource).filter(Boolean))].map((v) => `<option value="${escapeHtml(v)}">`).join("");
   const cats = [...new Set([...CATEGORY_ORDER, ...records.flatMap((r) => r.categories || [])])];
   $("#dl-cats").innerHTML = cats.map((c) => `<option value="${escapeHtml(c)}">`).join("");
 }
@@ -987,6 +1029,8 @@ function openModal(editId = null) {
     $("#modal-title").textContent = "编辑测试";
     $("#f-model").value = r.model;
     $("#f-variant").value = r.variant || "";
+    $("#f-agent").value = r.agent || "";
+    $("#f-token-source").value = r.tokenSource || "";
     $("#f-thinking").value = THINKING_LEVELS.includes(r.thinking) ? r.thinking : DEFAULT_THINKING;
     $("#f-pid").value = r.pid;
     $("#f-title").value = r.title || "";
@@ -1000,6 +1044,8 @@ function openModal(editId = null) {
     $("#modal-title").textContent = "提交测试";
     $("#f-model").value = "";
     $("#f-variant").value = "";
+    $("#f-agent").value = "";
+    $("#f-token-source").value = "";
     $("#f-thinking").value = DEFAULT_THINKING; // 新记录默认 max
     $("#f-pid").value = "";
     $("#f-title").value = "";
@@ -1084,6 +1130,8 @@ async function saveRecord(e) {
   if (btn.disabled) return;   // 请求进行中，忽略重复提交
   const model = $("#f-model").value.trim();
   const variant = $("#f-variant").value.trim();
+  const agent = $("#f-agent").value.trim();
+  const tokenSource = $("#f-token-source").value.trim();
   const pid = normalizePid($("#f-pid").value);
   const title = $("#f-title").value.trim();
   const diffRaw = $("#f-difficulty-input").value;
@@ -1105,6 +1153,7 @@ async function saveRecord(e) {
   const payload = {
     model, variant, pid, title,
     thinking,
+    agent, tokenSource,
     difficulty: Number(diffRaw),
     categories: formCategories.length ? [...formCategories] : [...cachedCats],
     submissions,
@@ -1237,6 +1286,9 @@ async function checkServer() {
 function bindEvents() {
   // 主题切换后重建图表：Chart.js 的颜色在构造时读取，需跟随 CSS 变量重新取值
   document.addEventListener("themechange", () => renderAll());
+  // 公告栏两种关闭方式
+  $("#notice-hide-session").addEventListener("click", () => dismissNotice("session"));
+  $("#notice-hide-today").addEventListener("click", () => dismissNotice("today"));
   document.querySelectorAll(".view-tab").forEach((b) => {
     b.addEventListener("click", () => switchView(b.dataset.view));
   });
@@ -1354,6 +1406,7 @@ async function init() {
   initTheme();
   bindEvents();
   renderAuthUI();
+  maybeShowNotice();
 
   try {
     await loadSession();

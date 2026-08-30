@@ -46,6 +46,8 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # 各字段长度上限（字符数）
 MAX_MODEL = 80
 MAX_VARIANT = 80
+MAX_AGENT = 120
+MAX_TOKEN_SOURCE = 120
 MAX_TITLE = 200
 MAX_NOTE = 1000
 MAX_SUB_NOTE = 300
@@ -111,6 +113,9 @@ def sanitize_record(raw, existing=None, author="guest", status=None):
     if not model:
         raise ValidationError("请填写 AI 名称")
 
+    agent = _text(raw.get("agent"), MAX_AGENT, "Agent")
+    token_source = _text(raw.get("tokenSource"), MAX_TOKEN_SOURCE, "Token 来源")
+
     pid = _text(raw.get("pid"), 24, "题号").upper()
     if not PID_RE.match(pid):
         raise ValidationError("题号格式不正确（示例：P1001 / B2001 / CF10A）")
@@ -149,6 +154,8 @@ def sanitize_record(raw, existing=None, author="guest", status=None):
         "id": (existing or {}).get("id") or _new_id(),
         "model": model,
         "variant": _text(raw.get("variant"), MAX_VARIANT, "版本/策略"),
+        "agent": agent,
+        "tokenSource": token_source,
         "pid": pid,
         "title": _text(raw.get("title"), MAX_TITLE, "题目名称"),
         "thinking": thinking,

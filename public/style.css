@@ -229,6 +229,21 @@ a { color: var(--accent); }
 :root[data-theme="light"] .theme-toggle .i-dark { display: block; }
 :root[data-theme="light"] .theme-toggle .i-light { display: none; }
 
+/* ---------------------------------------------------------------- 公告栏 */
+.notice {
+  display: flex; align-items: flex-start; gap: var(--sp-3);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+.notice-icon { font-size: 17px; line-height: 1.5; flex: none; }
+.notice-body { flex: 1; min-width: 0; font-size: var(--fs-sm); color: var(--text-2); line-height: 1.7; }
+.notice-body b { color: var(--text); font-weight: 640; margin-right: 4px; }
+.notice-body a { color: var(--accent); }
+.notice-actions { display: flex; gap: var(--sp-2); flex: none; flex-wrap: wrap; }
+
 /* ---------------------------------------------------------------- 统计带 */
 /* 五个指标合并为一条横带：内部竖线分隔，替代原先的五张独立卡片 */
 .stats {
@@ -473,7 +488,10 @@ td.mcell.score-na  { background: transparent; color: var(--muted); }
 .cnt { opacity: .7; font-size: var(--fs-xs); }
 
 .muted { color: var(--muted); }
-.note-cell { max-width: 260px; white-space: normal; color: var(--muted); font-size: var(--fs-xs); }
+.note-cell, .agent-cell {
+  max-width: 260px; white-space: normal; color: var(--muted); font-size: var(--fs-xs);
+}
+.agent-cell { max-width: 200px; font-variant-numeric: tabular-nums; }
 
 /* ---------------------------------------------------------------- 弹窗 */
 .modal-overlay[hidden] { display: none; }
@@ -795,6 +813,11 @@ input, select, textarea { font-family: inherit; }
 
   /* 页脚 */
   .foot { padding: var(--sp-4) 10px 0; line-height: 2; }
+
+  /* 公告栏：按钮铺满一行 */
+  .notice { flex-wrap: wrap; }
+  .notice-actions { width: 100%; }
+  .notice-actions .btn { flex: 1 1 auto; justify-content: center; }
 
   .toast { bottom: 14px; max-width: 92vw; padding: 8px 13px; }
 }

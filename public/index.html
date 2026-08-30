@@ -38,6 +38,15 @@
 </header>
 
 <div class="layout">
+  <section class="notice" id="notice" hidden aria-label="站点公告">
+    <span class="notice-icon" aria-hidden="true">📢</span>
+    <div class="notice-body" id="notice-body"></div>
+    <div class="notice-actions">
+      <button type="button" class="btn small ghost" id="notice-hide-session">本次关闭</button>
+      <button type="button" class="btn small" id="notice-hide-today">今天关闭</button>
+    </div>
+  </section>
+
   <section class="stats" id="stats" aria-label="总览统计">
     <div class="stat"><b id="stat-records">0</b><span>测试数</span></div>
     <div class="stat tone-purple"><b id="stat-series">0</b><span>AI 组合</span></div>
@@ -205,6 +214,17 @@
             <option value="low">low</option>
             <option value="off">off（不思考）</option>
           </select>
+        </label>
+      </div>
+
+      <div class="grid2">
+        <label class="field"><span class="label">Agent</span>
+          <input id="f-agent" list="dl-agents" placeholder="如 Claude Code / Cursor / 网页版（可留空）">
+          <datalist id="dl-agents"></datalist>
+        </label>
+        <label class="field"><span class="label">Token 来源</span>
+          <input id="f-token-source" list="dl-tokens" placeholder="如 官方 / 某中转站（可留空）">
+          <datalist id="dl-tokens"></datalist>
         </label>
       </div>
 

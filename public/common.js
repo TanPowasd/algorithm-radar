@@ -133,8 +133,17 @@ const isFirstPassed = (r) => firstSub(r).result === "AC";
 const isPending = (r) => r.status === "pending";
 const isApproved = (r) => r.status !== "pending";
 
+/** AI 组合 = 模型名（版本/策略仅作为记录字段展示，不参与分组统计——矩阵列、雷达系列、筛选均按模型聚合） */
 function seriesKey(r) {
-  return r.variant ? `${r.model} · ${r.variant}` : r.model;
+  return r.model;
+}
+
+/** Agent / Token 来源合并展示文本（明细表与审核台共用）；两者都空返回空串 */
+function agentTokenText(r) {
+  const agent = r.agent || "";
+  const token = r.tokenSource || "";
+  if (agent && token) return `${agent} / ${token}`;
+  return agent || token;
 }
 
 function seriesColorFrom(list, label) {
