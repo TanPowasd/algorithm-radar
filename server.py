@@ -147,7 +147,9 @@ def main():
     print("  数据保存在浏览器 localStorage 中")
     print("  按 Ctrl+C 停止")
     print("=" * 46)
-    threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    # 仅在本地交互环境自动打开浏览器；无头服务器（Render 等）静默跳过
+    if os.environ.get("RENDER") != "true" and os.environ.get("DISPLAY", "") != "":
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
