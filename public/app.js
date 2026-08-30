@@ -1220,6 +1220,7 @@ async function init() {
     }
   }
   visibleSeries = new Set(seriesList());
+  renderAll();   // 填充系列后重绘，确保雷达图/柱状图首次加载即显示
   checkServer();
 }
 
