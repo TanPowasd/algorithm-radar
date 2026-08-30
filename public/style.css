@@ -340,7 +340,12 @@ th.sortable:hover { color: var(--accent); }
 th .arrow { color: var(--accent); }
 td.num { font-variant-numeric: tabular-nums; }
 
-#matrix-wrap { max-height: 520px; }
+#matrix-wrap {
+  max-height: none;             /* 不限制高度：所有题目完整展开，无内部滚动条 */
+  overflow: visible;            /* 覆盖 .table-scroll 的 overflow:auto */
+  border: none;                 /* 去掉容器边框（表格自带分隔线） */
+  border-radius: 0;
+}
 #matrix-wrap table {
   min-width: 560px;
   width: 100%;
@@ -349,7 +354,8 @@ td.num { font-variant-numeric: tabular-nums; }
 }
 #matrix-wrap td, #matrix-wrap th { text-align: center; }
 #matrix-wrap thead th {
-  white-space: normal;          /* 表头 AI 组合名允许换行 */
+  position: static;              /* 无内部滚动容器：表头不吸顶，避免被顶栏遮挡 */
+  white-space: normal;           /* 表头 AI 组合名允许换行 */
   line-height: 1.35; word-break: break-word;
 }
 #matrix-wrap td, #matrix-wrap th { padding: 6px 5px; }
