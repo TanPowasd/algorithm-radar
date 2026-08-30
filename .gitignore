@@ -5,6 +5,9 @@ __pycache__/
 # 运行时数据（服务器磁盘存储，不入库）
 data.json
 
+# 管理员凭据（含口令哈希与会话密钥，严禁入库）
+credentials.json
+
 # 本地工具元数据（非项目文件）
 .mimosa/
 

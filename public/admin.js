@@ -1,70 +1,31 @@
-/* 算法雷达站 - 审核台（管理员专用页面）
-   独立于主页 app.js，复用相同的 localStorage 数据与登录态。
-   功能：查看待审核的游客提交、筛选、单个/批量通过或拒绝。 */
+/* 算法雷达站 - 审核台（管理员专用页面，v2）
+   独立于主页 app.js。数据与权限全部由服务端提供：
+     - /api/session 判定登录态（HttpOnly Cookie 会话，前端无凭据）
+     - /api/data 拉取含待审核记录的完整快照（仅管理员可见 pending）
+     - /api/records/<id>/status 单个审核
+     - /api/records/bulk 批量通过 / 拒绝
+   常量与基础工具（$、api、toast、escapeHtml、系列工具等）来自 common.js。 */
 "use strict";
-
-/* ================= 常量（与 app.js 保持一致） ================= */
-
-const THINKING_LEVELS = ["max", "high", "medium", "low", "off"];
-const DEFAULT_THINKING = "max";
-const DIFF_NAMES = ["暂无评定", "入门", "普及−", "普及/提高−", "普及+/提高", "提高+/省选−", "省选/NOI−", "NOI/NOI+/CTSC"];
-const RESULTS = ["AC", "WA", "TLE", "MLE", "RE", "CE", "未解出"];
-
-const LS_RECORDS = "radar.records.v1";
-const LS_PROBLEMS = "radar.problems.v1";
-const LS_AUTH = "radar.auth.v1";
-
-const ADMIN_USERNAME = "TanPowasd";
-const ADMIN_PASSWORD_HASH = "ee4e61b4ac9747fca1f4c9b8a64c63279bd296da662e0488f2d8ee2f68045004";
 
 /* ================= 状态 ================= */
 
 let records = [];
 let problems = {};
 let isAdmin = false;
+let username = "";
+let configured = false;
+let canSetup = false;
+let keyword = "";
+let seriesFilter = "";
 
 /* ================= 工具 ================= */
-
-const $ = (sel) => document.querySelector(sel);
-
-function escapeHtml(s) {
-  return String(s == null ? "" : s)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-
-function seriesKey(r) {
-  return r.variant ? `${r.model} · ${r.variant}` : r.model;
-}
 
 function seriesList() {
   return [...new Set(records.map(seriesKey))].sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
 }
 
-function diffTagHtml(diff) {
-  if (diff == null || diff < 0 || diff > 7) return '<span class="muted">–</span>';
-  return `<span class="diff-tag d-${diff}">${DIFF_NAMES[diff]}</span>`;
-}
-
-function toast(msg, type = "") {
-  const el = $("#toast");
-  el.textContent = msg;
-  el.className = "toast " + type;
-  el.hidden = false;
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => { el.hidden = true; }, 3200);
-}
-
-function normalizeSub(s) {
-  let score = s && s.score != null && s.score !== "" ? Number(s.score) : null;
-  if (score != null && (!Number.isFinite(score) || score < 0)) score = 0;
-  if (score != null && score > 100) score = 100;
-  score = score == null ? null : Math.round(score);
-  const result = RESULTS.includes(s && s.result) ? s.result : "未解出";
-  return { score, result, note: String((s && s.note) || "").trim() };
-}
-
 function migrateRecord(r) {
+  if (!r || typeof r !== "object") return null;
   if (!Array.isArray(r.submissions) || r.submissions.length === 0) {
     r.submissions = [{ score: r.result === "AC" ? 100 : null, result: r.result || "未解出", note: "" }];
   }
@@ -76,111 +37,41 @@ function migrateRecord(r) {
   return r;
 }
 
-function subBadge(s, i) {
-  const scorePart = s.score != null ? `${s.score}分` : "";
-  const tip = `第${i + 1}次提交：${s.result}` + (s.score != null ? `，${s.score} 分` : "") + (s.note ? `（${s.note}）` : "");
-  return `<span class="sub-badge b-${escapeHtml(s.result)}" title="${escapeHtml(tip)}">${scorePart || escapeHtml(s.result)}</span>`;
+/* ================= 数据 & 会话 ================= */
+
+async function loadSession() {
+  const s = await api("/api/session");
+  isAdmin = !!s.admin;
+  username = s.username || "";
+  configured = !!s.configured;
+  canSetup = !!s.canSetup;
+  return s;
 }
 
-function chainHtml(r) {
-  return r.submissions.map(subBadge).join('<span class="arrow">→</span>');
-}
-
-function saveState() {
-  try {
-    localStorage.setItem(LS_RECORDS, JSON.stringify(records));
-  } catch (e) {
-    toast("保存失败：" + e.message, "err");
-  }
-  // 多设备共享：审核操作后同步推送到云端
-  pushCloud();
-}
-
-/** 云端同步：推送 records/problems 到共享存储（Vercel /api/sync 代理） */
-async function pushCloud() {
-  try {
-    await fetch("/api/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ records, problems }),
-    });
-  } catch (e) {
-    console.warn("云端同步推送失败（数据仍在本地）：", e);
-  }
-}
-
-/** 按 id 合并两组记录：两边都有的取 updatedAt 较新的；缺失的补上 */
-function mergeRecords(local, cloud) {
-  const byId = new Map();
-  for (const r of local) byId.set(r.id, r);
-  let changed = false;
-  for (const r of cloud) {
-    const exist = byId.get(r.id);
-    if (!exist) {
-      byId.set(r.id, r);
-      changed = true;
-    } else if ((r.updatedAt || "") > (exist.updatedAt || "")) {
-      byId.set(r.id, r);
-      changed = true;
-    }
-  }
-  return changed ? [...byId.values()] : local;
-}
-
-/** 从云端拉取共享数据；未配置/失败返回 null */
-async function pullCloud() {
-  try {
-    const resp = await fetch("/api/sync", { method: "GET" });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    if (!data || !Array.isArray(data.records)) return null;
-    return data;
-  } catch (e) {
-    console.warn("云端同步拉取失败（使用本地数据）：", e);
-    return null;
-  }
-}
-
-function loadState() {
-  try { records = JSON.parse(localStorage.getItem(LS_RECORDS) || "[]") || []; } catch { records = []; }
-  try { problems = JSON.parse(localStorage.getItem(LS_PROBLEMS) || "{}") || {}; } catch { problems = {}; }
-  if (!Array.isArray(records)) records = [];
-  records = records.map(migrateRecord);
-}
-
-/* ================= 登录 ================= */
-
-function saveAuth() {
-  try { localStorage.setItem(LS_AUTH, JSON.stringify({ admin: isAdmin })); } catch { /* ignore */ }
-}
-
-function loadAuth() {
-  try { isAdmin = !!(JSON.parse(localStorage.getItem(LS_AUTH) || "{}").admin); } catch { isAdmin = false; }
-}
-
-async function sha256Hex(str) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+async function refreshData() {
+  const data = await api("/api/data");
+  records = (data.records || []).map(migrateRecord).filter(Boolean);
+  problems = (data.problems && typeof data.problems === "object") ? data.problems : {};
 }
 
 async function doLogin(e) {
   e.preventDefault();
   const user = $("#login-user").value.trim();
   const pass = $("#login-pass").value;
-  const hash = await sha256Hex(pass);
-  if (user === ADMIN_USERNAME && hash === ADMIN_PASSWORD_HASH) {
-    isAdmin = true;
-    saveAuth();
+  if (!user || !pass) { toast("请输入用户名与口令", "err"); return; }
+  try {
+    await api("/api/login", { method: "POST", body: { username: user, password: pass } });
     toast("已登录为管理员", "ok");
-    renderAll();
-  } else {
-    toast("用户名或密码错误", "err");
+    await initApp();
+  } catch (err) {
+    toast((err && err.message) || "登录失败", "err");
   }
 }
 
-function doLogout() {
+async function doLogout() {
+  try { await api("/api/logout", { method: "POST" }); } catch { /* ignore */ }
   isAdmin = false;
-  saveAuth();
+  username = "";
   toast("已退出登录", "ok");
   renderAll();
 }
@@ -188,10 +79,23 @@ function doLogout() {
 /* ================= 渲染 ================= */
 
 function renderAll() {
-  $("#login-gate").hidden = isAdmin;
-  $("#work-area").hidden = !isAdmin;
-  $("#btn-logout").hidden = !isAdmin;
-  if (!isAdmin) return;
+  const gate = $("#login-gate");
+  const work = $("#work-area");
+  $("#btn-setup").hidden = !canSetup;
+  if (!isAdmin) {
+    gate.hidden = false;
+    work.hidden = true;
+    $("#btn-logout").hidden = true;
+    $("#who-text").textContent = "未登录";
+    $("#who").classList.remove("is-admin");
+    $("#gate-note").hidden = configured || canSetup;
+    return;
+  }
+  gate.hidden = true;
+  work.hidden = false;
+  $("#btn-logout").hidden = false;
+  $("#who-text").textContent = username || "管理员";
+  $("#who").classList.add("is-admin");
   renderSummary();
   renderFilterSeries();
   renderPending();
@@ -202,9 +106,11 @@ function renderSummary() {
   const today = new Date().toISOString().slice(0, 10);
   const todayCnt = records.filter((r) => String(r.date).startsWith(today)).length;
   const guestCnt = records.filter((r) => r.author === "guest").length;
+  const approvedCnt = records.filter((r) => r.status === "approved").length;
   $("#stat-pending").textContent = pend.length;
   $("#stat-today").textContent = todayCnt;
   $("#stat-guest").textContent = guestCnt;
+  $("#stat-approved").textContent = approvedCnt;
 }
 
 function renderFilterSeries() {
@@ -216,10 +122,9 @@ function renderFilterSeries() {
 
 function renderPending() {
   const wrap = $("#pending-wrap");
-  const kw = $("#f-keyword").value.trim().toLowerCase();
-  const seriesF = $("#f-series").value;
+  const kw = keyword.trim().toLowerCase();
   const pend = records.filter((r) => r.status === "pending")
-    .filter((r) => !seriesF || seriesKey(r) === seriesF)
+    .filter((r) => !seriesFilter || seriesKey(r) === seriesFilter)
     .filter((r) => !kw ||
       `${r.model} ${r.variant || ""} ${r.pid} ${r.title || ""} ${r.note || ""}`.toLowerCase().includes(kw))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.id - a.id));
@@ -241,8 +146,8 @@ function renderPending() {
       <td class="note-cell">${escapeHtml(r.note || "")}</td>
       <td>
         <div class="review-actions">
-          <button class="btn small" data-approve="${r.id}">通过</button>
-          <button class="btn small danger" data-reject="${r.id}">拒绝</button>
+          <button class="btn small" data-approve="${escapeHtml(r.id)}">通过</button>
+          <button class="btn small danger" data-reject="${escapeHtml(r.id)}">拒绝</button>
         </div>
       </td>
     </tr>`).join("");
@@ -252,49 +157,77 @@ function renderPending() {
     </tr></thead><tbody>${rows}</tbody></table>`;
 
   wrap.querySelectorAll("button[data-approve]").forEach((b) => {
-    b.addEventListener("click", () => {
-      const rec = records.find((x) => x.id === Number(b.dataset.approve));
-      if (!rec) return;
-      rec.status = "approved";
-      saveState();
-      renderAll();
-      toast("已通过，计入统计", "ok");
-    });
+    b.addEventListener("click", () => setStatus(b.dataset.approve, "approved"));
   });
   wrap.querySelectorAll("button[data-reject]").forEach((b) => {
-    b.addEventListener("click", () => {
-      const rec = records.find((x) => x.id === Number(b.dataset.reject));
-      if (!rec) return;
-      if (!confirm(`拒绝并删除：${seriesKey(rec)} · ${rec.pid}？`)) return;
-      records = records.filter((x) => x.id !== rec.id);
-      saveState();
-      renderAll();
-      toast("已拒绝并删除", "ok");
-    });
+    b.addEventListener("click", () => rejectOne(b.dataset.reject));
   });
 }
 
-/* ================= 批量操作 ================= */
+/* ================= 审核操作（服务端 API） ================= */
 
-function approveAll() {
+async function setStatus(id, status) {
+  const rec = records.find((x) => x.id === id);
+  if (!rec) return;
+  try {
+    await api(`/api/records/${encodeURIComponent(id)}/status`, {
+      method: "POST",
+      body: { status },
+    });
+    toast("已通过，计入统计", "ok");
+    await refreshData();
+    renderAll();
+  } catch (e) {
+    toast((e && e.message) || "操作失败", "err");
+  }
+}
+
+async function rejectOne(id) {
+  const rec = records.find((x) => x.id === id);
+  if (!rec) return;
+  if (!confirm(`拒绝并删除：${seriesKey(rec)} · ${rec.pid}？`)) return;
+  try {
+    await api(`/api/records/${encodeURIComponent(id)}`, { method: "DELETE" });
+    toast("已拒绝并删除", "ok");
+    await refreshData();
+    renderAll();
+  } catch (e) {
+    toast((e && e.message) || "操作失败", "err");
+  }
+}
+
+async function approveAll() {
   const pend = records.filter((r) => r.status === "pending");
   if (!pend.length) { toast("没有待审核提交", "err"); return; }
   if (!confirm(`确定全部通过 ${pend.length} 条提交？`)) return;
-  pend.forEach((r) => { r.status = "approved"; });
-  saveState();
-  renderAll();
-  toast(`已通过 ${pend.length} 条`, "ok");
+  try {
+    const res = await api("/api/records/bulk", {
+      method: "POST",
+      body: { ids: pend.map((r) => r.id), action: "approve" },
+    });
+    toast(`已通过 ${(res && res.affected) || 0} 条`, "ok");
+    await refreshData();
+    renderAll();
+  } catch (e) {
+    toast((e && e.message) || "操作失败", "err");
+  }
 }
 
-function rejectAll() {
+async function rejectAll() {
   const pend = records.filter((r) => r.status === "pending");
   if (!pend.length) { toast("没有待审核提交", "err"); return; }
   if (!confirm(`确定拒绝并删除全部 ${pend.length} 条提交？此操作不可撤销！`)) return;
-  const ids = new Set(pend.map((r) => r.id));
-  records = records.filter((r) => !ids.has(r.id));
-  saveState();
-  renderAll();
-  toast(`已拒绝 ${pend.length} 条`, "ok");
+  try {
+    const res = await api("/api/records/bulk", {
+      method: "POST",
+      body: { ids: pend.map((r) => r.id), action: "reject" },
+    });
+    toast(`已拒绝 ${(res && res.affected) || 0} 条`, "ok");
+    await refreshData();
+    renderAll();
+  } catch (e) {
+    toast((e && e.message) || "操作失败", "err");
+  }
 }
 
 /* ================= 事件 & 启动 ================= */
@@ -302,31 +235,31 @@ function rejectAll() {
 function bindEvents() {
   $("#login-form").addEventListener("submit", doLogin);
   $("#btn-logout").addEventListener("click", doLogout);
+  $("#btn-setup").addEventListener("click", () => {
+    if (!canSetup) { toast("初始化仅可在服务器本机且未配置时进行", "err"); return; }
+    location.href = "/";
+  });
+  $("#btn-refresh").addEventListener("click", async () => {
+    try { await refreshData(); renderAll(); toast("已刷新", "ok"); }
+    catch (e) { toast((e && e.message) || "刷新失败", "err"); }
+  });
   $("#btn-approve-all").addEventListener("click", approveAll);
   $("#btn-reject-all").addEventListener("click", rejectAll);
-  $("#f-keyword").addEventListener("input", renderPending);
-  $("#f-series").addEventListener("change", renderPending);
+  $("#f-keyword").addEventListener("input", (e) => { keyword = e.target.value; renderPending(); });
+  $("#f-series").addEventListener("change", (e) => { seriesFilter = e.target.value; renderPending(); });
 }
 
-async function init() {
-  loadState();
-  loadAuth();
-  // 多设备共享：启动时拉取云端数据并与本地「合并」（按 id 去重，保留更新的）
-  const cloud = await pullCloud();
-  if (cloud && Array.isArray(cloud.records)) {
-    const merged = mergeRecords(records, cloud.records);
-    if (merged.length !== records.length) {
-      records = merged.map(migrateRecord);
-      if (cloud.problems && typeof cloud.problems === "object") {
-        for (const [pid, info] of Object.entries(cloud.problems)) {
-          if (!problems[pid]) problems[pid] = info;
-        }
-      }
-      saveState();
-    }
-  }
+async function initApp() {
   bindEvents();
+  try {
+    await loadSession();
+  } catch { /* 服务器不可达时保持未登录 */ }
+  try {
+    await refreshData();
+  } catch (e) {
+    toast((e && e.message) || "无法连接服务器", "err");
+  }
   renderAll();
 }
 
-document.addEventListener("DOMContentLoaded", init);
+document.addEventListener("DOMContentLoaded", () => initApp());

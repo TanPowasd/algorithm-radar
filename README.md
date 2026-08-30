@@ -45,16 +45,46 @@
 
 ## 部署到 Render（线上多设备共享）
 
+数据通过 **GitHub Gist 持久化**（免费方案）：Render 免费实例磁盘非持久，重启/重新部署会清空 `data.json`，所以项目把私有 Gist 当作真正的存储层——每次写入先落盘再异步备份到 Gist，启动时若磁盘无数据则自动从 Gist 恢复。**`GIST_TOKEN` 与 `GIST_ID` 是必需配置**。
+
+### 一、准备 GitHub Gist 与令牌（一次性）
+
+1. 打开 <https://gist.github.com> → 新建一个 **Secret（私有）** Gist，文件名随意，内容初始为：
+   ```json
+   {"records":[],"problems":{}}
+   ```
+2. 创建后复制地址栏 URL，格式 `https://gist.github.com/<你的用户名>/<40位ID>`，记下这 40 位 **Gist ID**
+3. 到 <https://github.com/settings/tokens> → **Generate new token (classic)**：
+   - 勾选 `gist` 权限
+   - 过期时间按需（建议 90 天或永久）
+   - 生成后**立即复制**令牌（只显示一次）
+
+### 二、部署（二选一）
+
+**方式 A：Render Blueprint（推荐）**
+1. 把代码（含 `render.yaml`）推到 GitHub 仓库
+2. 到 [render.com](https://render.com) → **New** → **Blueprint** → 选择该仓库，Render 自动创建服务并生成 `SESSION_SECRET`
+3. 在服务 → **Environment** 里补填两个 secret：
+   - `GIST_TOKEN` = 上一步的 GitHub 令牌
+   - `GIST_ID` = Gist ID
+   - （可选）`ADMIN_PASSWORD_HASH` = 自定义管理员口令哈希，留空则用代码内置默认账号 `TanPowasd` / `powasd`
+
+**方式 B：手动 Web Service**
 1. 把代码推到 GitHub 仓库
-2. 到 [render.com](https://render.com) 用 GitHub 登录 → **New Web Service** → 导入该仓库
+2. 到 [render.com](https://render.com) → **New Web Service** → 导入该仓库
 3. 配置：
    - **Build Command**: 留空
    - **Start Command**: `python server.py`
    - **Instance Type**: Free（免费，休眠时首次访问需等待唤醒）
-4. 环境变量（数据备份，可选但推荐）：
+4. 环境变量（全部填入）：
    - `GIST_TOKEN`（GitHub Personal Access Token，`gist` 权限）
-   - `GIST_ID`（私有 Gist ID，内容初始为 `{"records":[],"problems":{}}`）
+   - `GIST_ID`（私有 Gist ID）
+   - `SESSION_SECRET`（任意长随机串，建议 Generate）
+   - `ADMIN_USERNAME`（默认 `TanPowasd`）
+   - `ADMIN_PASSWORD_HASH`（自定义口令的 PBKDF2 哈希，可留空用默认）
 5. 部署完成后获得 `https://<project>.onrender.com` 地址
+
+> ⚠️ 换口令：在任意 Python 环境运行 `python -c "import auth; print(auth.hash_password('新口令'))"`（需 8 位以上），把输出填进 `ADMIN_PASSWORD_HASH`。默认口令 `powasd` 偏弱，**公网部署强烈建议覆盖**。
 
 > 提示：洛谷风控偶发拦截时仍可手动填写题目信息（与本地版一致）。
 

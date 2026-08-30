@@ -1,0 +1,36 @@
+# Render Blueprint —— 算法雷达站
+# 使用方式：把本文件推到 GitHub 仓库后，在 Render 控制台
+#   New → Blueprint 选择该仓库即可自动创建服务。
+#
+# 数据持久化说明：
+#   Render 免费实例的磁盘不是持久的（重新部署/重启会清空 data.json），
+#   因此项目把 GitHub Gist 作为真正的存储层：
+#     * 每次写数据 → 落盘 data.json（临时）+ 异步 PATCH 到私有 Gist
+#     * 启动时磁盘无数据 → 自动从 Gist 恢复
+#   所以 GIST_TOKEN 与 GIST_ID 是部署到 Render 的【必需】配置，不是可选项。
+services:
+  - type: web
+    name: algorithm-radar
+    runtime: python
+    plan: free
+    autoDeploy: true
+    buildCommand: ""
+    startCommand: python server.py
+    healthCheckPath: /api/ping
+    envVars:
+      # GitHub Personal Access Token（需 gist 权限），在 Render 控制台手动填写
+      - key: GIST_TOKEN
+        sync: false
+      # 私有 Gist 的 ID（gist URL 最后一段），在 Render 控制台手动填写
+      - key: GIST_ID
+        sync: false
+      # 会话签名密钥：让 Render 自动生成随机值，重启后登录态不失效
+      - key: SESSION_SECRET
+        generateValue: true
+      # 管理员用户名（代码内置默认 TanPowasd，这里显式声明）
+      - key: ADMIN_USERNAME
+        value: TanPowasd
+      # 管理员口令哈希（pbkdf2_sha256$...），在 Render 控制台手动填写
+      # 留空则回退到代码内置默认口令的哈希（本地开箱即用用）
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
