@@ -123,9 +123,10 @@ a { color: var(--accent); }
 }
 
 .layout {
-  width: min(1600px, 100%);
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
-  padding: 0 var(--sp-5);
+  padding: 0 var(--sp-4);
 }
 
 /* ---------------------------------------------------------------- 顶栏 */
@@ -138,8 +139,8 @@ a { color: var(--accent); }
 
 .topbar-inner {
   display: flex; align-items: center; justify-content: space-between;
-  gap: var(--sp-4); padding: var(--sp-3) var(--sp-5);
-  width: min(1600px, 100%); margin: 0 auto;
+  gap: var(--sp-4); padding: var(--sp-3) var(--sp-4);
+  width: 100%; max-width: none; margin: 0 auto;
 }
 
 .brand { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
