@@ -50,11 +50,19 @@ function cssVar(name, fallback = "") {
 function toast(msg, type = "") {
   const el = $("#toast");
   if (!el) return;
+  el.classList.remove("leaving");
   el.textContent = msg;
   el.className = "toast " + type;
   el.hidden = false;
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => { el.hidden = true; }, type === "err" ? 5000 : 3200);
+  clearTimeout(toast._t2);
+  toast._t = setTimeout(() => {
+    el.classList.add("leaving");
+    toast._t2 = setTimeout(() => {
+      el.hidden = true;
+      el.classList.remove("leaving");
+    }, 200);
+  }, type === "err" ? 5000 : 3200);
 }
 
 /* ================= 文本处理 ================= */

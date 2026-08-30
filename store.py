@@ -24,11 +24,14 @@ import urllib.request
 import uuid
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.environ.get("DATA_FILE") or os.path.join(BASE_DIR, "data.json")
+# 数据文件路径固定在项目内：不提供环境变量覆盖，避免环境被篡改时把任意路径当作写目标
+DATA_FILE = os.path.abspath(os.path.join(BASE_DIR, "data.json"))
 
 GIST_TOKEN = os.environ.get("GIST_TOKEN", "")
 GIST_ID = os.environ.get("GIST_ID", "")
 GIST_FILENAME = "algorithm-radar-data.json"
+# Gist ID 只可能是 16–64 位字母数字（GitHub 生成），先校验再拼进 API URL，防止配置被污染后构造任意请求目标
+GIST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 DATA_VERSION = 3
 
@@ -479,7 +482,12 @@ def _now_iso():
 # ---------------------------------------------------------------- Gist 备份
 
 def gist_enabled():
-    return bool(GIST_TOKEN and GIST_ID)
+    if not (GIST_TOKEN and GIST_ID):
+        return False
+    if not GIST_ID_RE.match(GIST_ID):
+        print("[warn] GIST_ID 格式不合法（应为 16–64 位字母数字），已禁用 Gist 备份", file=sys.stderr)
+        return False
+    return True
 
 
 def _gist_headers():

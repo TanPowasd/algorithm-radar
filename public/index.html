@@ -48,6 +48,14 @@
 </div>
 
 <main class="layout">
+  <div class="boot-loading card" id="boot-loading" role="status">
+    <span class="spinner" aria-hidden="true"></span>
+    <div>
+      <strong id="boot-title">正在连接服务器…</strong>
+      <span class="boot-sub">免费实例休眠时首次唤醒约需 30–60 秒，请稍候</span>
+    </div>
+  </div>
+
   <nav class="view-tabs" role="tablist" aria-label="图表视图切换">
     <button type="button" class="view-tab" data-view="matrix" role="tab">矩阵图</button>
     <button type="button" class="view-tab" data-view="radar" role="tab">雷达图</button>
@@ -291,7 +299,7 @@
       <p class="callout">校验在服务端完成（PBKDF2 口令哈希 + 签名会话），前端不保存任何凭据。连续失败会被临时限流。</p>
       <div class="modal-actions">
         <button type="button" class="btn" id="login-cancel">取消</button>
-        <button type="submit" class="btn primary">登录</button>
+        <button type="submit" class="btn primary" id="btn-login-submit">登录</button>
       </div>
     </form>
   </div>
@@ -317,7 +325,7 @@
       <p class="callout warn">仅在服务器本机（127.0.0.1）且尚未配置账号时可用。口令只以 PBKDF2 哈希写入 <code>credentials.json</code>，该文件已被 git 忽略。</p>
       <div class="modal-actions">
         <button type="button" class="btn" id="setup-cancel">取消</button>
-        <button type="submit" class="btn primary">创建账号</button>
+        <button type="submit" class="btn primary" id="btn-setup-submit">创建账号</button>
       </div>
     </form>
   </div>

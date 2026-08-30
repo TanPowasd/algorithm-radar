@@ -122,10 +122,6 @@ def save_credentials(username, password):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     os.replace(tmp, CRED_FILE)
-    try:
-        os.chmod(CRED_FILE, 0o600)   # 类 Unix 上限制为仅所有者可读写；Windows 上无效果
-    except OSError:
-        pass
     load_config(refresh=True)
     return {
         "ADMIN_USERNAME": payload["username"],

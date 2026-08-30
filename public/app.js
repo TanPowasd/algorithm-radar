@@ -31,6 +31,10 @@ let formCategories = [];
 let formSubs = [];       // 表单中的提交列表 [{score:"", result:"AC", note:""}]
 let pendingImport = null;
 let cachedScrapedDifficulty = null; // 当前表单题号对应的「洛谷爬取难度」参考值（不自动填充，仅供提示）
+let serverOffline = false;   // 启动时服务器不可达且无本地缓存（空态文案据此切换）
+let tablePage = 1;           // 明细表当前页码
+const TABLE_PAGE_SIZE = 50;  // 明细表每页条数
+const prevStats = {};        // 统计卡上一次数值（数字滚动动画用）
 
 /* ================= 工具 ================= */
 
@@ -208,11 +212,11 @@ function renderRadar(recs) {
           ticks: {
             stepSize: 20,
             callback: (v) => (isAvg ? v + "分" : v + "%"),
-            backdropColor: "transparent", color: "#8b949e",
+            backdropColor: "transparent", color: cssVar("--muted", "#8b949e"),
           },
-          grid: { color: "rgba(139,148,158,.18)" },
-          angleLines: { color: "rgba(139,148,158,.18)" },
-          pointLabels: { color: "#c9d1d9", font: { size: 12 } },
+          grid: { color: cssVar("--chart-grid", "rgba(139,148,158,.18)") },
+          angleLines: { color: cssVar("--chart-grid", "rgba(139,148,158,.18)") },
+          pointLabels: { color: cssVar("--text-2", "#c9d1d9"), font: { size: 12 } },
         },
       },
       plugins: {
@@ -310,7 +314,7 @@ function renderThinkingBar(recs) {
         ctx.font = "600 11px system-ui, sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "bottom";
-        ctx.fillStyle = "#8b949e";
+        ctx.fillStyle = cssVar("--muted", "#8b949e");
         ctx.fillText(`n=${n}`, bar.x, bar.y - 3);
         ctx.restore();
       });
@@ -335,11 +339,11 @@ function renderThinkingBar(recs) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { ticks: { color: "#c9d1d9", font: { size: 11 } }, grid: { display: false } },
+        x: { ticks: { color: cssVar("--text-2", "#c9d1d9"), font: { size: 11 } }, grid: { display: false } },
         y: {
           min: 0, max: 100,
-          ticks: { stepSize: 20, callback: (v) => v + "分", color: "#8b949e" },
-          grid: { color: "rgba(139,148,158,.18)" },
+          ticks: { stepSize: 20, callback: (v) => v + "分", color: cssVar("--muted", "#8b949e") },
+          grid: { color: cssVar("--chart-grid", "rgba(139,148,158,.18)") },
         },
       },
       layout: { padding: { top: 22 } },   // 给柱顶标签留空间
@@ -431,7 +435,16 @@ function renderMatrix(recs) {
   }
 
   if (!pids.length) {
-    wrap.innerHTML = '<p class="muted" style="padding:16px">暂无记录。点击右上角「提交记录」开始。</p>';
+    if (serverOffline) {
+      wrap.innerHTML = '<div class="empty"><strong>无法连接服务器</strong>若服务正在休眠，首次唤醒约需 30–60 秒；恢复后刷新页面即可。</div>';
+    } else if (!records.length) {
+      wrap.innerHTML = '<div class="empty"><strong>还没有任何测试记录</strong>录入第一条「AI × 洛谷题目」测试后，这里会生成覆盖矩阵。<br>' +
+        '<button type="button" class="btn primary" id="btn-empty-add">＋ 提交第一条记录</button></div>';
+      const cta = $("#btn-empty-add");
+      if (cta) cta.addEventListener("click", () => openModal());
+    } else {
+      wrap.innerHTML = '<div class="empty"><strong>没有符合当前筛选条件的记录</strong>试试清空筛选，或切换到其他视图。</div>';
+    }
     return;
   }
 
@@ -569,8 +582,11 @@ function scoreCellHtml(s, pid, rs, roundLabel) {
 
 function renderTable(recs) {
   const wrap = $("#records-wrap");
+  $("#records-count").textContent = `共 ${recs.length} 条`;
   if (!recs.length) {
-    wrap.innerHTML = '<p class="muted" style="padding:16px">没有符合筛选条件的记录。</p>';
+    wrap.innerHTML = serverOffline && !records.length
+      ? '<div class="empty"><strong>无法连接服务器</strong>恢复连接并刷新后，这里会显示明细记录。</div>'
+      : '<div class="empty"><strong>没有符合筛选条件的记录</strong>试试调整或清空筛选条件。</div>';
     return;
   }
 
@@ -601,6 +617,12 @@ function renderTable(recs) {
     return String(va).localeCompare(String(vb), "zh-Hans-CN", { numeric: true }) * dir;
   });
 
+  // 分页：只渲染当前页，避免大数据量一次性拼出上万行 DOM
+  const pages = Math.max(1, Math.ceil(sorted.length / TABLE_PAGE_SIZE));
+  if (tablePage > pages) tablePage = pages;
+  if (tablePage < 1) tablePage = 1;
+  const pageRows = sorted.slice((tablePage - 1) * TABLE_PAGE_SIZE, tablePage * TABLE_PAGE_SIZE);
+
   let html = "<table><thead><tr>";
   for (const c of cols) {
     if (c.nosort) { html += `<th>${c.label}</th>`; continue; }
@@ -609,7 +631,7 @@ function renderTable(recs) {
   }
   html += "<th>操作</th></tr></thead><tbody>";
 
-  for (const r of sorted) {
+  for (const r of pageRows) {
     const mins = r.minutes != null && r.minutes !== "" ? r.minutes + " 分钟" : "";
     const cats = (r.categories || []).map((c) => `<span class="cat-tag">${escapeHtml(c)}</span>`).join("");
     const fin = lastSub(r);
@@ -635,6 +657,22 @@ function renderTable(recs) {
   }
   html += "</tbody></table>";
   wrap.innerHTML = html;
+
+  if (pages > 1) {
+    const pager = document.createElement("div");
+    pager.className = "table-pager";
+    pager.innerHTML =
+      `<span class="page-info">第 ${tablePage} / ${pages} 页 · 共 ${sorted.length} 条</span>` +
+      `<button type="button" class="btn small" data-page="prev"${tablePage <= 1 ? " disabled" : ""}>上一页</button>` +
+      `<button type="button" class="btn small" data-page="next"${tablePage >= pages ? " disabled" : ""}>下一页</button>`;
+    pager.querySelectorAll("[data-page]").forEach((b) => {
+      b.addEventListener("click", () => {
+        tablePage += b.dataset.page === "next" ? 1 : -1;
+        renderTable(applyFilters());
+      });
+    });
+    wrap.appendChild(pager);
+  }
 
   wrap.querySelectorAll("th.sortable").forEach((th) => {
     th.addEventListener("click", () => {
@@ -686,18 +724,34 @@ function renderFilterOptions() {
     THINKING_LEVELS.filter((t) => usedT.includes(t)).map((t) => `<option value="${t}"${t === curT ? " selected" : ""}>${t}</option>`).join("");
 }
 
-function pctStr(num, den) {
-  return den ? Math.round((num / den) * 100) + "%" : "–";
+/** 统计卡数字滚动动画（尊重系统「减少动态效果」设置；值未变化时直接写入） */
+function animateStat(el, to, suffix = "") {
+  const from = Object.prototype.hasOwnProperty.call(prevStats, el.id) ? prevStats[el.id] : null;
+  prevStats[el.id] = to;
+  const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (from == null || from === to || reduced) { el.textContent = to + suffix; return; }
+  const t0 = performance.now(), dur = 320;
+  const step = (t) => {
+    const p = Math.min(1, (t - t0) / dur);
+    const eased = p * (2 - p);
+    el.textContent = Math.round(from + (to - from) * eased) + suffix;
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 function renderStats() {
   const appr = approvedRecords();
   const n = appr.length;
-  $("#stat-records").textContent = n;
-  $("#stat-series").textContent = seriesList().length;
-  $("#stat-problems").textContent = new Set(appr.map((r) => r.pid)).size;
-  $("#stat-firstrate").textContent = pctStr(appr.filter(isFirstPassed).length, n);  // 首轮 AC 率
-  $("#stat-finalrate").textContent = pctStr(appr.filter(isPassed).length, n);
+  animateStat($("#stat-records"), n);
+  animateStat($("#stat-series"), seriesList().length);
+  animateStat($("#stat-problems"), new Set(appr.map((r) => r.pid)).size);
+  const first = n ? Math.round(appr.filter(isFirstPassed).length / n * 100) : null;
+  const final = n ? Math.round(appr.filter(isPassed).length / n * 100) : null;
+  if (first == null) { $("#stat-firstrate").textContent = "–"; prevStats["stat-firstrate"] = null; }
+  else animateStat($("#stat-firstrate"), first, "%");
+  if (final == null) { $("#stat-finalrate").textContent = "–"; prevStats["stat-finalrate"] = null; }
+  else animateStat($("#stat-finalrate"), final, "%");
 }
 
 function renderDatalists() {
@@ -720,7 +774,9 @@ function switchView(view) {
   // Chart.js 在隐藏容器中尺寸为 0，切回可见视图时重建图表以保证正确渲染
   if (view === "radar") {
     if (radarChart) { radarChart.destroy(); radarChart = null; }
-    renderRadar(applyFilters());
+    const recs = applyFilters();
+    renderSeriesLegend(recs);
+    renderRadar(recs);
   } else if (view === "bar") {
     if (tbarChart) { tbarChart.destroy(); tbarChart = null; }
     renderThinkingBar(applyFilters());
@@ -730,25 +786,47 @@ function switchView(view) {
 }
 
 function renderAll() {
+  tablePage = 1;   // 数据或筛选变化后回到第一页
   const recs = applyFilters();
   renderStats();
   renderFilterOptions();
   renderDatalists();
-  renderSeriesLegend(recs);
-  renderRadar(recs);
-  renderThinkingBar(recs);
-  renderMatrix(recs);
   renderTable(recs);
   renderPending();
   renderAuthUI();
+  // 只重绘当前可见视图的图表：隐藏容器里的 Chart.js 尺寸为 0，重建无意义还拖慢每次筛选
+  if (currentView === "radar") {
+    renderSeriesLegend(recs);
+    renderRadar(recs);
+  } else if (currentView === "bar") {
+    renderThinkingBar(recs);
+  } else {
+    renderMatrix(recs);
+  }
 }
 
 /* ================= 管理员 / 审核 ================= */
+
+/** 按钮忙态：禁用并替换文字，防止等待响应期间连点造成重复提交 */
+function setBtnBusy(btn, busy, busyText = "") {
+  if (!btn) return;
+  if (busy) {
+    btn.dataset.label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = busyText;
+  } else {
+    btn.disabled = false;
+    if (btn.dataset.label) btn.textContent = btn.dataset.label;
+  }
+}
 
 async function doLogin() {
   const user = $("#login-user").value.trim();
   const pass = $("#login-pass").value;
   if (!user || !pass) { toast("请输入用户名与口令", "err"); return; }
+  const btn = $("#btn-login-submit");
+  if (btn.disabled) return;
+  setBtnBusy(btn, true, "登录中…");
   try {
     await api("/api/login", { method: "POST", body: { username: user, password: pass } });
     $("#login-modal").hidden = true;
@@ -759,6 +837,8 @@ async function doLogin() {
     await refreshData();
   } catch (e) {
     toast(e.message || "登录失败", "err");
+  } finally {
+    setBtnBusy(btn, false);
   }
 }
 
@@ -778,6 +858,9 @@ async function doSetup() {
   if (!user) { toast("请填写用户名", "err"); return; }
   if (pass.length < 8) { toast("口令至少需要 8 个字符", "err"); return; }
   if (pass !== pass2) { toast("两次输入的口令不一致", "err"); return; }
+  const btn = $("#btn-setup-submit");
+  if (btn.disabled) return;
+  setBtnBusy(btn, true, "创建中…");
   try {
     await api("/api/setup", { method: "POST", body: { username: user, password: pass } });
     $("#setup-modal").hidden = true;
@@ -786,6 +869,8 @@ async function doSetup() {
     await refreshData();
   } catch (e) {
     toast(e.message || "初始化失败", "err");
+  } finally {
+    setBtnBusy(btn, false);
   }
 }
 
@@ -825,7 +910,7 @@ function renderPending() {
   wrap.innerHTML = `<table><thead><tr>
       <th>日期</th><th>AI 组合</th><th>思考</th><th>题号</th><th>题目</th><th>难度</th>
     </tr></thead><tbody>${rows}</tbody></table>
-    <p class="hint" style="margin-top:10px"><a class="pid-link" href="/admin.html">前往审核台处理全部 ${pend.length} 条待审核提交 →</a></p>`;
+    <p class="hint"><a class="pid-link" href="/admin.html">前往审核台处理全部 ${pend.length} 条待审核提交 →</a></p>`;
 }
 
 /* ================= 记录操作（服务端 API） ================= */
@@ -995,6 +1080,8 @@ function fillProblemInfo(info) {
 
 async function saveRecord(e) {
   e.preventDefault();
+  const btn = $("#btn-save");
+  if (btn.disabled) return;   // 请求进行中，忽略重复提交
   const model = $("#f-model").value.trim();
   const variant = $("#f-variant").value.trim();
   const pid = normalizePid($("#f-pid").value);
@@ -1025,6 +1112,7 @@ async function saveRecord(e) {
     date, note,
   };
 
+  setBtnBusy(btn, true, "保存中…");
   try {
     let message = "";
     if (editingId != null) {
@@ -1041,6 +1129,8 @@ async function saveRecord(e) {
     if (!visibleSeries.has(seriesKey({ model, variant }))) visibleSeries.add(seriesKey({ model, variant }));
   } catch (err) {
     toast((err && err.message) || "保存失败", "err");
+  } finally {
+    setBtnBusy(btn, false);
   }
 }
 
@@ -1145,6 +1235,8 @@ async function checkServer() {
 /* ================= 事件绑定 & 启动 ================= */
 
 function bindEvents() {
+  // 主题切换后重建图表：Chart.js 的颜色在构造时读取，需跟随 CSS 变量重新取值
+  document.addEventListener("themechange", () => renderAll());
   document.querySelectorAll(".view-tab").forEach((b) => {
     b.addEventListener("click", () => switchView(b.dataset.view));
   });
@@ -1225,8 +1317,15 @@ function bindEvents() {
   $("#f-category").addEventListener("change", (e) => { filters.category = e.target.value; renderAll(); });
   $("#f-result").addEventListener("change", (e) => { filters.result = e.target.value; renderAll(); });
   $("#f-thinking-filter").addEventListener("change", (e) => { filters.thinking = e.target.value; renderAll(); });
-  $("#f-keyword").addEventListener("input", (e) => { filters.keyword = e.target.value; renderAll(); });
+  // 关键字输入防抖：每敲一个字不必全量重渲
+  let kwTimer = null;
+  $("#f-keyword").addEventListener("input", (e) => {
+    filters.keyword = e.target.value;
+    clearTimeout(kwTimer);
+    kwTimer = setTimeout(renderAll, 250);
+  });
   $("#btn-clear-filter").addEventListener("click", () => {
+    clearTimeout(kwTimer);
     filters = { series: "", difficulty: "", category: "", result: "", keyword: "", thinking: "" };
     $("#f-keyword").value = "";
     $("#f-series").value = ""; $("#f-difficulty").value = "";
@@ -1264,15 +1363,19 @@ async function init() {
   try {
     await refreshData();
   } catch (e) {
-    // 离线兜底：展示本地只读缓存
+    // 离线兜底：展示本地只读缓存；连缓存都没有则标记离线，空态里给出提示
     const cache = loadCache();
     if (cache) {
       records = (cache.records || []).map(migrateRecord).filter(Boolean);
       problems = (cache.problems && typeof cache.problems === "object") ? cache.problems : {};
       renderAll();
       toast("无法连接服务器，正在显示本地缓存（只读）", "err");
+    } else {
+      serverOffline = true;
+      $("#boot-title").textContent = "无法连接服务器";
     }
   }
+  $("#boot-loading").hidden = true;   // 无论成功、缓存兜底还是离线，都撤掉首屏加载提示
   visibleSeries = new Set(seriesList());
   renderAll();   // 填充系列后重绘，确保雷达图/柱状图首次加载即显示
   switchView("matrix");   // 默认显示矩阵图
