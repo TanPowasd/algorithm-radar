@@ -1,12 +1,3 @@
 {
-  "version": 2,
-  "rewrites": [
-    { "source": "/api/luogu", "destination": "/api/luogu" }
-  ],
-  "functions": {
-    "api/luogu.py": {
-      "runtime": "python3.12",
-      "maxDuration": 30
-    }
-  }
+  "version": 2
 }
