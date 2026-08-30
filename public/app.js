@@ -461,6 +461,23 @@ function renderMatrix(recs) {
   for (const s of series) html += `<th title="${escapeHtml(s)}">${escapeHtml(s)}</th>`;
   html += "</tr></thead><tbody>";
 
+  // 汇总行（全题目均分 / 总计）放在第一行：不滚动就能对比各模型的整体水平
+  html += `<tr class="sum-row"><th>${isScoreMode ? "全题目均分" : "总计"}</th>`;
+  for (const s of series) {
+    if (isScoreMode) {
+      const avg = seriesOverallAvg(s, recs);
+      const tip = `${s}\n全题目均分：${avg == null ? "–" : avg + " 分"}`;
+      const cls = avg == null ? "score-na" : avg >= 100 ? "score-100" : avg >= 80 ? "score-hi" : avg >= 60 ? "score-mid" : "score-lo";
+      html += `<td class="mcell ${cls}" title="${escapeHtml(tip)}">${avg == null ? "–" : avg + "分"}</td>`;
+    } else {
+      const mine = recs.filter((r) => seriesKey(r) === s);
+      const ac = mine.filter(isPassed).length;
+      const tip = `${s}\n通过：${ac} / ${mine.length} 题`;
+      html += `<td class="mcell total" title="${escapeHtml(tip)}">${ac}/${mine.length}</td>`;
+    }
+  }
+  html += "</tr>";
+
   for (const pid of pids) {
     const info = pidInfo[pid] || {};
     const cache = problems[pid] || {};
@@ -500,24 +517,7 @@ function renderMatrix(recs) {
     }
     html += "</tr>";
   }
-  html += "</tbody>";
-
-  // 底部汇总行：全题目均分（均分模式）或 AC数/题数（提交状态模式）
-  html += `<tfoot><tr><th>${isScoreMode ? "全题目均分" : "总计"}</th>`;
-  for (const s of series) {
-    if (isScoreMode) {
-      const avg = seriesOverallAvg(s, recs);
-      const tip = `${s}\n全题目均分：${avg == null ? "–" : avg + " 分"}`;
-      const cls = avg == null ? "score-na" : avg >= 100 ? "score-100" : avg >= 80 ? "score-hi" : avg >= 60 ? "score-mid" : "score-lo";
-      html += `<td class="mcell ${cls}" title="${escapeHtml(tip)}">${avg == null ? "–" : avg + "分"}</td>`;
-    } else {
-      const mine = recs.filter((r) => seriesKey(r) === s);
-      const ac = mine.filter(isPassed).length;
-      const tip = `${s}\n通过：${ac} / ${mine.length} 题`;
-      html += `<td class="mcell total" title="${escapeHtml(tip)}">${ac}/${mine.length}</td>`;
-    }
-  }
-  html += "</tr></tfoot></table>";
+  html += "</tbody></table>";
   wrap.innerHTML = html;
 }
 
