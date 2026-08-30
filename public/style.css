@@ -123,7 +123,7 @@ a { color: var(--accent); }
 }
 
 .layout {
-  width: min(1360px, 100%);
+  width: min(1600px, 100%);
   margin: 0 auto;
   padding: 0 var(--sp-5);
 }
@@ -139,7 +139,7 @@ a { color: var(--accent); }
 .topbar-inner {
   display: flex; align-items: center; justify-content: space-between;
   gap: var(--sp-4); padding: var(--sp-3) var(--sp-5);
-  width: min(1360px, 100%); margin: 0 auto;
+  width: min(1600px, 100%); margin: 0 auto;
 }
 
 .brand { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
@@ -340,15 +340,29 @@ th .arrow { color: var(--accent); }
 td.num { font-variant-numeric: tabular-nums; }
 
 #matrix-wrap { max-height: 520px; }
-#matrix-wrap table { min-width: 560px; }
+#matrix-wrap table {
+  min-width: 560px;
+  width: 100%;
+  table-layout: fixed;          /* 列宽由容器决定，自动均分剩余空间 */
+  border-collapse: collapse;
+}
 #matrix-wrap td, #matrix-wrap th { text-align: center; }
+#matrix-wrap thead th {
+  white-space: normal;          /* 表头 AI 组合名允许换行 */
+  line-height: 1.35; word-break: break-word;
+}
+#matrix-wrap td, #matrix-wrap th { padding: 6px 5px; }
 #matrix-wrap th:first-child, #matrix-wrap td:first-child {
   position: sticky; left: 0; z-index: 2;
   text-align: left; background: var(--surface);
-  min-width: 208px; max-width: 320px; white-space: normal;
+  min-width: 150px; max-width: 230px; width: 150px;
+  white-space: normal;
 }
 #matrix-wrap thead th:first-child { z-index: 4; background: var(--surface-2); }
 #matrix-wrap tbody tr:hover td:first-child { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+#matrix-wrap td.mcell, #matrix-wrap tfoot td {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .pid-link { color: var(--accent); text-decoration: none; font-weight: 600; }
 .pid-link:hover { text-decoration: underline; }
