@@ -29,30 +29,34 @@
 
 - 记录和题目缓存保存在**当前浏览器的 localStorage** 中（本机、本浏览器）。
 - 洛谷题目信息通过本地服务器代理抓取（洛谷接口有跨域限制和风控，不能从浏览器直接抓），题目缓存在服务器内存中，重启服务后由浏览器缓存兜底。
+- 部署到 Render 后启用**多设备共享**：数据存服务器磁盘 `data.json`（主）+ GitHub Gist 备份，任何设备访问同一网址共享同一份数据。
 - ⚠️ 清除浏览器站点数据会丢失记录。请养成习惯，定期点「导出 JSON」备份；换浏览器/设备用「导入 JSON」恢复。
 
 ## 文件说明
 
 | 文件 | 作用 |
 | --- | --- |
-| `server.py` | 本地辅助服务器（Python 标准库，零依赖）：静态页面 + 洛谷代抓 |
-| `luogu_fetch.py` | 洛谷抓取核心逻辑（本地 server 与 Vercel 函数共用） |
-| `api/luogu.py` `api/ping.py` | Vercel Serverless 函数（线上代抓 / 健康检查） |
-| `public/` | 前端页面（`index.html` `app.js` `style.css` `vendor/chart.umd.js`） |
-| `vercel.json` | Vercel 部署配置 |
-| `start.bat` | 双击启动本地服务器 |
+| `server.py` | 服务器（Python 标准库，零依赖）：静态页面 + 洛谷代抓 + 数据同步 |
+| `luogu_fetch.py` | 洛谷抓取核心逻辑 |
+| `public/` | 前端页面（`index.html` `app.js` `style.css` `admin.html` `admin.js` `vendor/chart.umd.js`） |
 | `tags.json` | 洛谷标签 ID→名称映射种子（version zh-CN/2026082918，2026-08-29 抓取） |
+| `requirements.txt` | 依赖声明（零依赖，Render 部署需要） |
+| `start.bat` | 双击启动本地服务器 |
 
-## 部署到 Vercel（可选）
-
-项目已适配 Vercel：静态文件在 `public/`，洛谷代抓为 Serverless 函数（`api/`）。
+## 部署到 Render（线上多设备共享）
 
 1. 把代码推到 GitHub 仓库
-2. 到 [vercel.com](https://vercel.com) 用 GitHub 登录 → **New Project** → 导入该仓库
-3. Framework Preset 选 **Other**，其余默认，点 **Deploy**
-4. 部署完成后获得 `https://<project>.vercel.app` 地址
+2. 到 [render.com](https://render.com) 用 GitHub 登录 → **New Web Service** → 导入该仓库
+3. 配置：
+   - **Build Command**: 留空
+   - **Start Command**: `python server.py`
+   - **Instance Type**: Free（免费，休眠时首次访问需等待唤醒）
+4. 环境变量（数据备份，可选但推荐）：
+   - `GIST_TOKEN`（GitHub Personal Access Token，`gist` 权限）
+   - `GIST_ID`（私有 Gist ID，内容初始为 `{"records":[],"problems":{}}`）
+5. 部署完成后获得 `https://<project>.onrender.com` 地址
 
-> 提示：Vercel 免费版 Serverless 函数有冷启动与执行时长限制；洛谷风控偶发拦截时仍可手动填写题目信息（与本地版一致）。
+> 提示：洛谷风控偶发拦截时仍可手动填写题目信息（与本地版一致）。
 
 ## 数据口径说明
 
@@ -64,4 +68,5 @@
 ## 已知限制
 
 - 洛谷有反爬风控：偶发 302 循环或拦截时会返回错误提示，此时手动填写题目信息即可；题目信息抓取成功后会缓存在浏览器中，不会重复请求。
-- 服务器仅监听 `127.0.0.1`，只在本机可用（设计如此，数据不出本机）。
+- 本地运行时服务器仅监听 `127.0.0.1`（数据不出本机）；部署到 Render 时自动监听 `0.0.0.0`（公网可访问）。
+- Render 免费实例 15 分钟无访问会休眠，再次访问需等待 30–60 秒唤醒（数据不受影响）。

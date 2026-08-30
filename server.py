@@ -5,8 +5,9 @@
 职责：
   1. 提供前端静态页面（public/ 下固定白名单文件）
   2. 洛谷题目信息代理抓取（题目名/难度/算法标签），结果缓存在内存中
-     - 抓取逻辑见 luogu_fetch.py（本地 server 与 Vercel 函数共用）
+     - 抓取逻辑见 luogu_fetch.py
      - 标签 ID 到名称的映射使用项目根 tags.json（洛谷官方标签表，version zh-CN/2026082918）
+  3. 多设备数据共享（/api/sync）：磁盘 data.json 主存 + GitHub Gist 备份
 
 说明：竞赛记录与题目缓存由前端保存在浏览器 localStorage 中（页面内可导出/导入
      JSON 备份），本服务器不写入任何数据文件——所有文件访问均为固定白名单，
