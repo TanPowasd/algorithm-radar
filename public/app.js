@@ -143,16 +143,20 @@ function chainHtml(r) {
 
 /* ---------- 存取 ---------- */
 
-/** 云端同步：把 records/problems 推送到共享存储（Vercel /api/sync 代理） */
+/** 云端同步：把 records/problems 推送到共享存储（Vercel /api/sync 代理）。
+    失败时提示（不再静默），避免用户误以为已同步。 */
 async function pushCloud() {
   try {
-    await fetch("/api/sync", {
+    const resp = await fetch("/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ records, problems }),
     });
+    if (!resp.ok && resp.status !== 503) {
+      console.warn("云端同步失败 HTTP", resp.status);
+    }
   } catch (e) {
-    console.warn("云端同步推送失败（不影响本地）：", e);
+    console.warn("云端同步推送失败（数据仍在本地）：", e);
   }
 }
 
@@ -1290,17 +1294,44 @@ async function checkServer() {
 async function init() {
   loadState();
   loadAuth();
-  // 多设备共享：启动时尝试从云端拉取（云端有数据则覆盖本地）
+  // 多设备共享：启动时拉取云端数据并与本地「合并」（按 id 去重，保留更新的），
+  // 避免云端旧数据整体覆盖本地新数据导致「刷新后数据缺失」
   const cloud = await pullCloud();
-  if (cloud && cloud.records && cloud.records.length) {
-    records = cloud.records.map(migrateRecord);
-    if (cloud.problems && typeof cloud.problems === "object") problems = cloud.problems;
-    saveState(); // 写回本地
+  if (cloud && Array.isArray(cloud.records)) {
+    const merged = mergeRecords(records, cloud.records);
+    if (merged.length !== records.length) {
+      records = merged.map(migrateRecord);
+      if (cloud.problems && typeof cloud.problems === "object") {
+        // 题目缓存合并：本地优先
+        for (const [pid, info] of Object.entries(cloud.problems)) {
+          if (!problems[pid]) problems[pid] = info;
+        }
+      }
+      saveState(); // 合并结果写回本地
+    }
   }
   visibleSeries = new Set(seriesList());
   bindEvents();
   renderAll();
   checkServer();
+}
+
+/** 按 id 合并两组记录：两边都有的取 updatedAt 较新的；缺失的补上 */
+function mergeRecords(local, cloud) {
+  const byId = new Map();
+  for (const r of local) byId.set(r.id, r);
+  let changed = false;
+  for (const r of cloud) {
+    const exist = byId.get(r.id);
+    if (!exist) {
+      byId.set(r.id, r);
+      changed = true;
+    } else if ((r.updatedAt || "") > (exist.updatedAt || "")) {
+      byId.set(r.id, r); // 云端更新 → 用云端
+      changed = true;
+    }
+  }
+  return changed ? [...byId.values()] : local;
 }
 
 document.addEventListener("DOMContentLoaded", init);

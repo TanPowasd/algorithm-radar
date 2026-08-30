@@ -105,8 +105,26 @@ async function pushCloud() {
       body: JSON.stringify({ records, problems }),
     });
   } catch (e) {
-    console.warn("云端同步推送失败（不影响本地）：", e);
+    console.warn("云端同步推送失败（数据仍在本地）：", e);
   }
+}
+
+/** 按 id 合并两组记录：两边都有的取 updatedAt 较新的；缺失的补上 */
+function mergeRecords(local, cloud) {
+  const byId = new Map();
+  for (const r of local) byId.set(r.id, r);
+  let changed = false;
+  for (const r of cloud) {
+    const exist = byId.get(r.id);
+    if (!exist) {
+      byId.set(r.id, r);
+      changed = true;
+    } else if ((r.updatedAt || "") > (exist.updatedAt || "")) {
+      byId.set(r.id, r);
+      changed = true;
+    }
+  }
+  return changed ? [...byId.values()] : local;
 }
 
 /** 从云端拉取共享数据；未配置/失败返回 null */
@@ -293,12 +311,19 @@ function bindEvents() {
 async function init() {
   loadState();
   loadAuth();
-  // 多设备共享：启动时拉取云端数据（有则覆盖本地）
+  // 多设备共享：启动时拉取云端数据并与本地「合并」（按 id 去重，保留更新的）
   const cloud = await pullCloud();
-  if (cloud && cloud.records && cloud.records.length) {
-    records = cloud.records.map(migrateRecord);
-    if (cloud.problems && typeof cloud.problems === "object") problems = cloud.problems;
-    saveState();
+  if (cloud && Array.isArray(cloud.records)) {
+    const merged = mergeRecords(records, cloud.records);
+    if (merged.length !== records.length) {
+      records = merged.map(migrateRecord);
+      if (cloud.problems && typeof cloud.problems === "object") {
+        for (const [pid, info] of Object.entries(cloud.problems)) {
+          if (!problems[pid]) problems[pid] = info;
+        }
+      }
+      saveState();
+    }
   }
   bindEvents();
   renderAll();
