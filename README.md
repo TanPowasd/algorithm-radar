@@ -21,9 +21,8 @@
 ## 权限与审核
 
 - **游客**（默认，无需登录）：可以**新增**记录（提交后为「待审核」状态，**不进入统计**）；**不能**删除、编辑记录，**不能**导出/导入
-- **管理员**：点右上角「管理员登录」，输入**用户名 `TanPowasd`** 与密码；可删除/编辑记录、审核游客提交（通过后计入统计）、导出/导入
-- **密码存储**：代码中**不含明文密码**，仅存 SHA-256 哈希（`public/app.js` 顶部的 `ADMIN_PASSWORD_HASH`）；登录时对输入做同算法哈希比对。修改密码 = 用任意 SHA-256 工具算出新密码哈希后替换该常量
-- ⚠️ 权限基于前端 localStorage + 前端哈希校验，适用于本地/家庭使用，**不具备真正的安全隔离**（懂技术的人可绕过）；如需严格权限请另行设计后端鉴权
+- **管理员**：点右上角「管理员登录」，输入管理员用户名与口令；可删除/编辑记录、审核游客提交（通过后计入统计）、导出/导入
+- **密码存储**：口令只以 PBKDF2 哈希保存在服务端（环境变量或 `credentials.json`，后者已 gitignore），校验全部在服务端完成，前端不持有任何凭据。修改口令的方法见下方「部署到 Render」一节
 
 ## 数据存哪里？
 
@@ -67,7 +66,7 @@
 3. 在服务 → **Environment** 里补填两个 secret：
    - `GIST_TOKEN` = 上一步的 GitHub 令牌
    - `GIST_ID` = Gist ID
-   - （可选）`ADMIN_PASSWORD_HASH` = 自定义管理员口令哈希，留空则用代码内置默认账号 `TanPowasd` / `powasd`
+   - （可选）`ADMIN_PASSWORD_HASH` = 自定义管理员口令哈希，留空则使用代码内置默认账号
 
 **方式 B：手动 Web Service**
 1. 把代码推到 GitHub 仓库
@@ -84,7 +83,7 @@
    - `ADMIN_PASSWORD_HASH`（自定义口令的 PBKDF2 哈希，可留空用默认）
 5. 部署完成后获得 `https://<project>.onrender.com` 地址
 
-> ⚠️ 换口令：在任意 Python 环境运行 `python -c "import auth; print(auth.hash_password('新口令'))"`（需 8 位以上），把输出填进 `ADMIN_PASSWORD_HASH`。默认口令 `powasd` 偏弱，**公网部署强烈建议覆盖**。
+> ⚠️ 换口令：在任意 Python 环境运行 `python -c "import auth; print(auth.hash_password('新口令'))"`（需 8 位以上），把输出填进 `ADMIN_PASSWORD_HASH`。内置默认口令偏弱，**公网部署务必覆盖**。
 
 > 提示：洛谷风控偶发拦截时仍可手动填写题目信息（与本地版一致）。
 
