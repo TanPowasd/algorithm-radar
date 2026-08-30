@@ -10,7 +10,7 @@ const DIFF_NAMES = ["暂无评定", "入门", "普及−", "普及/提高−", "
 
 const RESULTS = ["AC", "WA", "TLE", "MLE", "RE", "CE", "未解出"];
 
-const CATEGORY_ORDER = ["模拟/枚举", "贪心", "二分/分治", "搜索", "动态规划", "图论", "数据结构", "字符串", "数学", "计算几何"];
+const CATEGORY_ORDER = ["模拟/枚举", "贪心", "二分/分治", "搜索", "动态规划", "图论", "数据结构", "树", "字符串", "数学", "计算几何"];
 
 const SERIES_COLORS = ["#58a6ff", "#3fb950", "#bc8cff", "#f0883e", "#f85149", "#39c5cf", "#d2a8ff", "#7ee787", "#ffa657", "#ff7b72"];
 
@@ -294,6 +294,8 @@ function renderRadar(recs) {
       pointBackgroundColor: color,
       pointRadius: 3,
       spanGaps: false,
+      // 未作答的轴：不画点、不连线（避免 null 被误画到 0 或错位）
+      pointHoverRadius: 4,
     };
   });
 
@@ -445,13 +447,25 @@ function renderSeriesLegend(recs) {
   if (!list.length) { wrap.innerHTML = ""; return; }
   wrap.innerHTML = list.map((s) => {
     const mine = recs.filter((r) => seriesKey(r) === s);
-    const rate = radarMetric === "avgscore"
-      ? (() => { const sums = mine.map(firstRoundScore).filter((x) => x != null); return sums.length ? Math.round(sums.reduce((a, b) => a + b, 0) / sums.length) + "分" : "–"; })()
-      : (() => { const ac = mine.filter(passedOf).length; return mine.length ? Math.round((ac / mine.length) * 100) + "%" : "–"; })();
+    // 图例数值与雷达图口径一致：
+    // - 平均分模式：所有有分记录的首轮均分
+    // - AC 模式：雷达图各轴 AC 率的平均值（未作答轴不计入），与图上点对应
+    let rate;
+    if (radarMetric === "avgscore") {
+      const sums = mine.map(firstRoundScore).filter((x) => x != null);
+      rate = sums.length ? Math.round(sums.reduce((a, b) => a + b, 0) / sums.length) + "分" : "–";
+    } else {
+      const myStats = axisStats(mine);
+      let sum = 0, cnt = 0;
+      for (const st of myStats.values()) {
+        if (st.total > 0) { sum += st.ac / st.total; cnt += 1; }
+      }
+      rate = cnt ? Math.round((sum / cnt) * 100) + "%" : "–";
+    }
     const off = visibleSeries.has(s) ? "" : "off";
-    return `<span class="series-chip ${off}" data-series="${escapeHtml(s)}" title="点击显示/隐藏该系列">
+    return `<span class="series-chip ${off}" data-series="${escapeHtml(s)}" title="雷达图各轴AC率的平均值（未作答轴不计入）">
       <span class="dot" style="background:${seriesColor(s)}"></span>
-      ${escapeHtml(s)} <span class="rate">${rate}%</span>
+      ${escapeHtml(s)} <span class="rate">${rate}</span>
     </span>`;
   }).join("");
   wrap.querySelectorAll(".series-chip").forEach((chip) => {
