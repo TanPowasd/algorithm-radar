@@ -15,7 +15,7 @@ const LS_PROBLEMS = "radar.problems.v1";
 const LS_AUTH = "radar.auth.v1";
 
 const ADMIN_USERNAME = "TanPowasd";
-const ADMIN_PASSWORD_HASH = "46ca2bb3ebc1b4dbbae33073ee0b58eefb48ceaf5d45b0b1499c084648a2d0ad"; // W.ang142857
+const ADMIN_PASSWORD_HASH = "46ca2bb3ebc1b4dbbae33073ee0b58eefb48ceaf5d45b0b1499c084648a2d0ad";
 
 /* ================= 状态 ================= */
 

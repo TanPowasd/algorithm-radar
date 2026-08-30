@@ -24,7 +24,7 @@ const LS_AUTH = "radar.auth.v1";
 
 // 管理员账号（用户名明文，密码仅存 SHA-256 哈希，代码中不含明文密码）
 const ADMIN_USERNAME = "TanPowasd";
-const ADMIN_PASSWORD_HASH = "46ca2bb3ebc1b4dbbae33073ee0b58eefb48ceaf5d45b0b1499c084648a2d0ad"; // W.ang142857
+const ADMIN_PASSWORD_HASH = "46ca2bb3ebc1b4dbbae33073ee0b58eefb48ceaf5d45b0b1499c084648a2d0ad";
 
 /* ================= 状态 ================= */
 
