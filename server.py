@@ -30,33 +30,88 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PORT = int(os.environ.get("PORT", "8471"))
 
-# 多设备共享（JSONBin）配置：Render 环境变量
-JSONBIN_API_KEY = os.environ.get("JSONBIN_API_KEY", "")
-JSONBIN_BIN_ID = os.environ.get("JSONBIN_BIN_ID", "")
+# 数据存储（多设备共享）：
+#   主存储 = 本机磁盘 data.json（Render 免费实例磁盘，读写无限）
+#   备份   = GitHub Gist（环境变量 GIST_TOKEN + GIST_ID；未配置则跳过备份）
+GIST_TOKEN = os.environ.get("GIST_TOKEN", "")
+GIST_ID = os.environ.get("GIST_ID", "")
+DATA_FILE = os.path.join(BASE_DIR, "data.json")
+DATA_LOCK = threading.Lock()
 
 # 题目信息内存缓存：{pid: info}，仅供本次运行加速，不落盘
 PROBLEM_CACHE = {}
 CACHE_LOCK = threading.Lock()
 
 
-def jsonbin_sync(method, payload=None):
-    """读写 JSONBin（多设备共享）。GET 返回 dict，POST 写入。未配置时返回 None"""
-    if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
-        return None
-    url = "https://api.jsonbin.io/v3/b/%s%s" % (JSONBIN_BIN_ID, "" if method == "POST" else "/latest")
-    headers = {
-        "X-Master-Key": JSONBIN_API_KEY,
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": luogu_fetch.LUOGU_UA,  # 用浏览器 UA，避免被 JSONBin 风控
+def _gist_headers():
+    return {
+        "Authorization": "token %s" % GIST_TOKEN,
+        "Accept": "application/vnd.github+json",
+        "User-Agent": luogu_fetch.LUOGU_UA,
     }
-    data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(url, data=data, method="PUT" if method == "POST" else "GET", headers=headers)
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        body = resp.read().decode("utf-8")
-    if method == "POST":
-        return {"ok": True}
-    return json.loads(body).get("record", {})
+
+
+def gist_read():
+    """从 Gist 读取数据（备份恢复用）。未配置/失败返回 None"""
+    if not GIST_TOKEN or not GIST_ID:
+        return None
+    try:
+        req = urllib.request.Request("https://api.github.com/gists/%s" % GIST_ID, headers=_gist_headers())
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        # Gist 文件内容在 files 里（通常只有一个文件）
+        for f in (data.get("files") or {}).values():
+            content = f.get("content")
+            if content:
+                return json.loads(content)
+        return None
+    except Exception as e:
+        print("[warn] Gist 读取失败：%s" % e, file=__import__("sys").stderr)
+        return None
+
+
+def gist_write(payload):
+    """把数据写入 Gist（备份）。未配置/失败静默（不影响主存储）"""
+    if not GIST_TOKEN or not GIST_ID:
+        return
+    try:
+        body = json.dumps({
+            "files": {"algorithm-radar-data.json": {"content": json.dumps(payload, ensure_ascii=False)}},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.github.com/gists/%s" % GIST_ID,
+            data=body, method="PATCH", headers=_gist_headers())
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            resp.read()
+    except Exception as e:
+        print("[warn] Gist 写入失败：%s" % e, file=__import__("sys").stderr)
+
+
+def data_read():
+    """读共享数据：磁盘优先，磁盘无则 Gist 恢复"""
+    with DATA_LOCK:
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            pass
+    # 磁盘没有 → 从 Gist 恢复
+    data = gist_read()
+    if data:
+        data_write(data)
+        return data
+    return {}
+
+
+def data_write(payload):
+    """写共享数据：磁盘（主）+ Gist（备份）"""
+    with DATA_LOCK:
+        try:
+            with open(DATA_FILE, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+        except OSError as e:
+            print("[warn] 磁盘写入失败：%s" % e, file=__import__("sys").stderr)
+    gist_write(payload)
 
 # ---------------------------------------------------------------- 静态文件白名单
 # 只允许读取下面这些固定文件，键为 URL 路径，值为 (磁盘字面量路径, Content-Type)
@@ -161,11 +216,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- 多设备共享（/api/sync）----
     def _handle_sync(self):
-        if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
-            self._send(503, {"error": "sync not configured"})
-            return
         try:
-            data = jsonbin_sync("GET")
+            data = data_read()
             self._send(200, data if isinstance(data, dict) else {})
         except Exception as e:
             self._send(502, {"error": "sync failed: %s" % e})
@@ -174,12 +226,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         try:
             if path == "/api/sync":
-                if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
-                    self._send(503, {"error": "sync not configured"})
-                    return
                 length = int(self.headers.get("Content-Length") or 0)
                 payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}") if length else {}
-                jsonbin_sync("POST", payload)
+                data_write(payload)
                 self._send(200, {"ok": True})
             else:
                 self._send(404, {"error": "not found"})
