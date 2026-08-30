@@ -28,10 +28,23 @@
 | 文件 | 作用 |
 | --- | --- |
 | `server.py` | 本地辅助服务器（Python 标准库，零依赖）：静态页面 + 洛谷代抓 |
-| `start.bat` | 双击启动 |
-| `static/index.html` `static/app.js` `static/style.css` | 前端页面 |
-| `static/vendor/chart.umd.js` | Chart.js v4.5.1（本地化，离线可用，MIT） |
+| `luogu_fetch.py` | 洛谷抓取核心逻辑（本地 server 与 Vercel 函数共用） |
+| `api/luogu.py` `api/ping.py` | Vercel Serverless 函数（线上代抓 / 健康检查） |
+| `public/` | 前端页面（`index.html` `app.js` `style.css` `vendor/chart.umd.js`） |
+| `vercel.json` | Vercel 部署配置 |
+| `start.bat` | 双击启动本地服务器 |
 | `tags.json` | 洛谷标签 ID→名称映射种子（version zh-CN/2026082918，2026-08-29 抓取） |
+
+## 部署到 Vercel（可选）
+
+项目已适配 Vercel：静态文件在 `public/`，洛谷代抓为 Serverless 函数（`api/`）。
+
+1. 把代码推到 GitHub 仓库
+2. 到 [vercel.com](https://vercel.com) 用 GitHub 登录 → **New Project** → 导入该仓库
+3. Framework Preset 选 **Other**，其余默认，点 **Deploy**
+4. 部署完成后获得 `https://<project>.vercel.app` 地址
+
+> 提示：Vercel 免费版 Serverless 函数有冷启动与执行时长限制；洛谷风控偶发拦截时仍可手动填写题目信息（与本地版一致）。
 
 ## 数据口径说明
 

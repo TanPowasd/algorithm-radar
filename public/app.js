@@ -163,11 +163,10 @@ function applyFilters() {
 
 /* ================= 雷达图 ================= */
 
-/** 首轮得分：AC 但未填分按 100 计；非 AC 且未填分返回 null */
+/** 首轮得分：无分数返回 null（不记录），有分数返回分数 */
 function firstRoundScore(r) {
   const sc = firstSub(r).score;
-  if (sc == null) return firstSub(r).result === "AC" ? 100 : null;
-  return sc;
+  return sc == null ? null : sc;
 }
 
 function axisStats(recs) {
@@ -292,7 +291,7 @@ function renderRadar(recs) {
     $("#radar-hint").textContent = "还没有任何记录——点击右上角「提交记录」开始积累数据。";
   } else {
     const m = radarMetric === "avgscore"
-      ? "首轮平均分（AC 无分按 100 计；未计分不计入）"
+      ? "首轮平均分（无分数的轮次不记录）"
       : `${radarMetric === "first" ? "首轮提交 AC" : "最终提交 AC"} 的测试通过率`;
     const d = radarDim === "category" ? "算法类别（来自洛谷标签自动归类）" : "难度等级（洛谷八档）";
     $("#radar-hint").textContent = `轴值 = ${m}，按${d}分轴；未作答的轴显示为空缺。`;
@@ -329,16 +328,26 @@ function renderSeriesLegend(recs) {
 
 function renderMatrix(recs) {
   const wrap = $("#matrix-wrap");
-  const pids = [...new Set(recs.map((r) => r.pid))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const pids = [...new Set(recs.map((r) => r.pid))];
   const series = seriesList().filter((s) => recs.some((r) => seriesKey(r) === s));
+  const isScoreMode = matrixMode === "score" || matrixMode === "finalscore";
+
+  // 均分模式下列（模型）按「全题目均分」降序排列；无计分数据排最后
+  if (isScoreMode) {
+    series.sort((a, b) => (seriesOverallAvg(b, recs) ?? -1) - (seriesOverallAvg(a, recs) ?? -1));
+    // 行（题目）按「当前口径下有分数轮次的均分」降序排列；无分数排最后
+    pids.sort((a, b) => (problemAvg(b, recs) ?? -1) - (problemAvg(a, recs) ?? -1));
+  } else {
+    pids.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }
 
   // 均分模式图例提示
   const hintEl = $("#matrix-hint");
   if (matrixMode === "score") {
-    hintEl.textContent = "数值 = 该 AI 组合在此题的多次测试中「首轮得分」的平均值（未记录得分的测试不计入；AC 但无得分按 100 计）。";
+    hintEl.textContent = "数值 = 该 AI 组合在此题的多次测试中「首轮得分」的平均值（无分数的轮次不记录，不计入均分）。";
     hintEl.hidden = false;
   } else if (matrixMode === "finalscore") {
-    hintEl.textContent = "数值 = 该 AI 组合在此题的多次测试中「最终轮得分」的平均值（未记录得分的测试不计入；AC 但无得分按 100 计）。";
+    hintEl.textContent = "数值 = 该 AI 组合在此题的多次测试中「最终轮得分」的平均值（无分数的轮次不记录，不计入均分）。";
     hintEl.hidden = false;
   } else {
     hintEl.textContent = "";
@@ -402,22 +411,68 @@ function renderMatrix(recs) {
     }
     html += "</tr>";
   }
-  html += "</tbody></table>";
+  html += "</tbody>";
+
+  // 底部汇总行：全题目均分（均分模式）或 AC数/题数（提交状态模式）
+  html += `<tfoot><tr><th>${isScoreMode ? "全题目均分" : "总计"}</th>`;
+  for (const s of series) {
+    if (isScoreMode) {
+      const avg = seriesOverallAvg(s, recs);
+      const tip = `${s}\n全题目均分：${avg == null ? "–" : avg + " 分"}`;
+      const cls = avg == null ? "score-na" : avg >= 100 ? "score-100" : avg >= 80 ? "score-hi" : avg >= 60 ? "score-mid" : "score-lo";
+      html += `<td class="mcell ${cls}" title="${escapeHtml(tip)}">${avg == null ? "–" : avg + "分"}</td>`;
+    } else {
+      const mine = recs.filter((r) => seriesKey(r) === s);
+      const ac = mine.filter(isPassed).length;
+      const tip = `${s}\n通过：${ac} / ${mine.length} 题`;
+      html += `<td class="mcell total" title="${escapeHtml(tip)}">${ac}/${mine.length}</td>`;
+    }
+  }
+  html += "</tr></tfoot></table>";
   wrap.innerHTML = html;
 }
 
-/* 均分单元格：多次测试取指定轮次（首轮/最终轮）得分的平均值（AC 但无得分按 100 计，未计分的测试不计入） */
+/* 某模型在当前矩阵口径下的「全题目均分」：该模型所有记录的 submissions 中，
+   记了分的提交轮次分数总和 ÷ 记分轮次数（无分数的轮次不计入）。返回取整均分；无记分返回 null。 */
+function seriesOverallAvg(s, recs) {
+  const mine = recs.filter((r) => seriesKey(r) === s);
+  let total = 0, cnt = 0;
+  for (const r of mine) {
+    for (const sub of r.submissions) {
+      if (sub.score == null) continue; // 无分数的不记录
+      total += sub.score;
+      cnt += 1;
+    }
+  }
+  return cnt ? Math.round(total / cnt) : null;
+}
+
+/* 某题在当前矩阵口径下的「有分数轮次均分」：所有模型对该题的所有测试中，
+   取对应轮次（score→首轮，finalscore→最终轮）的有分数记录，加总 ÷ 记分轮次数。
+   返回取整均分；无记分返回 null。与单元格/排序口径一致。 */
+function problemAvg(pid, recs) {
+  const rs = recs.filter((r) => r.pid === pid);
+  const isFirst = matrixMode === "score";
+  let total = 0, cnt = 0;
+  for (const r of rs) {
+    const sub = isFirst ? firstSub(r) : lastSub(r);
+    const sc = sub.score;
+    if (sc == null) continue; // 无分数的不记录
+    total += sc;
+    cnt += 1;
+  }
+  return cnt ? Math.round(total / cnt) : null;
+}
+
+/* 均分单元格：多次测试取指定轮次（首轮/最终轮）得分的平均值（无分数的轮次不记录，不计入均分） */
 function scoreCellHtml(s, pid, rs, roundLabel) {
   let sum = 0, cnt = 0;
   const per = [];
   const isFirst = roundLabel === "首轮";
   for (const r of rs) {
     const sub = isFirst ? firstSub(r) : lastSub(r);
-    let sc = sub.score;
-    if (sc == null) {
-      if (sub.result === "AC") sc = 100; // AC 但未填分：按满分计
-      else continue;                      // 非 AC 且未计分：不计入均分
-    }
+    const sc = sub.score;
+    if (sc == null) continue; // 无分数的不记录
     sum += sc;
     cnt += 1;
     per.push(sc);
@@ -426,7 +481,8 @@ function scoreCellHtml(s, pid, rs, roundLabel) {
     return '<td class="mcell score-na" title="' + escapeHtml(`${s} · ${pid}\n该题共 ${rs.length} 次测试，均未记录得分`) + '">–</td>';
   }
   const avg = Math.round(sum / cnt);
-  const cls = avg >= 80 ? "score-hi" : avg >= 60 ? "score-mid" : "score-lo";
+  // 满分（100）用特殊金色标记，与 80–99 的绿色区分
+  const cls = avg >= 100 ? "score-100" : avg >= 80 ? "score-hi" : avg >= 60 ? "score-mid" : "score-lo";
   const avgLine = `${avg}分`;
   const perLine = per.join("、") + "（分）";
   const cntLine = `${rs.length} 次测试${rs.length === cnt ? "" : `（其中 ${cnt} 次记分）`}`;

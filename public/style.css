@@ -148,14 +148,28 @@ td.mcell.giveup{ background: rgba(110, 118, 129, .38); color: #d0d7de; }
 td.mcell.none  { background: rgba(110, 118, 129, .12); color: var(--muted); }
 
 /* 首轮均分模式单元格 */
+td.mcell.score-100 { background: rgba(210, 168, 255, .55); color: #fff; border: 1px solid rgba(210, 168, 255, .6); }
 td.mcell.score-hi  { background: rgba(46, 160, 67, .5);  color: #fff; }
 td.mcell.score-mid { background: rgba(240, 136, 62, .5); color: #fff; }
 td.mcell.score-lo  { background: rgba(248, 81, 73, .5);  color: #fff; }
 td.mcell.score-na  { background: rgba(110, 118, 129, .15); color: var(--muted); }
+.cell-chip.score-100 { background: rgba(210, 168, 255, .85); }
 .cell-chip.score-hi  { background: rgba(46, 160, 67, .85); }
 .cell-chip.score-mid { background: rgba(240, 136, 62, .85); }
 .cell-chip.score-lo  { background: rgba(248, 81, 73, .8); }
 .cell-chip.score-na  { background: rgba(110, 118, 129, .35); color: var(--muted); }
+
+/* 矩阵底部汇总行 */
+#matrix-wrap tfoot th, #matrix-wrap tfoot td {
+  background: var(--card2);
+  border-top: 2px solid var(--border);
+  font-weight: 600;
+}
+#matrix-wrap tfoot td.mcell.total {
+  background: rgba(88, 166, 255, .12);
+  color: var(--accent);
+  white-space: nowrap;
+}
 
 /* 筛选区 */
 .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
