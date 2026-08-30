@@ -808,9 +808,10 @@ function renderAuthUI() {
   $("#btn-logout").hidden = !isAdmin;
   $("#btn-export").hidden = !isAdmin;
   $("#btn-import").hidden = !isAdmin;
+  $("#btn-admin").hidden = !isAdmin;
 }
 
-/** 待审核列表（仅管理员可见） */
+/** 待审核摘要（仅管理员可见，完整审核在独立审核台 /admin.html） */
 function renderPending() {
   const card = $("#pending-card");
   const wrap = $("#pending-wrap");
@@ -822,7 +823,7 @@ function renderPending() {
     wrap.innerHTML = '<p class="muted" style="padding:16px">暂无待审核提交。</p>';
     return;
   }
-  const rows = pend.map((r) => `
+  const rows = pend.slice(0, 8).map((r) => `
     <tr>
       <td>${escapeHtml(r.date)}</td>
       <td>${escapeHtml(seriesKey(r))}</td>
@@ -830,34 +831,11 @@ function renderPending() {
       <td><a class="pid-link" href="https://www.luogu.com.cn/problem/${encodeURIComponent(r.pid)}" target="_blank" rel="noopener">${escapeHtml(r.pid)}</a></td>
       <td>${escapeHtml(r.title || "")}</td>
       <td>${diffTagHtml(r.difficulty)}</td>
-      <td><span class="chain">${chainHtml(r)}</span></td>
-      <td><button class="btn small" data-approve="${r.id}">通过</button>
-          <button class="btn small danger" data-reject="${r.id}">拒绝</button></td>
     </tr>`).join("");
   wrap.innerHTML = `<table><thead><tr>
-      <th>日期</th><th>AI 组合</th><th>思考</th><th>题号</th><th>题目</th><th>难度</th><th>提交轨迹</th><th>操作</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
-  wrap.querySelectorAll("button[data-approve]").forEach((b) => {
-    b.addEventListener("click", () => {
-      const id = Number(b.dataset.approve);
-      const rec = records.find((x) => x.id === id);
-      if (!rec) return;
-      rec.status = "approved";
-      saveState(); renderAll();
-      toast("已通过，计入统计", "ok");
-    });
-  });
-  wrap.querySelectorAll("button[data-reject]").forEach((b) => {
-    b.addEventListener("click", () => {
-      const id = Number(b.dataset.reject);
-      const rec = records.find((x) => x.id === id);
-      if (!rec) return;
-      if (!confirm(`拒绝并删除该游客提交：${seriesKey(rec)} · ${rec.pid}？`)) return;
-      records = records.filter((x) => x.id !== id);
-      saveState(); renderAll();
-      toast("已拒绝并删除", "ok");
-    });
-  });
+      <th>日期</th><th>AI 组合</th><th>思考</th><th>题号</th><th>题目</th><th>难度</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <p class="hint" style="margin-top:10px"><a class="pid-link" href="/admin.html">前往审核台处理全部 ${pend.length} 条待审核提交 →</a></p>`;
 }
 
 /* ================= 表单：提交列表编辑器 ================= */

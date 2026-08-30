@@ -21,6 +21,7 @@
     <button id="btn-export" class="btn" hidden>导出 JSON</button>
     <button id="btn-import" class="btn" hidden>导入 JSON</button>
     <input type="file" id="import-file" accept=".json" hidden>
+    <a id="btn-admin" class="btn" href="/admin.html" hidden>审核台</a>
     <button id="btn-login" class="btn">管理员登录</button>
     <button id="btn-logout" class="btn" hidden>退出登录</button>
   </div>
@@ -125,9 +126,9 @@
   <section class="card" id="pending-card" hidden>
     <div class="card-head">
       <h2>待审核提交 <span id="pending-count" class="muted"></span></h2>
+      <a class="btn small" href="/admin.html">前往审核台</a>
     </div>
     <div class="table-scroll" id="pending-wrap"></div>
-    <p class="hint">游客提交的记录需管理员审核通过后才会计入统计。管理员可「通过」或「拒绝」。</p>
   </section>
 </main>
 

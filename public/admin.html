@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>审核台 · 算法雷达站</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { padding-bottom: 60px; }
+  .admin-topbar {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+    padding: 14px 22px; background: linear-gradient(180deg, #10161f, #0d1117);
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 50;
+  }
+  .admin-topbar h1 { margin: 0; font-size: 18px; }
+  .admin-topbar .sub { color: var(--muted); font-size: 12px; }
+  .admin-main { padding: 16px 22px; display: flex; flex-direction: column; gap: 16px; }
+  .pending-summary { display: flex; gap: 14px; flex-wrap: wrap; }
+  .pending-summary .stat { min-width: 100px; }
+  .review-table td, .review-table th { white-space: nowrap; }
+  .review-table .note-cell { max-width: 240px; white-space: normal; }
+  .review-table .sub-chain { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .review-actions { display: flex; gap: 6px; }
+  .batch-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .filters { margin-bottom: 0; }
+  .empty-tip { padding: 24px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="admin-topbar">
+  <div>
+    <h1>🛡️ 审核台</h1>
+    <p class="sub">算法雷达站 · 游客提交审核工作台</p>
+  </div>
+  <div class="topbar-actions">
+    <a class="btn" href="/" target="_blank">← 返回主页</a>
+    <button id="btn-logout" class="btn">退出登录</button>
+  </div>
+</div>
+
+<div class="admin-main">
+  <!-- 未登录门禁 -->
+  <section class="card" id="login-gate" hidden>
+    <h2 style="margin-top:0">管理员登录</h2>
+    <form id="login-form" style="max-width:360px">
+      <label>用户名<input id="login-user" autocomplete="username" placeholder="管理员用户名"></label>
+      <label>密码<input type="password" id="login-pass" autocomplete="current-password" placeholder="管理员密码"></label>
+      <div class="modal-actions" style="margin-top:12px">
+        <button type="submit" class="btn primary">登录</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- 审核工作区 -->
+  <div id="work-area" hidden>
+    <section class="card">
+      <div class="pending-summary">
+        <div class="stat"><b id="stat-pending">0</b><span>待审核</span></div>
+        <div class="stat"><b id="stat-today">0</b><span>今日提交</span></div>
+        <div class="stat"><b id="stat-guest">0</b><span>游客总数</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>待审核提交</h2>
+        <div class="batch-bar">
+          <button id="btn-approve-all" class="btn">全部通过</button>
+          <button id="btn-reject-all" class="btn danger">全部拒绝</button>
+        </div>
+      </div>
+      <div class="filters">
+        <input id="f-keyword" type="search" placeholder="搜索模型 / 题号 / 题目 / 备注…">
+        <select id="f-series"><option value="">全部 AI 组合</option></select>
+      </div>
+      <div class="table-scroll" id="pending-wrap"></div>
+    </section>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/admin.js"></script>
+</body>
+</html>
