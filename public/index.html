@@ -48,7 +48,46 @@
 </div>
 
 <main class="layout">
-  <div class="charts-row">
+  <nav class="view-tabs" role="tablist" aria-label="图表视图切换">
+    <button type="button" class="view-tab" data-view="matrix" role="tab">矩阵图</button>
+    <button type="button" class="view-tab" data-view="radar" role="tab">雷达图</button>
+    <button type="button" class="view-tab" data-view="bar" role="tab">柱状图</button>
+  </nav>
+
+  <section class="view-panel" id="view-matrix" data-view="matrix">
+    <section class="card" id="matrix-card">
+      <div class="card-head">
+        <div>
+          <h2>AI × 题目 覆盖矩阵</h2>
+          <p class="head-sub">悬停单元格查看每次测试的详情</p>
+        </div>
+        <div class="card-tools">
+          <div class="seg" id="matrix-mode" role="group" aria-label="矩阵展示口径">
+            <button type="button" data-mode="status">提交状态</button>
+            <button type="button" data-mode="score" class="active">首轮均分</button>
+            <button type="button" data-mode="finalscore">最终轮均分</button>
+          </div>
+          <div class="matrix-legend" id="matrix-legend-status" hidden>
+            <span class="cell-chip ac">AC</span>
+            <span class="cell-chip fail">失败</span>
+            <span class="cell-chip giveup">未解出</span>
+            <span class="cell-chip none">未做</span>
+          </div>
+          <div class="matrix-legend" id="matrix-legend-score">
+            <span class="cell-chip score-100">满分</span>
+            <span class="cell-chip score-hi">≥80</span>
+            <span class="cell-chip score-mid">60–79</span>
+            <span class="cell-chip score-lo">&lt;60</span>
+            <span class="cell-chip score-na">未计分</span>
+          </div>
+        </div>
+      </div>
+      <div class="table-scroll" id="matrix-wrap"></div>
+      <p class="hint" id="matrix-hint"></p>
+    </section>
+  </section>
+
+  <section class="view-panel" id="view-radar" data-view="radar" hidden>
     <section class="card" id="radar-card">
       <div class="card-head">
         <div>
@@ -71,7 +110,9 @@
       <div class="series-legend" id="series-legend"></div>
       <p class="hint" id="radar-hint">轴值 = 该类别下的 AC 率（仅统计该 AI 有作答的类别；未作答显示为空缺）。</p>
     </section>
+  </section>
 
+  <section class="view-panel" id="view-bar" data-view="bar" hidden>
     <section class="card" id="thinking-bar-card">
       <div class="card-head">
         <div>
@@ -82,37 +123,6 @@
       <div class="chart-wrap bar"><canvas id="tbar"></canvas></div>
       <p class="hint" id="tbar-hint">柱高 = 该组合所有有分数轮次的平均分（无分数的轮次不记录）。</p>
     </section>
-  </div>
-
-  <section class="card" id="matrix-card">
-    <div class="card-head">
-      <div>
-        <h2>AI × 题目 覆盖矩阵</h2>
-        <p class="head-sub">悬停单元格查看每次测试的详情</p>
-      </div>
-      <div class="card-tools">
-        <div class="seg" id="matrix-mode" role="group" aria-label="矩阵展示口径">
-          <button type="button" data-mode="status">提交状态</button>
-          <button type="button" data-mode="score" class="active">首轮均分</button>
-          <button type="button" data-mode="finalscore">最终轮均分</button>
-        </div>
-        <div class="matrix-legend" id="matrix-legend-status" hidden>
-          <span class="cell-chip ac">AC</span>
-          <span class="cell-chip fail">失败</span>
-          <span class="cell-chip giveup">未解出</span>
-          <span class="cell-chip none">未做</span>
-        </div>
-        <div class="matrix-legend" id="matrix-legend-score">
-          <span class="cell-chip score-100">满分</span>
-          <span class="cell-chip score-hi">≥80</span>
-          <span class="cell-chip score-mid">60–79</span>
-          <span class="cell-chip score-lo">&lt;60</span>
-          <span class="cell-chip score-na">未计分</span>
-        </div>
-      </div>
-    </div>
-    <div class="table-scroll" id="matrix-wrap"></div>
-    <p class="hint" id="matrix-hint"></p>
   </section>
 
   <section class="card" id="records-card">

@@ -21,6 +21,7 @@ let visibleSeries = new Set();
 let radarDim = "category";     // category | difficulty
 let radarMetric = "first";     // first 首轮提交AC（默认）| final 最终提交AC | avgscore 平均分
 let matrixMode = "score";      // score 首轮均分（默认）| finalscore 最终轮均分 | status 提交状态
+let currentView = "matrix";    // matrix 矩阵图（默认）| radar 雷达图 | bar 柱状图
 let radarChart = null;
 let tbarChart = null;
 let sortState = { key: "date", dir: -1 };
@@ -678,6 +679,28 @@ function renderDatalists() {
   $("#dl-cats").innerHTML = cats.map((c) => `<option value="${escapeHtml(c)}">`).join("");
 }
 
+function switchView(view) {
+  if (!["matrix", "radar", "bar"].includes(view)) view = "matrix";
+  currentView = view;
+  document.querySelectorAll(".view-tab").forEach((b) => {
+    b.classList.toggle("active", b.dataset.view === view);
+    b.setAttribute("aria-selected", b.dataset.view === view ? "true" : "false");
+  });
+  document.querySelectorAll(".view-panel").forEach((p) => {
+    p.hidden = p.dataset.view !== view;
+  });
+  // Chart.js 在隐藏容器中尺寸为 0，切回可见视图时重建图表以保证正确渲染
+  if (view === "radar") {
+    if (radarChart) { radarChart.destroy(); radarChart = null; }
+    renderRadar(applyFilters());
+  } else if (view === "bar") {
+    if (tbarChart) { tbarChart.destroy(); tbarChart = null; }
+    renderThinkingBar(applyFilters());
+  } else {
+    renderMatrix(applyFilters());
+  }
+}
+
 function renderAll() {
   const recs = applyFilters();
   renderStats();
@@ -1094,6 +1117,9 @@ async function checkServer() {
 /* ================= 事件绑定 & 启动 ================= */
 
 function bindEvents() {
+  document.querySelectorAll(".view-tab").forEach((b) => {
+    b.addEventListener("click", () => switchView(b.dataset.view));
+  });
   $("#btn-add").addEventListener("click", () => openModal());
   $("#btn-login").addEventListener("click", () => { $("#login-modal").hidden = false; $("#login-user").focus(); });
   $("#btn-setup").addEventListener("click", () => { $("#setup-modal").hidden = false; $("#setup-user").focus(); });
@@ -1221,6 +1247,7 @@ async function init() {
   }
   visibleSeries = new Set(seriesList());
   renderAll();   // 填充系列后重绘，确保雷达图/柱状图首次加载即显示
+  switchView("matrix");   // 默认显示矩阵图
   checkServer();
 }
 

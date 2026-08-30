@@ -243,6 +243,25 @@ a { color: var(--accent); }
 /* ---------------------------------------------------------------- 卡片 */
 main.layout { display: flex; flex-direction: column; gap: var(--sp-4); }
 
+/* 视图选项卡（矩阵图 / 雷达图 / 柱状图） */
+.view-tabs {
+  display: inline-flex; padding: 4px; gap: 4px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-lg); align-self: flex-start;
+}
+.view-tab {
+  padding: 8px 18px; border: 0; border-radius: var(--r-md);
+  background: transparent; color: var(--muted);
+  font: inherit; font-size: var(--fs-sm); font-weight: 560;
+  cursor: pointer; transition: background .15s, color .15s;
+}
+.view-tab:hover { color: var(--text); }
+.view-tab.active {
+  background: var(--surface); color: var(--text);
+  box-shadow: var(--shadow-sm); font-weight: 650;
+}
+.view-panel[hidden] { display: none; }
+
 .card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--r-lg); padding: var(--sp-4) var(--sp-5) var(--sp-5);
