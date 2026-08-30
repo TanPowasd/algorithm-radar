@@ -14,20 +14,31 @@ const CATEGORY_ORDER = ["模拟/枚举", "贪心", "二分/分治", "搜索", "�
 
 const SERIES_COLORS = ["#58a6ff", "#3fb950", "#bc8cff", "#f0883e", "#f85149", "#39c5cf", "#d2a8ff", "#7ee787", "#ffa657", "#ff7b72"];
 
+// 思考等级（thinking effort）：不同模型可不同，旧记录默认 max
+const THINKING_LEVELS = ["max", "high", "medium", "low", "off"];
+const DEFAULT_THINKING = "max";
+
 const LS_RECORDS = "radar.records.v1";
 const LS_PROBLEMS = "radar.problems.v1";
+const LS_AUTH = "radar.auth.v1";
+
+// 管理员账号（用户名明文，密码仅存 SHA-256 哈希，代码中不含明文密码）
+const ADMIN_USERNAME = "TanPowasd";
+const ADMIN_PASSWORD_HASH = "46ca2bb3ebc1b4dbbae33073ee0b58eefb48ceaf5d45b0b1499c084648a2d0ad"; // W.ang142857
 
 /* ================= 状态 ================= */
 
 let records = [];      // 测试记录数组
 let problems = {};     // 题目信息缓存 {pid: {title, difficulty, categories, ...}}
+let isAdmin = false;   // 是否管理员登录
 let visibleSeries = new Set();
 let radarDim = "category";     // category | difficulty
 let radarMetric = "first";     // first 首轮提交AC（默认）| final 最终提交AC | avgscore 平均分
 let matrixMode = "score";      // score 首轮均分（默认）| finalscore 最终轮均分 | status 提交状态
 let radarChart = null;
+let tbarChart = null;
 let sortState = { key: "date", dir: -1 };
-let filters = { series: "", difficulty: "", category: "", result: "", keyword: "" };
+let filters = { series: "", difficulty: "", category: "", result: "", keyword: "", thinking: "" };
 let editingId = null;
 let formCategories = [];
 let formSubs = [];     // 表单中的提交列表 [{score:"", result:"AC", note:""}]
@@ -94,15 +105,23 @@ function normalizeSub(s) {
   return { score, result, note: String((s && s.note) || "").trim() };
 }
 
-/** 旧格式记录（只有顶层 result/attempts）迁移为单次提交的测试 */
+/** 旧格式记录迁移：补 submissions；思考等级默认 max；审核状态默认已通过（存量数据不丢） */
 function migrateRecord(r) {
   if (!Array.isArray(r.submissions) || r.submissions.length === 0) {
     r.submissions = [{ score: r.result === "AC" ? 100 : null, result: r.result || "未解出", note: "" }];
   }
   r.submissions = r.submissions.map(normalizeSub);
   delete r.attempts; // 旧字段：含义由提交列表承接
+  if (!THINKING_LEVELS.includes(r.thinking)) r.thinking = DEFAULT_THINKING; // 旧记录默认 max
+  if (r.status !== "approved" && r.status !== "pending") r.status = "approved"; // 存量视为已通过
+  if (r.author !== "admin" && r.author !== "guest") r.author = "admin";        // 存量视为管理员数据
   return r;
 }
+
+const isApproved = (r) => r.status !== "pending";        // 已通过（含存量）
+const isPending = (r) => r.status === "pending";         // 待审核
+const canEdit = (r) => isAdmin && isApproved(r);         // 管理员可编辑已通过记录
+const canDelete = (r) => isAdmin;                        // 仅管理员可删除
 
 const lastSub = (r) => r.submissions[r.submissions.length - 1];
 const firstSub = (r) => r.submissions[0];
@@ -142,17 +161,21 @@ function loadState() {
 
 /* ================= 筛选 ================= */
 
+/** 已通过（计入统计）的记录 */
+const approvedRecords = () => records.filter(isApproved);
+
 function applyFilters() {
   const kw = filters.keyword.trim().toLowerCase();
-  return records.filter((r) => {
+  return approvedRecords().filter((r) => {
     if (filters.series && seriesKey(r) !== filters.series) return false;
     if (filters.difficulty !== "" && String(r.difficulty) !== filters.difficulty) return false;
     if (filters.category && !(r.categories || []).includes(filters.category)) return false;
     if (filters.result === "final" && !isPassed(r)) return false;
     if (filters.result === "first" && !isFirstPassed(r)) return false;
     if (filters.result === "fail" && isPassed(r)) return false;
+    if (filters.thinking && r.thinking !== filters.thinking) return false;
     if (kw) {
-      const hay = `${r.pid} ${r.title || ""} ${r.note || ""} ${r.model} ${r.variant || ""} ` +
+      const hay = `${r.pid} ${r.title || ""} ${r.note || ""} ${r.model} ${r.variant || ""} ${r.thinking || ""} ` +
         r.submissions.map((s) => `${s.score == null ? "" : s.score + "分"} ${s.result} ${s.note}`).join(" ")
       ;
       if (!hay.toLowerCase().includes(kw)) return false;
@@ -296,6 +319,93 @@ function renderRadar(recs) {
     const d = radarDim === "category" ? "算法类别（来自洛谷标签自动归类）" : "难度等级（洛谷八档）";
     $("#radar-hint").textContent = `轴值 = ${m}，按${d}分轴；未作答的轴显示为空缺。`;
   }
+}
+
+/* ================= 模型 × 思考等级 平均分 柱状图 ================= */
+
+/** 某「模型×思考等级」组合的平均分：该组合所有记录中，有分数轮次的平均（无分数不记录）。
+    取整；无分数返回 null。 */
+function comboAvg(s, thinking, recs) {
+  const mine = recs.filter((r) => seriesKey(r) === s && (r.thinking || DEFAULT_THINKING) === thinking);
+  let total = 0, cnt = 0;
+  for (const r of mine) {
+    for (const sub of r.submissions) {
+      if (sub.score == null) continue; // 无分数的不记录
+      total += sub.score;
+      cnt += 1;
+    }
+  }
+  return cnt ? Math.round(total / cnt) : null;
+}
+
+function renderThinkingBar(recs) {
+  const wrap = $("#tbar");
+  if (!wrap) return;
+
+  if (tbarChart) tbarChart.destroy();
+
+  // 组合 = 出现的模型系列 × 该系列用过的思考等级；只统计有分数数据的
+  const combos = [];
+  for (const s of seriesList()) {
+    if (!visibleSeries.has(s)) continue; // 尊重系列显隐
+    const usedT = [...new Set(recs.filter((r) => seriesKey(r) === s).map((r) => r.thinking || DEFAULT_THINKING))];
+    for (const t of usedT) {
+      const avg = comboAvg(s, t, recs);
+      if (avg == null) continue; // 无分数数据不显示
+      combos.push({ label: `${s} · ${t}`, series: s, thinking: t, avg });
+    }
+  }
+  // 按平均分从高到低排序
+  combos.sort((a, b) => b.avg - a.avg);
+
+  if (!combos.length) {
+    $("#tbar-hint").textContent = "暂无数据——先录入带思考等级与分数的记录。";
+    return;
+  }
+
+  const labels = combos.map((c) => c.label);
+  const data = combos.map((c) => c.avg);
+  const colors = combos.map((c) => seriesColor(c.series));
+
+  tbarChart = new Chart(wrap.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: "平均分",
+        data,
+        backgroundColor: colors.map((c) => c + "cc"),
+        borderColor: colors,
+        borderWidth: 1,
+        borderRadius: 3,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: "#c9d1d9", font: { size: 11 } }, grid: { display: false } },
+        y: {
+          min: 0, max: 100,
+          ticks: { stepSize: 20, callback: (v) => v + "分", color: "#8b949e" },
+          grid: { color: "rgba(139,148,158,.18)" },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (c) => {
+              const v = c.parsed.y;
+              return `${c.label}：${v} 分`;
+            },
+          },
+        },
+      },
+    },
+  });
+
+  $("#tbar-hint").textContent = "柱长 = 该「模型 × 思考等级」组合所有有分数轮次的平均分（无分数轮次不记录），按平均分从高到低排列。";
 }
 
 /* ================= 系列图例 ================= */
@@ -501,6 +611,7 @@ function renderTable(recs) {
   const cols = [
     { key: "date", label: "日期" },
     { key: "series", label: "AI 组合" },
+    { key: "thinking", label: "思考" },
     { key: "pid", label: "题号" },
     { key: "title", label: "题目" },
     { key: "difficulty", label: "难度" },
@@ -541,6 +652,7 @@ function renderTable(recs) {
     html += `<tr>
       <td>${escapeHtml(r.date)}</td>
       <td>${escapeHtml(seriesKey(r))}</td>
+      <td><span class="think-tag" title="思考等级">${escapeHtml(r.thinking || DEFAULT_THINKING)}</span></td>
       <td><a class="pid-link" href="https://www.luogu.com.cn/problem/${encodeURIComponent(r.pid)}" target="_blank" rel="noopener">${escapeHtml(r.pid)}</a></td>
       <td>${escapeHtml(r.title || "")}</td>
       <td>${diffTagHtml(r.difficulty)}</td>
@@ -549,8 +661,10 @@ function renderTable(recs) {
       <td>${r.submissions.length}</td>
       <td>${mins}</td>
       <td class="note-cell">${escapeHtml(r.note || "")}</td>
-      <td><button class="btn small" data-edit="${r.id}">编辑</button>
-          <button class="btn small danger" data-del="${r.id}">删除</button></td>
+      <td>${isAdmin
+        ? `<button class="btn small" data-edit="${r.id}">编辑</button>
+           <button class="btn small danger" data-del="${r.id}">删除</button>`
+        : '<span class="muted" style="font-size:11px">仅管理员可改</span>'}</td>
     </tr>`;
   }
   html += "</tbody></table>";
@@ -605,6 +719,13 @@ function renderFilterOptions() {
   const curC = filters.category;
   cSel.innerHTML = '<option value="">全部算法类别</option>' +
     cats.map((c) => `<option${c === curC ? " selected" : ""}>${escapeHtml(c)}</option>`).join("");
+
+  // 思考等级筛选（只显示数据里出现过的等级）
+  const tSel = $("#f-thinking-filter");
+  const curT = filters.thinking;
+  const usedT = [...new Set(records.map((r) => r.thinking).filter(Boolean))];
+  tSel.innerHTML = '<option value="">全部思考等级</option>' +
+    THINKING_LEVELS.filter((t) => usedT.includes(t)).map((t) => `<option value="${t}"${t === curT ? " selected" : ""}>${t}</option>`).join("");
 }
 
 function pctStr(num, den) {
@@ -612,12 +733,13 @@ function pctStr(num, den) {
 }
 
 function renderStats() {
-  const n = records.length;
+  const appr = approvedRecords();
+  const n = appr.length;
   $("#stat-records").textContent = n;
   $("#stat-series").textContent = seriesList().length;
-  $("#stat-problems").textContent = new Set(records.map((r) => r.pid)).size;
-  $("#stat-firstrate").textContent = pctStr(records.filter(isFirstPassed).length, n);  // 首轮 AC 率
-  $("#stat-finalrate").textContent = pctStr(records.filter(isPassed).length, n);
+  $("#stat-problems").textContent = new Set(appr.map((r) => r.pid)).size;
+  $("#stat-firstrate").textContent = pctStr(appr.filter(isFirstPassed).length, n);  // 首轮 AC 率
+  $("#stat-finalrate").textContent = pctStr(appr.filter(isPassed).length, n);
 }
 
 function renderDatalists() {
@@ -634,8 +756,108 @@ function renderAll() {
   renderDatalists();
   renderSeriesLegend(recs);
   renderRadar(recs);
+  renderThinkingBar(recs);
   renderMatrix(recs);
   renderTable(recs);
+  renderPending();
+  renderAuthUI();
+}
+
+/* ================= 管理员 / 审核 ================= */
+
+function saveAuth() {
+  try { localStorage.setItem(LS_AUTH, JSON.stringify({ admin: isAdmin })); } catch { /* ignore */ }
+}
+
+function loadAuth() {
+  try { isAdmin = !!(JSON.parse(localStorage.getItem(LS_AUTH) || "{}").admin); } catch { isAdmin = false; }
+}
+
+/** 计算字符串的 SHA-256 十六进制哈希（浏览器原生，无需依赖） */
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function doLogin() {
+  const user = $("#login-user").value.trim();
+  const pass = $("#login-pass").value;
+  const hash = await sha256Hex(pass);
+  if (user === ADMIN_USERNAME && hash === ADMIN_PASSWORD_HASH) {
+    isAdmin = true;
+    saveAuth();
+    $("#login-modal").hidden = true;
+    $("#login-user").value = "";
+    $("#login-pass").value = "";
+    toast("已登录为管理员", "ok");
+    renderAll();
+  } else {
+    toast("用户名或密码错误", "err");
+  }
+}
+
+function doLogout() {
+  isAdmin = false;
+  saveAuth();
+  toast("已退出登录", "ok");
+  renderAll();
+}
+
+function renderAuthUI() {
+  $("#btn-login").hidden = isAdmin;
+  $("#btn-logout").hidden = !isAdmin;
+  $("#btn-export").hidden = !isAdmin;
+  $("#btn-import").hidden = !isAdmin;
+}
+
+/** 待审核列表（仅管理员可见） */
+function renderPending() {
+  const card = $("#pending-card");
+  const wrap = $("#pending-wrap");
+  if (!isAdmin) { card.hidden = true; return; }
+  const pend = records.filter(isPending);
+  card.hidden = false;
+  $("#pending-count").textContent = pend.length ? `（${pend.length} 条）` : "";
+  if (!pend.length) {
+    wrap.innerHTML = '<p class="muted" style="padding:16px">暂无待审核提交。</p>';
+    return;
+  }
+  const rows = pend.map((r) => `
+    <tr>
+      <td>${escapeHtml(r.date)}</td>
+      <td>${escapeHtml(seriesKey(r))}</td>
+      <td><span class="think-tag">${escapeHtml(r.thinking || DEFAULT_THINKING)}</span></td>
+      <td><a class="pid-link" href="https://www.luogu.com.cn/problem/${encodeURIComponent(r.pid)}" target="_blank" rel="noopener">${escapeHtml(r.pid)}</a></td>
+      <td>${escapeHtml(r.title || "")}</td>
+      <td>${diffTagHtml(r.difficulty)}</td>
+      <td><span class="chain">${chainHtml(r)}</span></td>
+      <td><button class="btn small" data-approve="${r.id}">通过</button>
+          <button class="btn small danger" data-reject="${r.id}">拒绝</button></td>
+    </tr>`).join("");
+  wrap.innerHTML = `<table><thead><tr>
+      <th>日期</th><th>AI 组合</th><th>思考</th><th>题号</th><th>题目</th><th>难度</th><th>提交轨迹</th><th>操作</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  wrap.querySelectorAll("button[data-approve]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const id = Number(b.dataset.approve);
+      const rec = records.find((x) => x.id === id);
+      if (!rec) return;
+      rec.status = "approved";
+      saveState(); renderAll();
+      toast("已通过，计入统计", "ok");
+    });
+  });
+  wrap.querySelectorAll("button[data-reject]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const id = Number(b.dataset.reject);
+      const rec = records.find((x) => x.id === id);
+      if (!rec) return;
+      if (!confirm(`拒绝并删除该游客提交：${seriesKey(rec)} · ${rec.pid}？`)) return;
+      records = records.filter((x) => x.id !== id);
+      saveState(); renderAll();
+      toast("已拒绝并删除", "ok");
+    });
+  });
 }
 
 /* ================= 表单：提交列表编辑器 ================= */
@@ -682,6 +904,8 @@ function updateSubSummary() {
 }
 
 function openModal(editId = null) {
+  // 游客只能新增（提交后待审核），不能编辑已有记录
+  if (editId != null && !isAdmin) { toast("仅管理员可编辑记录", "err"); return; }
   editingId = editId;
   formCategories = [];
 
@@ -695,6 +919,7 @@ function openModal(editId = null) {
     $("#modal-title").textContent = "编辑测试";
     $("#f-model").value = r.model;
     $("#f-variant").value = r.variant || "";
+    $("#f-thinking").value = THINKING_LEVELS.includes(r.thinking) ? r.thinking : DEFAULT_THINKING;
     $("#f-pid").value = r.pid;
     $("#f-title").value = r.title || "";
     diffSel.value = r.difficulty == null ? "" : String(r.difficulty);
@@ -707,6 +932,7 @@ function openModal(editId = null) {
     $("#modal-title").textContent = "提交测试";
     $("#f-model").value = "";
     $("#f-variant").value = "";
+    $("#f-thinking").value = DEFAULT_THINKING; // 新记录默认 max
     $("#f-pid").value = "";
     $("#f-title").value = "";
     diffSel.value = "";
@@ -797,6 +1023,8 @@ function saveRecord(e) {
   const minutesRaw = $("#f-minutes").value;
   const date = $("#f-date").value || todayStr();
   const note = $("#f-note").value.trim();
+  const thinkingRaw = $("#f-thinking").value;
+  const thinking = THINKING_LEVELS.includes(thinkingRaw) ? thinkingRaw : DEFAULT_THINKING;
 
   if (!model) { toast("请填写 AI 名称", "err"); return; }
   if (!pid || !PID_RE.test(pid)) { toast("题号格式不正确（示例：P1001 / B2001 / CF10A）", "err"); return; }
@@ -810,11 +1038,15 @@ function saveRecord(e) {
   const rec = {
     id: editingId != null ? editingId : Date.now(),
     model, variant, pid, title,
+    thinking,
     difficulty: Number(diffRaw),
     categories: formCategories.length ? [...formCategories] : [...cachedCats],
     submissions,
     minutes: minutesRaw === "" ? null : Math.max(0, parseInt(minutesRaw, 10) || 0),
     date, note,
+    // 权限：管理员保存=已通过；游客新增=待审核；编辑已有记录保留原状态
+    status: editingId != null ? (records.find((x) => x.id === editingId) || {}).status : (isAdmin ? "approved" : "pending"),
+    author: isAdmin ? "admin" : "guest",
     updatedAt: new Date().toISOString(),
   };
 
@@ -840,7 +1072,7 @@ function saveRecord(e) {
   } else {
     rec.createdAt = rec.updatedAt;
     records.push(rec);
-    toast(`已保存测试（${submissions.length} 次提交）`, "ok");
+    toast(isAdmin ? `已保存测试（${submissions.length} 次提交）` : "已提交，等待管理员审核", "ok");
   }
   if (!visibleSeries.has(seriesKey(rec))) visibleSeries.add(seriesKey(rec));
   saveState();
@@ -922,6 +1154,12 @@ function doImport(mode) {
 
 function bindEvents() {
   $("#btn-add").addEventListener("click", () => openModal());
+  $("#btn-login").addEventListener("click", () => { $("#login-modal").hidden = false; $("#login-user").focus(); });
+  $("#btn-logout").addEventListener("click", doLogout);
+  $("#login-close").addEventListener("click", () => { $("#login-modal").hidden = true; });
+  $("#login-cancel").addEventListener("click", () => { $("#login-modal").hidden = true; });
+  $("#login-modal").addEventListener("click", (e) => { if (e.target === $("#login-modal")) $("#login-modal").hidden = true; });
+  $("#login-form").addEventListener("submit", (e) => { e.preventDefault(); doLogin(); });
   $("#modal-close").addEventListener("click", closeModal);
   $("#btn-cancel").addEventListener("click", closeModal);
   $("#modal").addEventListener("click", (e) => { if (e.target === $("#modal")) closeModal(); });
@@ -986,12 +1224,14 @@ function bindEvents() {
   $("#f-difficulty").addEventListener("change", (e) => { filters.difficulty = e.target.value; renderAll(); });
   $("#f-category").addEventListener("change", (e) => { filters.category = e.target.value; renderAll(); });
   $("#f-result").addEventListener("change", (e) => { filters.result = e.target.value; renderAll(); });
+  $("#f-thinking-filter").addEventListener("change", (e) => { filters.thinking = e.target.value; renderAll(); });
   $("#f-keyword").addEventListener("input", (e) => { filters.keyword = e.target.value; renderAll(); });
   $("#btn-clear-filter").addEventListener("click", () => {
-    filters = { series: "", difficulty: "", category: "", result: "", keyword: "" };
+    filters = { series: "", difficulty: "", category: "", result: "", keyword: "", thinking: "" };
     $("#f-keyword").value = "";
     $("#f-series").value = ""; $("#f-difficulty").value = "";
     $("#f-category").value = ""; $("#f-result").value = "";
+    $("#f-thinking-filter").value = "";
     renderAll();
   });
 
@@ -1024,6 +1264,7 @@ async function checkServer() {
 
 function init() {
   loadState();
+  loadAuth();
   visibleSeries = new Set(seriesList());
   bindEvents();
   renderAll();

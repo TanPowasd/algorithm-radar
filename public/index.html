@@ -18,9 +18,11 @@
   </div>
   <div class="topbar-actions">
     <button id="btn-add" class="btn primary">＋ 提交记录</button>
-    <button id="btn-export" class="btn">导出 JSON</button>
-    <button id="btn-import" class="btn">导入 JSON</button>
+    <button id="btn-export" class="btn" hidden>导出 JSON</button>
+    <button id="btn-import" class="btn" hidden>导入 JSON</button>
     <input type="file" id="import-file" accept=".json" hidden>
+    <button id="btn-login" class="btn">管理员登录</button>
+    <button id="btn-logout" class="btn" hidden>退出登录</button>
   </div>
 </header>
 
@@ -53,6 +55,14 @@
     </div>
     <div class="series-legend" id="series-legend"></div>
     <p class="hint" id="radar-hint">轴值 = 该类别下的 AC 率（仅统计该 AI 有作答的类别；未作答显示为空缺）。</p>
+  </section>
+
+  <section class="card" id="thinking-bar-card">
+    <div class="card-head">
+      <h2>模型 × 思考等级 平均分</h2>
+    </div>
+    <div class="bar-wrap"><canvas id="tbar"></canvas></div>
+    <p class="hint" id="tbar-hint">柱高 = 该「模型 × 思考等级」组合所有有分数轮次的平均分（无分数轮次不记录），按平均分从高到低排列。</p>
   </section>
 
   <section class="card" id="matrix-card">
@@ -99,9 +109,25 @@
         <option value="final">最终通过</option>
         <option value="fail">最终未通过</option>
       </select>
+      <select id="f-thinking-filter">
+        <option value="">全部思考等级</option>
+        <option value="max">max</option>
+        <option value="high">high</option>
+        <option value="medium">medium</option>
+        <option value="low">low</option>
+        <option value="off">off</option>
+      </select>
       <input id="f-keyword" type="search" placeholder="搜索题号 / 题目 / 备注…">
     </div>
     <div class="table-scroll" id="records-wrap"></div>
+  </section>
+
+  <section class="card" id="pending-card" hidden>
+    <div class="card-head">
+      <h2>待审核提交 <span id="pending-count" class="muted"></span></h2>
+    </div>
+    <div class="table-scroll" id="pending-wrap"></div>
+    <p class="hint">游客提交的记录需管理员审核通过后才会计入统计。管理员可「通过」或「拒绝」。</p>
   </section>
 </main>
 
@@ -118,12 +144,21 @@
       <button class="icon-btn" id="modal-close" title="关闭">✕</button>
     </div>
     <form id="record-form">
-      <div class="grid2">
+      <div class="grid3">
         <label>AI 名称 *<input id="f-model" list="dl-models" required placeholder="如 GLM-4.7 / GPT-5 / Claude…">
           <datalist id="dl-models"></datalist>
         </label>
         <label>版本 / 策略<input id="f-variant" list="dl-variants" placeholder="如 深度思考 / 直出 / 换提示词…（可留空）">
           <datalist id="dl-variants"></datalist>
+        </label>
+        <label>思考等级
+          <select id="f-thinking">
+            <option value="max">max</option>
+            <option value="high">high</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+            <option value="off">off（不思考）</option>
+          </select>
         </label>
       </div>
 
@@ -183,6 +218,22 @@
       <button class="btn" id="import-replace">替换现有数据</button>
       <button class="btn primary" id="import-merge">合并导入</button>
     </div>
+  </div>
+</div>
+
+<!-- 管理员登录弹窗 -->
+<div class="modal-overlay" id="login-modal" hidden>
+  <div class="modal small-modal">
+    <div class="modal-head"><h2>管理员登录</h2><button class="icon-btn" id="login-close">✕</button></div>
+    <form id="login-form">
+      <label>用户名<input id="login-user" placeholder="请输入管理员用户名" autocomplete="username"></label>
+      <label>密码<input type="password" id="login-pass" placeholder="请输入管理员密码" autocomplete="current-password"></label>
+      <p class="import-desc">登录后可删除/编辑记录、审核游客提交。密码以哈希存储，代码中不含明文。</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="login-cancel">取消</button>
+        <button type="submit" class="btn primary">登录</button>
+      </div>
+    </form>
   </div>
 </div>
 
