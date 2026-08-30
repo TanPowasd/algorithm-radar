@@ -1090,6 +1090,8 @@ function saveRecord(e) {
 /* ================= 导入 / 导出 ================= */
 
 function exportJson() {
+  // 权限：仅管理员可导出 JSON（游客只能提交测评记录）
+  if (!isAdmin) { toast("仅管理员可导出 JSON", "err"); return; }
   const payload = {
     app: "算法雷达站",
     version: 2,
@@ -1108,6 +1110,8 @@ function exportJson() {
 }
 
 function handleImportFile(file) {
+  // 权限：仅管理员可导入 JSON（游客只能提交测评记录）
+  if (!isAdmin) { toast("仅管理员可导入 JSON", "err"); return; }
   const reader = new FileReader();
   reader.onload = () => {
     let data;
