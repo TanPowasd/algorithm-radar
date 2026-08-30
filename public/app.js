@@ -249,8 +249,8 @@ function renderRadar(recs) {
 
 /* ================= 模型 × 思考等级 平均分 柱状图 ================= */
 
-/** 某「模型×思考等级」组合的平均分：该组合所有记录中，有分数轮次的平均（无分数不记录）。
-    取整；无分数返回 null。 */
+/** 某「模型×思考等级」组合的平均分与样本数：该组合所有记录中，有分数轮次的平均
+    （无分数不记录）。返回 {avg, count}；无分数返回 null。 */
 function comboAvg(s, thinking, recs) {
   const mine = recs.filter((r) => seriesKey(r) === s && (r.thinking || DEFAULT_THINKING) === thinking);
   let total = 0, cnt = 0;
@@ -261,7 +261,7 @@ function comboAvg(s, thinking, recs) {
       cnt += 1;
     }
   }
-  return cnt ? Math.round(total / cnt) : null;
+  return cnt ? { avg: Math.round(total / cnt), count: cnt } : null;
 }
 
 function renderThinkingBar(recs) {
@@ -276,9 +276,9 @@ function renderThinkingBar(recs) {
     if (!visibleSeries.has(s)) continue; // 尊重系列显隐
     const usedT = [...new Set(recs.filter((r) => seriesKey(r) === s).map((r) => r.thinking || DEFAULT_THINKING))];
     for (const t of usedT) {
-      const avg = comboAvg(s, t, recs);
-      if (avg == null) continue; // 无分数数据不显示
-      combos.push({ label: `${s} · ${t}`, series: s, thinking: t, avg });
+      const res = comboAvg(s, t, recs);
+      if (res == null) continue; // 无分数数据不显示
+      combos.push({ label: `${s} · ${t}`, series: s, thinking: t, avg: res.avg, count: res.count });
     }
   }
   // 按平均分从高到低排序
@@ -292,6 +292,30 @@ function renderThinkingBar(recs) {
   const labels = combos.map((c) => c.label);
   const data = combos.map((c) => c.avg);
   const colors = combos.map((c) => seriesColor(c.series));
+  const counts = combos.map((c) => c.count);
+
+  // 柱顶标签插件：在每个柱子上方绘制「n=参与数据量」
+  const barTopLabel = {
+    id: "barTopLabel",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      const ds = chart.data.datasets[0];
+      chart.data.labels.forEach((label, i) => {
+        const bar = meta.data[i];
+        if (!bar || ds.data[i] == null) return;
+        const n = ds._counts ? ds._counts[i] : null;
+        if (n == null) return;
+        ctx.save();
+        ctx.font = "600 11px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.fillStyle = "#8b949e";
+        ctx.fillText(`n=${n}`, bar.x, bar.y - 3);
+        ctx.restore();
+      });
+    },
+  };
 
   tbarChart = new Chart(wrap.getContext("2d"), {
     type: "bar",
@@ -300,6 +324,7 @@ function renderThinkingBar(recs) {
       datasets: [{
         label: "平均分",
         data,
+        _counts: counts,
         backgroundColor: colors.map((c) => c + "cc"),
         borderColor: colors,
         borderWidth: 1,
@@ -317,21 +342,24 @@ function renderThinkingBar(recs) {
           grid: { color: "rgba(139,148,158,.18)" },
         },
       },
+      layout: { padding: { top: 22 } },   // 给柱顶标签留空间
       plugins: {
         legend: { display: false },
         tooltip: {
           callbacks: {
             label: (c) => {
               const v = c.parsed.y;
-              return `${c.label}：${v} 分`;
+              const n = c.dataset._counts ? c.dataset._counts[c.dataIndex] : null;
+              return `${c.label}：均分 ${v} 分（${n != null ? n + " 个数据参与" : "无数据"}）`;
             },
           },
         },
       },
     },
+    plugins: [barTopLabel],
   });
 
-  $("#tbar-hint").textContent = "柱长 = 该「模型 × 思考等级」组合所有有分数轮次的平均分（无分数轮次不记录），按平均分从高到低排列。";
+  $("#tbar-hint").textContent = "柱长 = 该「模型 × 思考等级」组合所有有分数轮次的平均分（无分数轮次不记录）；柱顶 n = 参与统计的数据量，按平均分从高到低排列。";
 }
 
 /* ================= 系列图例 ================= */
