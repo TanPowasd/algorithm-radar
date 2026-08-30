@@ -390,8 +390,8 @@ td.num { font-variant-numeric: tabular-nums; }
 .pid-link:hover { text-decoration: underline; }
 .m-title { display: block; color: var(--muted); font-size: var(--fs-xs); white-space: normal; font-weight: 400; }
 
-/* 矩阵单元格：彩色只用于数据语义 */
-td.mcell { font-size: var(--fs-sm); font-variant-numeric: tabular-nums; border-radius: 4px; }
+/* 矩阵单元格：彩色只用于数据语义（直角，与表格线对齐） */
+td.mcell { font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 td.mcell.ac     { background: color-mix(in srgb, var(--green) 36%, transparent); color: var(--text); }
 td.mcell.fail   { background: color-mix(in srgb, var(--red) 30%, transparent); color: var(--text); }
 td.mcell.giveup { background: color-mix(in srgb, var(--muted) 22%, transparent); color: var(--text-2); }
