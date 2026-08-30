@@ -147,12 +147,24 @@ function diffTagHtml(diff) {
   return `<span class="diff-tag d-${diff}">${escapeHtml(DIFF_NAMES[diff])}</span>`;
 }
 
+/** 分数档位类名：与矩阵图口径一致（100 紫 / ≥80 绿 / 60–79 橙 / <60 红）；无分返回 null（按判定结果着色） */
+function scoreTierClass(score) {
+  if (score == null) return null;
+  if (score >= 100) return "b-100";
+  if (score >= 80) return "b-hi";
+  if (score >= 60) return "b-mid";
+  return "b-lo";
+}
+
 function subBadge(s, i) {
-  const scorePart = s.score != null ? `${s.score}分` : "";
+  const hasScore = s.score != null;
+  const scorePart = hasScore ? `${s.score}分` : "";
+  const tier = scoreTierClass(s.score);
+  const cls = tier || `b-${escapeHtml(s.result)}`;
   const tip = `第${i + 1}次提交：${s.result}` +
-    (s.score != null ? `，${s.score} 分` : "") +
+    (hasScore ? `，${s.score} 分` : "") +
     (s.note ? `（${s.note}）` : "");
-  return `<span class="sub-badge b-${escapeHtml(s.result)}" title="${escapeHtml(tip)}">${scorePart || escapeHtml(s.result)}</span>`;
+  return `<span class="sub-badge ${cls}" title="${escapeHtml(tip)}">${scorePart || escapeHtml(s.result)}</span>`;
 }
 
 function chainHtml(r) {
