@@ -92,6 +92,35 @@ function saveState() {
   } catch (e) {
     toast("保存失败：" + e.message, "err");
   }
+  // 多设备共享：审核操作后同步推送到云端
+  pushCloud();
+}
+
+/** 云端同步：推送 records/problems 到共享存储（Vercel /api/sync 代理） */
+async function pushCloud() {
+  try {
+    await fetch("/api/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ records, problems }),
+    });
+  } catch (e) {
+    console.warn("云端同步推送失败（不影响本地）：", e);
+  }
+}
+
+/** 从云端拉取共享数据；未配置/失败返回 null */
+async function pullCloud() {
+  try {
+    const resp = await fetch("/api/sync", { method: "GET" });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data || !Array.isArray(data.records)) return null;
+    return data;
+  } catch (e) {
+    console.warn("云端同步拉取失败（使用本地数据）：", e);
+    return null;
+  }
 }
 
 function loadState() {
@@ -261,9 +290,16 @@ function bindEvents() {
   $("#f-series").addEventListener("change", renderPending);
 }
 
-function init() {
+async function init() {
   loadState();
   loadAuth();
+  // 多设备共享：启动时拉取云端数据（有则覆盖本地）
+  const cloud = await pullCloud();
+  if (cloud && cloud.records && cloud.records.length) {
+    records = cloud.records.map(migrateRecord);
+    if (cloud.problems && typeof cloud.problems === "object") problems = cloud.problems;
+    saveState();
+  }
   bindEvents();
   renderAll();
 }

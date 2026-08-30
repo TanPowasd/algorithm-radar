@@ -143,6 +143,33 @@ function chainHtml(r) {
 
 /* ---------- 存取 ---------- */
 
+/** 云端同步：把 records/problems 推送到共享存储（Vercel /api/sync 代理） */
+async function pushCloud() {
+  try {
+    await fetch("/api/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ records, problems }),
+    });
+  } catch (e) {
+    console.warn("云端同步推送失败（不影响本地）：", e);
+  }
+}
+
+/** 从云端拉取共享数据；未配置/失败时返回 null（前端静默降级为纯本地） */
+async function pullCloud() {
+  try {
+    const resp = await fetch("/api/sync", { method: "GET" });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data || !Array.isArray(data.records)) return null;
+    return data;
+  } catch (e) {
+    console.warn("云端同步拉取失败（使用本地数据）：", e);
+    return null;
+  }
+}
+
 function saveState() {
   try {
     localStorage.setItem(LS_RECORDS, JSON.stringify(records));
@@ -150,6 +177,8 @@ function saveState() {
   } catch (e) {
     toast("本地保存失败（存储空间不足？）：" + e.message, "err");
   }
+  // 本地保存成功后，异步推送到云端（多设备共享）
+  pushCloud();
 }
 
 function loadState() {
@@ -1240,9 +1269,16 @@ async function checkServer() {
   }
 }
 
-function init() {
+async function init() {
   loadState();
   loadAuth();
+  // 多设备共享：启动时尝试从云端拉取（云端有数据则覆盖本地）
+  const cloud = await pullCloud();
+  if (cloud && cloud.records && cloud.records.length) {
+    records = cloud.records.map(migrateRecord);
+    if (cloud.problems && typeof cloud.problems === "object") problems = cloud.problems;
+    saveState(); // 写回本地
+  }
   visibleSeries = new Set(seriesList());
   bindEvents();
   renderAll();
