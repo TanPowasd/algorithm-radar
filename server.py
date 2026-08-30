@@ -136,9 +136,10 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     os.chdir(BASE_DIR)  # 静态文件与 tags.json 均为固定相对路径，先把工作目录切到项目根
     luogu_fetch.load_tag_map()  # 启动时确保标签表可用（本地种子或联网拉取）
-    # 监听地址/端口可用环境变量覆盖（部署到线上平台时使用），默认仅本机
-    host = os.environ.get("HOST", "127.0.0.1")
+    # 监听地址/端口：部署平台（Render 等）会注入 PORT 环境变量，此时必须监听
+    # 0.0.0.0（否则公网无法访问）；本地无 PORT 时默认仅本机回环，安全默认。
     port = int(os.environ.get("PORT", str(PORT)))
+    host = os.environ.get("HOST", "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
     server = ThreadingHTTPServer((host, port), Handler)
     url = "http://%s:%d/" % (host if host != "0.0.0.0" else "127.0.0.1", port)
     print("=" * 46)
