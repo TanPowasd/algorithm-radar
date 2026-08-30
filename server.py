@@ -19,6 +19,7 @@ import os
 import threading
 import time
 import urllib.parse
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -29,9 +30,33 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PORT = int(os.environ.get("PORT", "8471"))
 
+# 多设备共享（JSONBin）配置：Render 环境变量
+JSONBIN_API_KEY = os.environ.get("JSONBIN_API_KEY", "")
+JSONBIN_BIN_ID = os.environ.get("JSONBIN_BIN_ID", "")
+
 # 题目信息内存缓存：{pid: info}，仅供本次运行加速，不落盘
 PROBLEM_CACHE = {}
 CACHE_LOCK = threading.Lock()
+
+
+def jsonbin_sync(method, payload=None):
+    """读写 JSONBin（多设备共享）。GET 返回 dict，POST 写入。未配置时返回 None"""
+    if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
+        return None
+    url = "https://api.jsonbin.io/v3/b/%s%s" % (JSONBIN_BIN_ID, "" if method == "POST" else "/latest")
+    headers = {
+        "X-Master-Key": JSONBIN_API_KEY,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": luogu_fetch.LUOGU_UA,  # 用浏览器 UA，避免被 JSONBin 风控
+    }
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(url, data=data, method="PUT" if method == "POST" else "GET", headers=headers)
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        body = resp.read().decode("utf-8")
+    if method == "POST":
+        return {"ok": True}
+    return json.loads(body).get("record", {})
 
 # ---------------------------------------------------------------- 静态文件白名单
 # 只允许读取下面这些固定文件，键为 URL 路径，值为 (磁盘字面量路径, Content-Type)
@@ -120,6 +145,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(404, {"error": str(e)})
                 except Exception as e:
                     self._send(502, {"error": "抓取洛谷失败：%s；请手动填写题目信息" % e})
+            elif path == "/api/sync":
+                self._handle_sync()
             else:
                 served = read_static_file(path)
                 if served is None:
@@ -127,6 +154,35 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     content, ctype = served
                     self._send(200, content, ctype)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            self._send(500, {"error": "服务器内部错误：%s" % e})
+
+    # ---- 多设备共享（/api/sync）----
+    def _handle_sync(self):
+        if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
+            self._send(503, {"error": "sync not configured"})
+            return
+        try:
+            data = jsonbin_sync("GET")
+            self._send(200, data if isinstance(data, dict) else {})
+        except Exception as e:
+            self._send(502, {"error": "sync failed: %s" % e})
+
+    def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
+        try:
+            if path == "/api/sync":
+                if not JSONBIN_API_KEY or not JSONBIN_BIN_ID:
+                    self._send(503, {"error": "sync not configured"})
+                    return
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}") if length else {}
+                jsonbin_sync("POST", payload)
+                self._send(200, {"ok": True})
+            else:
+                self._send(404, {"error": "not found"})
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception as e:
