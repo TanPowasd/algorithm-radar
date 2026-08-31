@@ -650,6 +650,26 @@ input, select, textarea { font-family: inherit; }
 .callout.warn { border-left-color: var(--orange); }
 .callout code { background: var(--surface-3); border-radius: 4px; padding: 0 5px; font-size: var(--fs-xs); }
 
+/* 柱状图「忽略题目」chips：点击排除/恢复某题的均分（localStorage 记忆） */
+.bar-exclude {
+  display: flex; align-items: flex-start; gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.bar-exclude[hidden] { display: none; }
+.bar-exclude-label { color: var(--muted); font-size: var(--fs-xs); flex: none; padding-top: 5px; }
+.bar-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.bar-chip {
+  display: inline-flex; align-items: center;
+  background: transparent; border: 1px solid var(--border);
+  border-radius: var(--r-pill); padding: 2px 11px;
+  font-size: var(--fs-xs); font-family: inherit; color: var(--text);
+  cursor: pointer; user-select: none; font-variant-numeric: tabular-nums;
+  transition: opacity .14s ease, border-color .14s ease, color .14s ease;
+}
+.bar-chip:hover { border-color: var(--border-strong); }
+.bar-chip.off { opacity: .42; text-decoration: line-through; }
+.bar-chip.off:hover { opacity: .75; }
+
 /* ---------------------------------------------------------------- Toast */
 .toast {
   position: fixed; bottom: calc(26px + env(safe-area-inset-bottom, 0px));

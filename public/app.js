@@ -38,6 +38,8 @@ let serverOffline = false;   // 启动时服务器不可达且无本地缓存（
 let tablePage = 1;           // 明细表当前页码
 const TABLE_PAGE_SIZE = 50;  // 明细表每页条数
 const BAR_MIN_SAMPLES = 5;   // 柱状图显示门槛：组合至少需要的记分样本量
+const LS_BAR_EXCLUDE = "radar.bar.excludedPids"; // 柱状图忽略的题目（本机记忆，仅影响柱状图口径）
+let barExcluded = new Set(); // 柱状图口径下被忽略的题号：均分与 n 只统计其余题目
 const prevStats = {};        // 统计卡上一次数值（数字滚动动画用）
 
 /* ================= 工具 ================= */
@@ -371,6 +373,53 @@ function renderRadar(recs) {
 
 /* ================= 模型 × 思考等级 平均分 柱状图 ================= */
 
+function loadBarExcluded() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(LS_BAR_EXCLUDE) || "[]");
+    if (Array.isArray(arr)) barExcluded = new Set(arr.map((p) => String(p).toUpperCase()));
+  } catch { barExcluded = new Set(); } // 隐私模式下忽略：退化为每次全量
+}
+
+function saveBarExcluded() {
+  try { localStorage.setItem(LS_BAR_EXCLUDE, JSON.stringify([...barExcluded])); } catch { /* ignore */ }
+}
+
+/** 柱状图的忽略题目 chips：点击排除/恢复，与图表口径同源渲染 */
+function renderBarChips() {
+  const box = $("#bar-exclude");
+  const wrap = $("#bar-chips");
+  if (!box || !wrap) return;
+  const pids = sortedProblemPids(problems);
+  if (!pids.length) { box.hidden = true; return; }
+  box.hidden = false;
+  let html = pids.map((pid) => {
+    const info = problems[pid] || {};
+    const off = barExcluded.has(pid);
+    const tip = `${pid}${info.title ? " " + info.title : ""}（点击${off ? "恢复计入" : "忽略此题"}）`;
+    return `<button type="button" class="bar-chip${off ? " off" : ""}" data-pid="${escapeHtml(pid)}" title="${escapeHtml(tip)}">${escapeHtml(pid)}</button>`;
+  }).join("");
+  if (barExcluded.size) {
+    html += '<button type="button" class="btn small ghost" id="bar-exclude-reset">全部包含</button>';
+  }
+  wrap.innerHTML = html;
+  wrap.querySelectorAll(".bar-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const pid = chip.dataset.pid;
+      if (barExcluded.has(pid)) barExcluded.delete(pid); else barExcluded.add(pid);
+      saveBarExcluded();
+      renderBarChips();
+      renderThinkingBar(applyFilters());
+    });
+  });
+  const reset = $("#bar-exclude-reset");
+  if (reset) reset.addEventListener("click", () => {
+    barExcluded.clear();
+    saveBarExcluded();
+    renderBarChips();
+    renderThinkingBar(applyFilters());
+  });
+}
+
 /** 某「模型×思考等级」组合的平均分与样本数：该组合所有记录中，有分数轮次的平均
     （无分数不记录）。返回 {avg, count}；无分数返回 null。 */
 function comboAvg(s, thinking, recs) {
@@ -390,15 +439,20 @@ function renderThinkingBar(recs) {
   const wrap = $("#tbar");
   if (!wrap) return;
 
+  renderBarChips();   // chips 与图表同口径渲染（放在早退路径之前）
+
   if (tbarChart) tbarChart.destroy();
+
+  // 忽略题目口径：被排除题目的记录不参与均分与样本量（仅本视图，localStorage 记忆）
+  const scoped = barExcluded.size ? recs.filter((r) => !barExcluded.has(r.pid)) : recs;
 
   // 组合 = 出现的模型系列 × 该系列用过的思考等级；只统计有分数数据、且样本量达到门槛的组合
   const combos = [];
   for (const s of seriesList()) {
     if (!visibleSeries.has(s)) continue; // 尊重系列显隐
-    const usedT = [...new Set(recs.filter((r) => seriesKey(r) === s).map((r) => r.thinking || DEFAULT_THINKING))];
+    const usedT = [...new Set(scoped.filter((r) => seriesKey(r) === s).map((r) => r.thinking || DEFAULT_THINKING))];
     for (const t of usedT) {
-      const res = comboAvg(s, t, recs);
+      const res = comboAvg(s, t, scoped);
       if (res == null) continue; // 无分数数据不显示
       if (res.count < BAR_MIN_SAMPLES) continue; // 样本量不足的组合不显示，避免小样本均值误导
       combos.push({ label: `${s} · ${t}`, series: s, thinking: t, avg: res.avg, count: res.count });
@@ -407,8 +461,12 @@ function renderThinkingBar(recs) {
   // 按平均分从高到低排序
   combos.sort((a, b) => b.avg - a.avg);
 
+  const exclNote = barExcluded.size
+    ? `已忽略 ${barExcluded.size} 题（${[...barExcluded].join("、")}），其分数不计入均分与样本量；点击题目 chip 可恢复。`
+    : "";
+
   if (!combos.length) {
-    $("#tbar-hint").textContent = `暂无满足条件的组合——需要同一「模型 × 思考等级」组合下至少 ${BAR_MIN_SAMPLES} 个有分数的轮次。`;
+    $("#tbar-hint").textContent = `暂无满足条件的组合——需要同一「模型 × 思考等级」组合下至少 ${BAR_MIN_SAMPLES} 个有分数的轮次。` + exclNote;
     return;
   }
 
@@ -482,7 +540,7 @@ function renderThinkingBar(recs) {
     plugins: [barTopLabel],
   });
 
-  $("#tbar-hint").textContent = `柱长 = 该「模型 × 思考等级」组合所有有分数轮次的平均分（无分数轮次不记录）；仅显示样本量 n ≥ ${BAR_MIN_SAMPLES} 的组合，柱顶 n = 参与统计的数据量，按平均分从高到低排列。`;
+  $("#tbar-hint").textContent = `柱长 = 该「模型 × 思考等级」组合所有有分数轮次的平均分（无分数轮次不记录）；仅显示样本量 n ≥ ${BAR_MIN_SAMPLES} 的组合，柱顶 n = 参与统计的数据量，按平均分从高到低排列。` + exclNote;
 }
 
 /* ================= 系列图例 ================= */
@@ -1603,6 +1661,7 @@ async function init() {
   bindEvents();
   renderAuthUI();
   maybeShowNotice();
+  loadBarExcluded();   // 柱状图忽略题目名单（本机记忆）
 
   try {
     await loadSession();
