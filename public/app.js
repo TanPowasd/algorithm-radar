@@ -26,6 +26,10 @@ let currentView = "matrix";    // matrix 矩阵图（默认）| radar 雷达图 
 let detailPid = null;          // 题目详情抽屉当前展示的题号
 let radarChart = null;
 let tbarChart = null;
+let trendChart = null;
+let trendMetric = "first";     // trend 首轮（默认）| final 最终轮 | avgscore 全轮均分
+let drawerHighlight = null;    // 抽屉里高亮的 AI 组合（来自矩阵单元格点击）
+let lastBarHorizontal = null;  // 柱状图当前朝向（跨过 640px 断点时重渲染）
 let sortState = { key: "date", dir: -1 };
 let filters = { series: "", difficulty: "", category: "", result: "", keyword: "", thinking: "" };
 let editingId = null;
@@ -475,13 +479,18 @@ function renderThinkingBar(recs) {
   const colors = combos.map((c) => seriesColor(c.series));
   const counts = combos.map((c) => c.count);
 
-  // 柱顶标签插件：在每个柱子上方绘制「n=参与数据量」
+  // 移动端（≤640px）改横向条形：模型名较长时 Y 轴标签比挤在一起的 X 轴标签可读得多
+  const horizontal = window.matchMedia("(max-width: 640px)").matches;
+  lastBarHorizontal = horizontal;
+
+  // 柱顶标签插件：竖向在柱顶上方标 n，横向在条形右端标 n
   const barTopLabel = {
     id: "barTopLabel",
     afterDatasetsDraw(chart) {
       const { ctx } = chart;
       const meta = chart.getDatasetMeta(0);
       const ds = chart.data.datasets[0];
+      const isH = chart.options.indexAxis === "y";
       chart.data.labels.forEach((label, i) => {
         const bar = meta.data[i];
         if (!bar || ds.data[i] == null) return;
@@ -489,10 +498,17 @@ function renderThinkingBar(recs) {
         if (n == null) return;
         ctx.save();
         ctx.font = "600 11px system-ui, sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "bottom";
-        ctx.fillStyle = cssVar("--muted", "#8b949e");
-        ctx.fillText(`n=${n}`, bar.x, bar.y - 3);
+        if (isH) {
+          ctx.textAlign = "left";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = cssVar("--text-2", "#c9d1d9");
+          ctx.fillText(`n=${n}`, bar.x + 6, bar.y);
+        } else {
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          ctx.fillStyle = cssVar("--muted", "#8b949e");
+          ctx.fillText(`n=${n}`, bar.x, bar.y - 3);
+        }
         ctx.restore();
       });
     },
@@ -513,9 +529,17 @@ function renderThinkingBar(recs) {
       }],
     },
     options: {
+      indexAxis: horizontal ? "y" : "x",
       responsive: true,
       maintainAspectRatio: false,
-      scales: {
+      scales: horizontal ? {
+        x: {
+          min: 0, max: 100,
+          ticks: { stepSize: 20, callback: (v) => v + "分", color: cssVar("--muted", "#8b949e") },
+          grid: { color: cssVar("--chart-grid", "rgba(139,148,158,.18)") },
+        },
+        y: { ticks: { color: cssVar("--text-2", "#c9d1d9"), font: { size: 11 } }, grid: { display: false } },
+      } : {
         x: { ticks: { color: cssVar("--text-2", "#c9d1d9"), font: { size: 11 } }, grid: { display: false } },
         y: {
           min: 0, max: 100,
@@ -523,13 +547,14 @@ function renderThinkingBar(recs) {
           grid: { color: cssVar("--chart-grid", "rgba(139,148,158,.18)") },
         },
       },
-      layout: { padding: { top: 22 } },   // 给柱顶标签留空间
+      // 给柱顶/条端 n 标签留空间
+      layout: horizontal ? { padding: { right: 36 } } : { padding: { top: 22 } },
       plugins: {
         legend: { display: false },
         tooltip: {
           callbacks: {
             label: (c) => {
-              const v = c.parsed.y;
+              const v = horizontal ? c.parsed.x : c.parsed.y;
               const n = c.dataset._counts ? c.dataset._counts[c.dataIndex] : null;
               return `${c.label}：均分 ${v} 分（${n != null ? n + " 个数据参与" : "无数据"}）`;
             },
@@ -541,6 +566,124 @@ function renderThinkingBar(recs) {
   });
 
   $("#tbar-hint").textContent = `柱长 = 该「模型 × 思考等级」组合所有有分数轮次的平均分（无分数轮次不记录）；仅显示样本量 n ≥ ${BAR_MIN_SAMPLES} 的组合，柱顶 n = 参与统计的数据量，按平均分从高到低排列。` + exclNote;
+}
+
+/* ================= 成绩时间趋势 ================= */
+
+/** 记录在当前趋势口径下的取值：first 首轮提交分 | final 最终轮提交分 | avgscore 该记录全部有分数轮次的均分。
+    无分数返回 null（趋势图断点，不按 0 计，避免拉低走势）。 */
+function trendValueOf(r) {
+  if (trendMetric === "first") return firstRoundScore(r);
+  if (trendMetric === "final") {
+    const sc = lastSub(r).score;
+    return sc == null ? null : sc;
+  }
+  const scored = r.submissions.filter((s) => s.score != null).map((s) => s.score);
+  return scored.length ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length) : null;
+}
+
+function renderTrend(recs) {
+  const wrap = $("#trend");
+  if (!wrap) return;
+  if (trendChart) { trendChart.destroy(); trendChart = null; }
+
+  const metricName = trendMetric === "first" ? "首轮得分" : trendMetric === "final" ? "最终轮得分" : "全轮均分";
+
+  // 日期轴 = 当前筛选范围内出现过的日期（升序）；每点 = 该组合当日的口径均值
+  const dates = [...new Set(recs.map((r) => r.date))].sort();
+  const models = seriesList().filter((s) => visibleSeries.has(s) && recs.some((r) => seriesKey(r) === s));
+
+  renderTrendLegend(recs);
+
+  if (!dates.length || !models.length) {
+    $("#trend-hint").textContent = !records.length
+      ? "还没有任何记录——点击右上角「提交记录」开始积累数据。"
+      : "当前筛选 / 图例组合下没有可绘制的数据——试试点图例恢复系列，或清空筛选。";
+    return;
+  }
+
+  const datasets = models.map((m) => {
+    const byDate = new Map();
+    for (const r of recs) {
+      if (seriesKey(r) !== m) continue;
+      const v = trendValueOf(r);
+      if (v == null) continue; // 无分数轮次不记录
+      if (!byDate.has(r.date)) byDate.set(r.date, []);
+      byDate.get(r.date).push(v);
+    }
+    const color = seriesColor(m);
+    return {
+      label: m,
+      data: dates.map((d) => {
+        const arr = byDate.get(d);
+        return arr && arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+      }),
+      backgroundColor: color,
+      borderColor: color,
+      borderWidth: 2,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      tension: 0.3,
+      spanGaps: false,   // 断点 = 当日无测试，不连线避免误读
+    };
+  });
+
+  trendChart = new Chart(wrap.getContext("2d"), {
+    type: "line",
+    data: { labels: dates, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "nearest", intersect: false },
+      scales: {
+        x: { ticks: { color: cssVar("--text-2", "#c9d1d9"), font: { size: 10 }, maxRotation: 60 }, grid: { display: false } },
+        y: {
+          min: 0, max: 100,
+          ticks: { stepSize: 20, callback: (v) => v + "分", color: cssVar("--muted", "#8b949e") },
+          grid: { color: cssVar("--chart-grid", "rgba(139,148,158,.18)") },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (c) => `${c.dataset.label}：${c.parsed.y == null ? "无数据" : c.parsed.y + " 分"}（${metricName}）`,
+          },
+        },
+      },
+    },
+  });
+
+  $("#trend-hint").textContent = `每点 = 该 AI 组合当日的${metricName}均值（同一组合一天多次测试取平均；无分数的轮次不记录，断点 = 当日无测试）。`;
+}
+
+/** 趋势图图例：与雷达图共用 visibleSeries 显隐；rate = 该组合全部记录的当前口径均值 */
+function renderTrendLegend(recs) {
+  const wrap = $("#trend-legend");
+  if (!wrap) return;
+  const list = seriesList();
+  if (!list.length) { wrap.innerHTML = ""; return; }
+  const metricShort = trendMetric === "first" ? "首轮" : trendMetric === "final" ? "最终轮" : "全轮";
+  wrap.innerHTML = list.map((s) => {
+    const mine = recs.filter((r) => seriesKey(r) === s);
+    const vals = mine.map(trendValueOf).filter((v) => v != null);
+    const rate = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) + "分" : "–";
+    const off = visibleSeries.has(s) ? "" : "off";
+    return `<span class="series-chip ${off}" data-series="${escapeHtml(s)}" title="该组合全部记录的${metricShort}均分">
+      <span class="dot"></span>
+      ${escapeHtml(s)} <span class="rate">${rate}</span>
+    </span>`;
+  }).join("");
+  wrap.querySelectorAll(".series-chip").forEach((chip) => {
+    // 圆点颜色走 CSSOM 设置：CSP 禁止 HTML 内联 style 属性
+    const dot = chip.querySelector(".dot");
+    if (dot) dot.style.background = seriesColor(chip.dataset.series);
+    chip.addEventListener("click", () => {
+      const s = chip.dataset.series;
+      if (visibleSeries.has(s)) visibleSeries.delete(s); else visibleSeries.add(s);
+      renderAll();
+    });
+  });
 }
 
 /* ================= 系列图例 ================= */
@@ -670,8 +813,9 @@ function renderMatrix(recs) {
       ${title ? `<span class="m-title">${escapeHtml(title)}</span>` : ""}</td>`;
     for (const s of series) {
       const rs = recs.filter((r) => r.pid === pid && seriesKey(r) === s);
+      const cellAttrs = `data-detail="${escapeHtml(pid)}" data-model="${escapeHtml(s)}"`;
       if (!rs.length) {
-        html += '<td class="mcell none">未做</td>';
+        html += `<td class="mcell none" ${cellAttrs}>未做</td>`;
         continue;
       }
       if (matrixMode === "score") {
@@ -696,7 +840,7 @@ function renderMatrix(recs) {
         `\n日期：${best.date}` + (best.note ? `\n备注：${best.note}` : "") +
         (rs.length > 1 ? `\n（该组合共 ${rs.length} 次测试，取${isPassed(best) ? "通过" : "最近"}的一次）` : "");
       const cntTests = rs.length > 1 ? ` <span class="cnt">×${rs.length}测</span>` : "";
-      html += `<td class="mcell ${cls}" title="${escapeHtml(tip)}">${text}${cntTests}</td>`;
+      html += `<td class="mcell ${cls}" ${cellAttrs} title="${escapeHtml(tip)}">${text}${cntTests}</td>`;
     }
     html += "</tr>";
   }
@@ -750,7 +894,7 @@ function scoreCellHtml(s, pid, rs, roundLabel) {
     per.push(sc);
   }
   if (!cnt) {
-    return '<td class="mcell score-na" title="' + escapeHtml(`${s} · ${pid}\n该题共 ${rs.length} 次测试，均未记录得分`) + '">–</td>';
+    return '<td class="mcell score-na" data-detail="' + escapeHtml(pid) + '" data-model="' + escapeHtml(s) + '" title="' + escapeHtml(`${s} · ${pid}\n该题共 ${rs.length} 次测试，均未记录得分`) + '">–</td>';
   }
   const avg = Math.round(sum / cnt);
   // 满分（100）用特殊金色标记，与 80–99 的绿色区分
@@ -758,7 +902,7 @@ function scoreCellHtml(s, pid, rs, roundLabel) {
   const avgLine = `${avg}分`;
   const perLine = per.join("、") + "（分）";
   const cntLine = `${rs.length} 次测试${rs.length === cnt ? "" : `（其中 ${cnt} 次记分）`}`;
-  return `<td class="mcell ${cls}" title="${escapeHtml(`${s} · ${pid}\n${roundLabel}均分：${avg} 分（${perLine}，${cntLine}）`)}">${avgLine}</td>`;
+  return `<td class="mcell ${cls}" data-detail="${escapeHtml(pid)}" data-model="${escapeHtml(s)}" title="${escapeHtml(`${s} · ${pid}\n${roundLabel}均分：${avg} 分（${perLine}，${cntLine}）`)}">${avgLine}</td>`;
 }
 
 /* ================= 明细表 ================= */
@@ -983,7 +1127,7 @@ function positionPill() {
 }
 
 function switchView(view) {
-  if (!["matrix", "radar", "bar"].includes(view)) view = "matrix";
+  if (!["matrix", "radar", "bar", "trend"].includes(view)) view = "matrix";
   currentView = view;
   document.querySelectorAll(".view-tab").forEach((b) => {
     b.classList.toggle("active", b.dataset.view === view);
@@ -1002,6 +1146,9 @@ function switchView(view) {
   } else if (view === "bar") {
     if (tbarChart) { tbarChart.destroy(); tbarChart = null; }
     renderThinkingBar(applyFilters());
+  } else if (view === "trend") {
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+    renderTrend(applyFilters());
   } else {
     renderMatrix(applyFilters());
   }
@@ -1022,6 +1169,8 @@ function renderAll() {
     renderRadar(recs);
   } else if (currentView === "bar") {
     renderThinkingBar(recs);
+  } else if (currentView === "trend") {
+    renderTrend(recs);
   } else {
     renderMatrix(recs);
   }
@@ -1364,9 +1513,10 @@ async function saveRecord(e) {
 
 /* ================= 题目详情抽屉 ================= */
 
-function openProblemDrawer(pid) {
+function openProblemDrawer(pid, highlightModel = null) {
   if (!pid || !problems[pid]) { toast("题目不存在", "err"); return; }
   detailPid = pid;
+  drawerHighlight = highlightModel;
   renderDrawer();
   openOverlay("#problem-drawer");
 }
@@ -1394,13 +1544,17 @@ function renderDrawer() {
   $("#drawer-records").innerHTML = rs.length
     ? rs.map(drawerRecordHtml).join("")
     : '<div class="drawer-empty">该题还没有任何 AI 测试——快来提交第一条！</div>';
+  // 来自矩阵单元格点击：高亮该 AI 组合的记录并滚动到位
+  const hl = drawerHighlight ? $("#drawer-records").querySelector(".drawer-rec.hl") : null;
+  if (hl) hl.scrollIntoView({ block: "center" });
 
   $("#btn-drawer-submit").textContent = rs.length ? "＋ 提交该题测试" : "＋ 抢先提交第一条测试";
 }
 
 function drawerRecordHtml(r) {
   const fin = lastSub(r);
-  return `<div class="drawer-rec">
+  const hl = drawerHighlight && seriesKey(r) === drawerHighlight ? " hl" : "";
+  return `<div class="drawer-rec${hl}">
     <div class="drawer-rec-head">
       <span class="drawer-rec-model"><b>${escapeHtml(seriesKey(r))}</b>${r.variant ? ` <span class="muted">· ${escapeHtml(r.variant)}</span>` : ""}
         <span class="think-tag">${escapeHtml(r.thinking || DEFAULT_THINKING)}</span>${isPending(r) ? ' <span class="status-tag">待审核</span>' : ""}</span>
@@ -1415,6 +1569,7 @@ function closeProblemDrawer() {
   const el = $("#problem-drawer");
   if (el) el.hidden = true;
   detailPid = null;
+  drawerHighlight = null;
   closeOverlay("#problem-drawer");
 }
 
@@ -1552,11 +1707,11 @@ function bindEvents() {
     else { status.textContent = ""; status.className = "fetch-status"; }
   });
 
-  // 题目详情抽屉入口（矩阵行头 / 明细表题目，事件委托）：点题号外链不拦截
+  // 题目详情抽屉入口（矩阵行头/单元格 / 明细表题目，事件委托）：点题号外链不拦截
   document.addEventListener("click", (e) => {
     if (e.target.closest("a")) return;
     const t = e.target.closest("[data-detail]");
-    if (t) openProblemDrawer(t.dataset.detail);
+    if (t) openProblemDrawer(t.dataset.detail, t.dataset.model || null);
   });
   $("#drawer-close").addEventListener("click", closeProblemDrawer);
   $("#problem-drawer").addEventListener("click", (e) => { if (e.target === $("#problem-drawer")) closeProblemDrawer(); });
@@ -1569,8 +1724,14 @@ function bindEvents() {
   // 管理员发布新题后刷新目录
   document.addEventListener("problemschanged", () => { refreshData().catch(() => {}); });
 
-  // 选项卡 pill 跟随窗口宽度重定位
-  window.addEventListener("resize", positionPill);
+  // 选项卡 pill 跟随窗口宽度重定位；柱状图跨过移动断点时切换横/竖向
+  window.addEventListener("resize", () => {
+    positionPill();
+    const h = window.matchMedia("(max-width: 640px)").matches;
+    if (lastBarHorizontal != null && h !== lastBarHorizontal && currentView === "bar") {
+      renderThinkingBar(applyFilters());
+    }
+  });
 
   $("#btn-add-sub").addEventListener("click", () => {
     formSubs.push({ score: "", result: "WA", note: "" });
@@ -1597,6 +1758,14 @@ function bindEvents() {
   $("#radar-problem").addEventListener("change", (e) => {
     radarPid = normalizePid(e.target.value);
     renderAll();
+  });
+
+  $("#trend-metric").querySelectorAll("button").forEach((b) => {
+    b.addEventListener("click", () => {
+      trendMetric = b.dataset.metric;
+      $("#trend-metric").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+      renderAll();
+    });
   });
   $("#radar-metric").querySelectorAll("button").forEach((b) => {
     b.addEventListener("click", () => {

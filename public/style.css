@@ -395,6 +395,12 @@ span.row-detail:hover { color: var(--accent); }
 .drawer-rec-model b { font-weight: 640; }
 .drawer-rec-model .think-tag { margin-left: 6px; }
 .drawer-rec-note { color: var(--muted); font-size: var(--fs-xs); margin-top: 5px; }
+/* 来自矩阵单元格点击：高亮该 AI 组合的记录 */
+.drawer-rec.hl {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 .drawer-empty { padding: var(--sp-4); text-align: center; color: var(--muted); font-size: var(--fs-sm); }
 
 .hint { color: var(--muted); font-size: var(--fs-xs); margin: var(--sp-3) 0 0; text-align: center; }
@@ -452,6 +458,8 @@ td.num { font-variant-numeric: tabular-nums; }
 #matrix-wrap thead th:first-child { z-index: 4; background: var(--surface-2); }
 #matrix-wrap tbody tr:not(.sum-row):hover td:first-child { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 #matrix-wrap td.mcell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 可点击的矩阵单元格（点击打开题目详情抽屉；移动端无悬停提示，点击是唯一入口） */
+#matrix-wrap td.mcell[data-detail] { cursor: pointer; }
 
 .pid-link { color: var(--accent); text-decoration: none; font-weight: 600; }
 .pid-link:hover { text-decoration: underline; }
@@ -865,7 +873,8 @@ input, select, textarea { font-family: inherit; }
   .radar-problem-sel { width: 100%; max-width: none; min-height: 36px; }
 
   .chart-wrap { height: 300px; }
-  .chart-wrap.bar { height: 300px; }
+  /* 横向条形图：多组合时纵向更耗高度 */
+  .chart-wrap.bar { height: 340px; }
   .series-chip { padding: 3px 9px 3px 7px; font-size: var(--fs-xs); }
 
   /* 表格：触控间距、保持内容完整 */

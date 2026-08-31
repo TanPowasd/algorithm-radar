@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
-<title>算法雷达站 · AI 洛谷解题能力对比</title>
+<title>AI vs 洛谷 · 解题能力对比</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -14,8 +14,8 @@
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">📡</span>
       <div>
-        <h1>算法雷达站</h1>
-        <p class="sub">AI × 洛谷 · 解题能力对比</p>
+        <h1>AI vs 洛谷</h1>
+        <p class="sub">解题能力对比</p>
       </div>
     </div>
     <div class="topbar-actions">
@@ -71,6 +71,7 @@
     <button type="button" class="view-tab" data-view="matrix" role="tab">矩阵图</button>
     <button type="button" class="view-tab" data-view="radar" role="tab">雷达图</button>
     <button type="button" class="view-tab" data-view="bar" role="tab">柱状图</button>
+    <button type="button" class="view-tab" data-view="trend" role="tab">趋势图</button>
   </nav>
 
   <section class="view-panel" id="view-matrix" data-view="matrix">
@@ -148,6 +149,27 @@
       </div>
       <div class="chart-wrap bar"><canvas id="tbar"></canvas></div>
       <p class="hint" id="tbar-hint">柱高 = 该组合所有有分数轮次的平均分（无分数的轮次不记录）。</p>
+    </section>
+  </section>
+
+  <section class="view-panel" id="view-trend" data-view="trend" hidden>
+    <section class="card" id="trend-card">
+      <div class="card-head">
+        <div>
+          <h2>成绩时间趋势</h2>
+          <p class="head-sub">点击下方图例可显示 / 隐藏对应系列</p>
+        </div>
+        <div class="card-tools">
+          <div class="seg" id="trend-metric" role="group" aria-label="趋势图口径">
+            <button type="button" data-metric="first" class="active">首轮</button>
+            <button type="button" data-metric="final">最终轮</button>
+            <button type="button" data-metric="avgscore">全轮均分</button>
+          </div>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="trend"></canvas></div>
+      <div class="series-legend" id="trend-legend"></div>
+      <p class="hint" id="trend-hint"></p>
     </section>
   </section>
 
