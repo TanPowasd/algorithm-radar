@@ -34,6 +34,7 @@ let cachedScrapedDifficulty = null; // 当前表单题号对应的「洛谷爬�
 let serverOffline = false;   // 启动时服务器不可达且无本地缓存（空态文案据此切换）
 let tablePage = 1;           // 明细表当前页码
 const TABLE_PAGE_SIZE = 50;  // 明细表每页条数
+const BAR_MIN_SAMPLES = 5;   // 柱状图显示门槛：组合至少需要的记分样本量
 const prevStats = {};        // 统计卡上一次数值（数字滚动动画用）
 
 /* ================= 工具 ================= */
@@ -311,7 +312,7 @@ function renderThinkingBar(recs) {
 
   if (tbarChart) tbarChart.destroy();
 
-  // 组合 = 出现的模型系列 × 该系列用过的思考等级；只统计有分数数据的
+  // 组合 = 出现的模型系列 × 该系列用过的思考等级；只统计有分数数据、且样本量达到门槛的组合
   const combos = [];
   for (const s of seriesList()) {
     if (!visibleSeries.has(s)) continue; // 尊重系列显隐
@@ -319,6 +320,7 @@ function renderThinkingBar(recs) {
     for (const t of usedT) {
       const res = comboAvg(s, t, recs);
       if (res == null) continue; // 无分数数据不显示
+      if (res.count < BAR_MIN_SAMPLES) continue; // 样本量不足的组合不显示，避免小样本均值误导
       combos.push({ label: `${s} · ${t}`, series: s, thinking: t, avg: res.avg, count: res.count });
     }
   }
@@ -326,7 +328,7 @@ function renderThinkingBar(recs) {
   combos.sort((a, b) => b.avg - a.avg);
 
   if (!combos.length) {
-    $("#tbar-hint").textContent = "暂无数据——先录入带思考等级与分数的记录。";
+    $("#tbar-hint").textContent = `暂无满足条件的组合——需要同一「模型 × 思考等级」组合下至少 ${BAR_MIN_SAMPLES} 个有分数的轮次。`;
     return;
   }
 
@@ -400,7 +402,7 @@ function renderThinkingBar(recs) {
     plugins: [barTopLabel],
   });
 
-  $("#tbar-hint").textContent = "柱长 = 该「模型 × 思考等级」组合所有有分数轮次的平均分（无分数轮次不记录）；柱顶 n = 参与统计的数据量，按平均分从高到低排列。";
+  $("#tbar-hint").textContent = `柱长 = 该「模型 × 思考等级」组合所有有分数轮次的平均分（无分数轮次不记录）；仅显示样本量 n ≥ ${BAR_MIN_SAMPLES} 的组合，柱顶 n = 参与统计的数据量，按平均分从高到低排列。`;
 }
 
 /* ================= 系列图例 ================= */
