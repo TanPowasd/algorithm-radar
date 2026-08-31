@@ -99,6 +99,49 @@ function renderAll() {
   renderSummary();
   renderFilterSeries();
   renderPending();
+  renderProblems();
+}
+
+/* ================= 题目管理 ================= */
+
+function renderProblems() {
+  const wrap = $("#problems-wrap");
+  const pids = sortedProblemPids(problems);
+  if (!pids.length) {
+    wrap.innerHTML = '<p class="empty-tip">还没有发布题目——点右上角「发布新题」从洛谷抓取并发布第一道题。</p>';
+    return;
+  }
+  const rows = pids.map((pid) => {
+    const info = problems[pid] || {};
+    const cnt = records.filter((r) => r.pid === pid).length;
+    return `<tr>
+      <td><a class="pid-link" href="https://www.luogu.com.cn/problem/${encodeURIComponent(pid)}" target="_blank" rel="noopener">${escapeHtml(pid)}</a></td>
+      <td>${escapeHtml(info.title || "")}</td>
+      <td>${diffTagHtml(info.difficulty)}</td>
+      <td>${(info.categories || []).map((c) => `<span class="cat-tag">${escapeHtml(c)}</span>`).join("")}</td>
+      <td class="num">${cnt}</td>
+      <td><button class="btn small danger" data-del-problem="${escapeHtml(pid)}" ${cnt ? "disabled title=\"先删除该题的全部测试记录\"" : ""}>删除</button></td>
+    </tr>`;
+  }).join("");
+  wrap.innerHTML = `<table><thead><tr>
+      <th>题号</th><th>题目</th><th>难度</th><th>算法类别</th><th>记录数</th><th>操作</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+
+  wrap.querySelectorAll("button[data-del-problem]").forEach((b) => {
+    b.addEventListener("click", () => deleteProblem(b.dataset.delProblem));
+  });
+}
+
+async function deleteProblem(pid) {
+  if (!confirm(`删除题目 ${pid}？该操作不可恢复（不影响已有测试记录以外的数据）。`)) return;
+  try {
+    await api(`/api/problems/${encodeURIComponent(pid)}`, { method: "DELETE" });
+    toast(`已删除题目 ${pid}`, "ok");
+    await refreshData();
+    renderAll();
+  } catch (e) {
+    toast((e && e.message) || "删除失败", "err");
+  }
 }
 
 function renderSummary() {
@@ -248,6 +291,10 @@ function bindEvents() {
   $("#btn-reject-all").addEventListener("click", rejectAll);
   $("#f-keyword").addEventListener("input", (e) => { keyword = e.target.value; renderPending(); });
   $("#f-series").addEventListener("change", (e) => { seriesFilter = e.target.value; renderPending(); });
+  // 发布新题成功（common.js 广播）后刷新目录与列表
+  document.addEventListener("problemschanged", async () => {
+    try { await refreshData(); renderAll(); } catch { /* ignore */ }
+  });
 }
 
 async function initApp() {

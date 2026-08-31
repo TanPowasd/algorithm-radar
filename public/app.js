@@ -18,19 +18,22 @@ let username = "";
 let canSetup = false;    // 是否允许初始化管理员（未配置且本机回环）
 let configured = true;   // 服务端是否已配置管理员账号
 let visibleSeries = new Set();
-let radarDim = "category";     // category | difficulty
+let radarDim = "category";     // category 算法类别 | difficulty 难度等级 | problem 单题对比
 let radarMetric = "first";     // first 首轮提交AC（默认）| final 最终提交AC | avgscore 平均分
+let radarPid = "";             // 单题对比模式下选中的题目（pid）
 let matrixMode = "score";      // score 首轮均分（默认）| finalscore 最终轮均分 | status 提交状态
 let currentView = "matrix";    // matrix 矩阵图（默认）| radar 雷达图 | bar 柱状图
+let detailPid = null;          // 题目详情抽屉当前展示的题号
 let radarChart = null;
 let tbarChart = null;
 let sortState = { key: "date", dir: -1 };
 let filters = { series: "", difficulty: "", category: "", result: "", keyword: "", thinking: "" };
 let editingId = null;
+let formPidLocked = false;     // 从抽屉进入时锁定题号（只能提交该题）
+let formLockPid = null;        // 锁定时的题号（与 detailPid 解耦：关抽屉后再开表单仍有效）
 let formCategories = [];
 let formSubs = [];       // 表单中的提交列表 [{score:"", result:"AC", note:""}]
 let pendingImport = null;
-let cachedScrapedDifficulty = null; // 当前表单题号对应的「洛谷爬取难度」参考值（不自动填充，仅供提示）
 let serverOffline = false;   // 启动时服务器不可达且无本地缓存（空态文案据此切换）
 let tablePage = 1;           // 明细表当前页码
 const TABLE_PAGE_SIZE = 50;  // 明细表每页条数
@@ -70,8 +73,10 @@ const passedOf = (r) => (radarMetric === "first" ? isFirstPassed(r) : isPassed(r
 /* 站点公告：改这里的文字即可（支持简单 HTML 如 <b>/<a>；内容固定在代码里，不含用户输入）。
    显示规则：每天首次打开显示；「今天关闭」后当天不再出现；「本次关闭」仅当前标签页内不再出现（新标签页会再显示）。 */
 const ANNOUNCEMENT_HTML = `
-  <b>感谢数据提交 🙏</b>
-  提交时请填写 <b>Agent</b> 与 <b>Token 来源</b>（官方 API 或套餐请填写「官方」）；版本/策略请留空，谢谢。`;
+  <b>站点机制升级 📢</b>
+  题目现由管理员统一<b>发布</b>，请在「提交记录」中<b>选择已发布题目</b>提交测试；
+  思考等级已扩展为 7 级（ultra / max / xhigh / high / medium / low / off）。
+  提交时请填写 <b>Agent</b> 与 <b>Token 来源</b>（官方 API 或套餐请填写「官方」）。`;
 
 const LS_NOTICE_DAY = "radar.notice.dismissedDay";       // 「今天关闭」：记录关闭时的日期
 const SS_NOTICE_SESSION = "radar.notice.dismissedSession"; // 「本次关闭」：仅当前标签页有效
@@ -161,9 +166,12 @@ function firstRoundScore(r) {
 function axisStats(recs) {
   const map = new Map();
   for (const r of recs) {
+    if (radarDim === "problem" && r.pid !== radarPid) continue;   // 单题模式：只看选中题目
     const keys = radarDim === "category"
       ? (r.categories && r.categories.length ? r.categories : ["其他/未标注"])
-      : [String(r.difficulty == null ? -1 : r.difficulty)];
+      : radarDim === "difficulty"
+        ? [String(r.difficulty == null ? -1 : r.difficulty)]
+        : [seriesKey(r)];                     // 单题模式：轴 = AI 组合
     const ac = passedOf(r) ? 1 : 0;
     const sc = firstRoundScore(r);
     for (const k of keys) {
@@ -188,27 +196,59 @@ function radarAxes(recs) {
       if (ib !== -1) return 1;
       return a.localeCompare(b, "zh-Hans-CN");
     });
-  } else {
+  } else if (radarDim === "difficulty") {
     keys.sort((a, b) => Number(a) - Number(b));
+  } else {
+    // 单题对比：AI 组合按当前口径的取值降序（更直观的排名读法）
+    const isAvg = radarMetric === "avgscore";
+    const val = (k) => {
+      const s = stats.get(k);
+      if (!s || !s.total) return -1;
+      return isAvg
+        ? (s.scoreCnt ? s.scoreSum / s.scoreCnt : -1)
+        : s.ac / s.total;
+    };
+    keys.sort((a, b) => val(b) - val(a));
   }
   return keys.map((k) => {
     const s = stats.get(k);
-    const label = radarDim === "category" ? s.label : DIFF_NAMES[Number(k)] || "未知难度";
+    const label = radarDim === "category" ? s.label
+      : radarDim === "difficulty" ? (DIFF_NAMES[Number(k)] || "未知难度")
+      : s.label;
     return { key: k, label, total: s.total, ac: s.ac };
   });
 }
 
-function renderRadar(recs) {
-  const axes = radarAxes(recs);
-  const labels = axes.map((a) => a.label);
+/** 单题对比的题目下拉框：列出全部已发布题目，默认选中有记录的第一题 */
+function renderProblemSelector() {
+  const sel = $("#radar-problem");
+  if (!sel) return;
+  const pids = sortedProblemPids(problems);
+  if (!radarPid || !pids.includes(radarPid)) {
+    radarPid = pids.find((pid) => records.some((r) => r.pid === pid)) || pids[0] || "";
+  }
+  sel.innerHTML = pids.map((pid) => {
+    const info = problems[pid] || {};
+    const label = `${pid}（${DIFF_NAMES[info.difficulty] || "未定难度"}${info.title ? " · " + info.title : ""}）`;
+    return `<option value="${escapeHtml(pid)}"${pid === radarPid ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
+  sel.hidden = radarDim !== "problem" || !pids.length;
+}
 
-  const shown = seriesList().filter((s) => visibleSeries.has(s));
+function renderRadar(recs) {
+  renderProblemSelector();   // 单题下拉框：随目录/数据更新（非单题维度自动隐藏）
+  const axes = radarAxes(recs);
   const isAvg = radarMetric === "avgscore";
-  const datasets = shown.map((s) => {
-    const mine = recs.filter((r) => seriesKey(r) === s);
-    const myStats = axisStats(mine);
-    const data = axes.map((a) => {
-      const st = myStats.get(a.key);
+  let chartLabels;
+  let datasets;
+
+  if (radarDim === "problem") {
+    // 单题对比：轴 = AI 组合（图例里隐藏的组合不出轴），单系列展示当前口径取值
+    const stats = axisStats(recs);
+    const shownAxes = axes.filter((a) => visibleSeries.has(a.key));
+    chartLabels = shownAxes.map((a) => a.label);
+    const data = shownAxes.map((a) => {
+      const st = stats.get(a.key);
       if (!st || st.total === 0) return null;
       if (isAvg) {
         if (!st.scoreCnt) return null;
@@ -216,31 +256,64 @@ function renderRadar(recs) {
       }
       return Math.round((st.ac / st.total) * 1000) / 10;
     });
-    const statArr = axes.map((a) => {
-      const st = myStats.get(a.key);
+    const statArr = shownAxes.map((a) => {
+      const st = stats.get(a.key);
       return st
         ? { ac: st.ac, total: st.total, scoreSum: st.scoreSum, scoreCnt: st.scoreCnt }
         : null;
     });
-    const color = seriesColor(s);
-    return {
-      label: s, data, _stats: statArr,
+    const color = cssVar("--accent", "#4d9dff");
+    datasets = [{
+      label: "该题表现", data, _stats: statArr,
       backgroundColor: color + "22",
       borderColor: color,
       borderWidth: 2,
       pointBackgroundColor: color,
       pointRadius: 3,
       spanGaps: false,
-      // 未作答的轴：不画点、不连线（避免 null 被误画到 0 或错位）
       pointHoverRadius: 4,
-    };
-  });
+    }];
+  } else {
+    chartLabels = axes.map((a) => a.label);
+    const shown = seriesList().filter((s) => visibleSeries.has(s));
+    datasets = shown.map((s) => {
+      const mine = recs.filter((r) => seriesKey(r) === s);
+      const myStats = axisStats(mine);
+      const data = axes.map((a) => {
+        const st = myStats.get(a.key);
+        if (!st || st.total === 0) return null;
+        if (isAvg) {
+          if (!st.scoreCnt) return null;
+          return Math.round((st.scoreSum / st.scoreCnt) * 10) / 10;
+        }
+        return Math.round((st.ac / st.total) * 1000) / 10;
+      });
+      const statArr = axes.map((a) => {
+        const st = myStats.get(a.key);
+        return st
+          ? { ac: st.ac, total: st.total, scoreSum: st.scoreSum, scoreCnt: st.scoreCnt }
+          : null;
+      });
+      const color = seriesColor(s);
+      return {
+        label: s, data, _stats: statArr,
+        backgroundColor: color + "22",
+        borderColor: color,
+        borderWidth: 2,
+        pointBackgroundColor: color,
+        pointRadius: 3,
+        spanGaps: false,
+        // 未作答的轴：不画点、不连线（避免 null 被误画到 0 或错位）
+        pointHoverRadius: 4,
+      };
+    });
+  }
 
   if (radarChart) radarChart.destroy();
   const ctx = $("#radar").getContext("2d");
   radarChart = new Chart(ctx, {
     type: "radar",
-    data: { labels, datasets },
+    data: { labels: chartLabels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -280,6 +353,13 @@ function renderRadar(recs) {
 
   if (!records.length) {
     $("#radar-hint").textContent = "还没有任何记录——点击右上角「提交记录」开始积累数据。";
+  } else if (radarDim === "problem") {
+    const info = problems[radarPid] || {};
+    const m = isAvg ? "首轮平均分（无分数的轮次不记录）"
+      : `${radarMetric === "first" ? "首轮提交 AC" : "最终提交 AC"} 的测试通过率`;
+    $("#radar-hint").textContent = radarPid
+      ? `单题对比：轴 = AI 组合（按取值降序），值 = 「${radarPid} ${info.title || ""}」上各组合的${m}。`
+      : "单题对比：请先在右上角下拉框选择要对比的题目。";
   } else {
     const m = radarMetric === "avgscore"
       ? "首轮平均分（无分数的轮次不记录）"
@@ -430,11 +510,14 @@ function renderSeriesLegend(recs) {
     }
     const off = visibleSeries.has(s) ? "" : "off";
     return `<span class="series-chip ${off}" data-series="${escapeHtml(s)}" title="雷达图各轴AC率的平均值（未作答轴不计入）">
-      <span class="dot" style="background:${seriesColor(s)}"></span>
+      <span class="dot"></span>
       ${escapeHtml(s)} <span class="rate">${rate}</span>
     </span>`;
   }).join("");
   wrap.querySelectorAll(".series-chip").forEach((chip) => {
+    // 圆点颜色走 CSSOM 设置：CSP 禁止 HTML 内联 style 属性
+    const dot = chip.querySelector(".dot");
+    if (dot) dot.style.background = seriesColor(chip.dataset.series);
     chip.addEventListener("click", () => {
       const s = chip.dataset.series;
       if (visibleSeries.has(s)) visibleSeries.delete(s); else visibleSeries.add(s);
@@ -447,7 +530,12 @@ function renderSeriesLegend(recs) {
 
 function renderMatrix(recs) {
   const wrap = $("#matrix-wrap");
-  const pids = [...new Set(recs.map((r) => r.pid))];
+  // 行 = 已发布题目目录（含还没有任何测试的题，鼓励提交）；
+  // 记录里出现目录之外的题号（旧缓存等边界情况）时追加到末尾
+  const pids = sortedProblemPids(problems);
+  for (const r of recs) {
+    if (!pids.includes(r.pid)) pids.push(r.pid);
+  }
   const series = seriesList().filter((s) => recs.some((r) => seriesKey(r) === s));
   const isScoreMode = matrixMode === "score" || matrixMode === "finalscore";
 
@@ -456,8 +544,6 @@ function renderMatrix(recs) {
     series.sort((a, b) => (seriesOverallAvg(b, recs) ?? -1) - (seriesOverallAvg(a, recs) ?? -1));
     // 行（题目）按「当前口径下有分数轮次的均分」降序排列；无分数排最后
     pids.sort((a, b) => (problemAvg(b, recs) ?? -1) - (problemAvg(a, recs) ?? -1));
-  } else {
-    pids.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }
 
   // 均分模式图例提示
@@ -476,13 +562,13 @@ function renderMatrix(recs) {
   if (!pids.length) {
     if (serverOffline) {
       wrap.innerHTML = '<div class="empty"><strong>无法连接服务器</strong>若服务正在休眠，首次唤醒约需 30–60 秒；恢复后刷新页面即可。</div>';
-    } else if (!records.length) {
-      wrap.innerHTML = '<div class="empty"><strong>还没有任何测试记录</strong>录入第一条「AI × 洛谷题目」测试后，这里会生成覆盖矩阵。<br>' +
-        '<button type="button" class="btn primary" id="btn-empty-add">＋ 提交第一条记录</button></div>';
-      const cta = $("#btn-empty-add");
-      if (cta) cta.addEventListener("click", () => openModal());
     } else {
-      wrap.innerHTML = '<div class="empty"><strong>没有符合当前筛选条件的记录</strong>试试清空筛选，或切换到其他视图。</div>';
+      wrap.innerHTML = isAdmin
+        ? '<div class="empty"><strong>还没有发布任何题目</strong>发布一道洛谷题后，游客即可提交该题的 AI 测试，这里会生成覆盖矩阵。<br>' +
+          '<button type="button" class="btn primary" id="btn-empty-publish">＋ 发布新题</button></div>'
+        : '<div class="empty"><strong>管理员还没有发布题目</strong>题目发布后，这里会生成 AI × 题目覆盖矩阵，届时即可提交测试。</div>';
+      const cta = $("#btn-empty-publish");
+      if (cta) cta.addEventListener("click", () => openProblemPublish());
     }
     return;
   }
@@ -522,7 +608,7 @@ function renderMatrix(recs) {
     const cache = problems[pid] || {};
     const title = info.title || cache.title || "";
     const diff = info.difficulty != null ? info.difficulty : cache.difficulty;
-    html += `<tr><td><a class="pid-link" href="https://www.luogu.com.cn/problem/${encodeURIComponent(pid)}" target="_blank" rel="noopener">${escapeHtml(pid)}</a> ${diffTagHtml(diff)}
+    html += `<tr><td class="row-detail" data-detail="${escapeHtml(pid)}" title="查看该题的全部测试记录"><a class="pid-link" href="https://www.luogu.com.cn/problem/${encodeURIComponent(pid)}" target="_blank" rel="noopener">${escapeHtml(pid)}</a> ${diffTagHtml(diff)}
       ${title ? `<span class="m-title">${escapeHtml(title)}</span>` : ""}</td>`;
     for (const s of series) {
       const rs = recs.filter((r) => r.pid === pid && seriesKey(r) === s);
@@ -678,13 +764,14 @@ function renderTable(recs) {
     const fin = lastSub(r);
     const finTip = `最终：第${r.submissions.length}次提交 ${fin.result}` +
       (isFirstPassed(r) ? "；首轮即 AC" : `；首轮提交 ${firstSub(r).result}`);
+    const title = r.title || (problems[r.pid] && problems[r.pid].title) || "";
     html += `<tr>
       <td>${escapeHtml(r.date)}</td>
       <td>${escapeHtml(seriesKey(r))}${r.variant ? ` <span class="muted" title="版本/策略（不参与分组）">· ${escapeHtml(r.variant)}</span>` : ""}</td>
       <td class="agent-cell">${escapeHtml(agentTokenText(r))}</td>
       <td><span class="think-tag" title="思考等级">${escapeHtml(r.thinking || DEFAULT_THINKING)}</span></td>
       <td><a class="pid-link" href="https://www.luogu.com.cn/problem/${encodeURIComponent(r.pid)}" target="_blank" rel="noopener">${escapeHtml(r.pid)}</a></td>
-      <td>${escapeHtml(r.title || "")}</td>
+      <td>${title ? `<span class="row-detail" data-detail="${escapeHtml(r.pid)}" title="查看该题的全部测试记录">${escapeHtml(title)}</span>` : ""}</td>
       <td>${diffTagHtml(r.difficulty)}</td>
       <td>${cats}</td>
       <td><span class="chain" title="${escapeHtml(finTip)}">${chainHtml(r)}</span></td>
@@ -694,7 +781,7 @@ function renderTable(recs) {
       <td>${isAdmin
         ? `<button class="btn small" data-edit="${escapeHtml(r.id)}">编辑</button>
            <button class="btn small danger" data-del="${escapeHtml(r.id)}">删除</button>`
-        : '<span class="muted" style="font-size:11px">仅管理员可改</span>'}</td>
+        : '<span class="muted tiny">仅管理员可改</span>'}</td>
     </tr>`;
   }
   html += "</tbody></table>";
@@ -803,6 +890,38 @@ function renderDatalists() {
   $("#dl-tokens").innerHTML = [...new Set(records.map((r) => r.tokenSource).filter(Boolean))].map((v) => `<option value="${escapeHtml(v)}">`).join("");
   const cats = [...new Set([...CATEGORY_ORDER, ...records.flatMap((r) => r.categories || [])])];
   $("#dl-cats").innerHTML = cats.map((c) => `<option value="${escapeHtml(c)}">`).join("");
+  renderPidOptions();
+}
+
+/** 提交表单的题目下拉框：只能选已发布题目（服务端同样校验） */
+function renderPidOptions() {
+  const sel = $("#f-pid");
+  if (!sel) return;
+  const pids = sortedProblemPids(problems);
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">选择题目…</option>' + pids.map((pid) => {
+    const info = problems[pid] || {};
+    const label = `${pid}（${DIFF_NAMES[info.difficulty] || "未定难度"}${info.title ? " · " + info.title : ""}）`;
+    return `<option value="${escapeHtml(pid)}"${pid === cur ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
+  // 锁定态（从题目详情抽屉进入）：只保留该题，且不可改
+  if (formPidLocked && formLockPid) {
+    const info = problems[formLockPid] || {};
+    const label = `${formLockPid}（${DIFF_NAMES[info.difficulty] || "未定难度"}${info.title ? " · " + info.title : ""}）`;
+    sel.innerHTML = `<option value="${escapeHtml(formLockPid)}">${escapeHtml(label)}</option>`;
+    sel.value = formLockPid;
+  }
+  sel.disabled = formPidLocked && !!formLockPid;
+}
+
+/** 滑动 pill 选项卡：JS 测量激活按钮位置，CSSOM 设置（CSP 禁止内联样式） */
+function positionPill() {
+  const pill = document.querySelector(".view-tab-pill");
+  const active = document.querySelector(".view-tab.active");
+  if (!pill || !active) return;
+  pill.style.width = active.offsetWidth + "px";
+  pill.style.transform = `translateX(${active.offsetLeft}px)`;
+  pill.classList.add("ready");
 }
 
 function switchView(view) {
@@ -812,6 +931,7 @@ function switchView(view) {
     b.classList.toggle("active", b.dataset.view === view);
     b.setAttribute("aria-selected", b.dataset.view === view ? "true" : "false");
   });
+  positionPill();
   document.querySelectorAll(".view-panel").forEach((p) => {
     p.hidden = p.dataset.view !== view;
   });
@@ -928,6 +1048,7 @@ function renderAuthUI() {
   $("#btn-import").hidden = !isAdmin;
   $("#btn-admin").hidden = !isAdmin;
   $("#btn-migrate").hidden = !isAdmin;
+  $("#btn-new-problem").hidden = !isAdmin;
 }
 
 /** 待审核摘要（仅管理员可见，完整审核在独立审核台 /admin.html） */
@@ -939,7 +1060,7 @@ function renderPending() {
   card.hidden = false;
   $("#pending-count").textContent = pend.length ? `（${pend.length} 条）` : "";
   if (!pend.length) {
-    wrap.innerHTML = '<p class="muted" style="padding:16px">暂无待审核提交。</p>';
+    wrap.innerHTML = '<p class="empty-tip">暂无待审核提交。</p>';
     return;
   }
   const rows = pend.slice(0, 8).map((r) => `
@@ -1015,10 +1136,12 @@ function updateSubSummary() {
     (l.result === "AC" ? " ✓" : "");
 }
 
-function openModal(editId = null) {
+function openModal(editId = null, presetPid = null, lockPid = false) {
   // 游客只能新增（提交后待审核），不能编辑已有记录
   if (editId != null && !isAdmin) { toast("仅管理员可编辑记录", "err"); return; }
   editingId = editId;
+  formPidLocked = !!lockPid && editId == null;   // 仅新增时允许锁定题号（来自详情抽屉）
+  formLockPid = formPidLocked ? (presetPid || null) : null;
   formCategories = [];
 
   const diffSel = $("#f-difficulty-input");
@@ -1034,6 +1157,8 @@ function openModal(editId = null) {
     $("#f-agent").value = r.agent || "";
     $("#f-token-source").value = r.tokenSource || "";
     $("#f-thinking").value = THINKING_LEVELS.includes(r.thinking) ? r.thinking : DEFAULT_THINKING;
+    renderPidOptions();
+    ensurePidOption(r.pid);
     $("#f-pid").value = r.pid;
     $("#f-title").value = r.title || "";
     diffSel.value = r.difficulty == null ? "" : String(r.difficulty);
@@ -1049,25 +1174,42 @@ function openModal(editId = null) {
     $("#f-agent").value = "";
     $("#f-token-source").value = "";
     $("#f-thinking").value = DEFAULT_THINKING; // 新记录默认 max
-    $("#f-pid").value = "";
+    renderPidOptions();
+    if (!(presetPid && problems[presetPid])) $("#f-pid").value = "";   // 清掉上一次残留的选择
     $("#f-title").value = "";
     diffSel.value = "";
     $("#f-minutes").value = "";
     $("#f-date").value = todayStr();
     $("#f-note").value = "";
     formSubs = [{ score: "", result: "AC", note: "" }];
+    // 从题目详情抽屉进入：题号已定，自动带入发布信息
+    if (presetPid && problems[presetPid]) applyProblemToForm(presetPid, true);
   }
   renderFormChips();
   renderSubRows();
-  $("#fetch-status").textContent = "";
-  $("#fetch-status").className = "fetch-status";
+  if (!(presetPid && problems[presetPid])) {
+    $("#fetch-status").textContent = "";
+    $("#fetch-status").className = "fetch-status";
+  }
   $("#modal").hidden = false;
   $("#f-model").focus();
+}
+
+/** 编辑旧记录时，若该题号不在当前目录选项里（旧离线缓存等边界情况），补一个选项避免取值丢失 */
+function ensurePidOption(pid) {
+  if (!pid) return;
+  const sel = $("#f-pid");
+  if ([...sel.options].some((o) => o.value === pid)) return;
+  const info = problems[pid] || {};
+  const label = `${pid}（${DIFF_NAMES[info.difficulty] || "未定难度"}）`;
+  sel.add(new Option(label, pid));
 }
 
 function closeModal() {
   $("#modal").hidden = true;
   editingId = null;
+  formPidLocked = false;
+  formLockPid = null;
 }
 
 function renderFormChips() {
@@ -1075,7 +1217,7 @@ function renderFormChips() {
   wrap.innerHTML = formCategories.length
     ? formCategories.map((c, i) =>
       `<span class="cat-chip">${escapeHtml(c)}<button type="button" data-i="${i}" title="移除">✕</button></span>`).join("")
-    : '<span class="muted" style="font-size:12px">暂无类别——可通过「获取题目信息」自动归类，或手动添加</span>';
+    : '<span class="muted tiny">暂无类别——已发布题目的类别会在选定后自动带入</span>';
   wrap.querySelectorAll("button[data-i]").forEach((b) => {
     b.addEventListener("click", () => {
       formCategories.splice(Number(b.dataset.i), 1);
@@ -1084,46 +1226,22 @@ function renderFormChips() {
   });
 }
 
-async function fetchProblemInfo(force = false) {
-  const pid = normalizePid($("#f-pid").value);
-  const status = $("#fetch-status");
-  if (!pid) { status.textContent = "请先填写题号"; status.className = "fetch-status err"; return; }
-  if (!PID_RE.test(pid)) { status.textContent = "题号格式不太对（示例：P1001 / B2001 / CF10A）"; status.className = "fetch-status err"; return; }
-
-  const cached = problems[pid];
-  if (cached && !force) {
-    fillProblemInfo(cached);
-    cachedScrapedDifficulty = cached.manual ? null : (cached.difficulty ?? null);
-    status.textContent = `已用本地缓存（${cached.manual ? "手动维护" : "抓取于 " + (cached.fetchedAt || "早前")}）`;
-    status.className = "fetch-status ok";
-    return;
-  }
-
-  status.textContent = "正在从洛谷抓取…";
-  status.className = "fetch-status loading";
-  try {
-    const data = await api(`/api/luogu?pid=${encodeURIComponent(pid)}`);
-    // 爬取难度仅作为「参考值」缓存（cachedScrapedDifficulty），不自动填充到表单
-    cachedScrapedDifficulty = data.difficulty ?? null;
-    problems[pid] = { ...data, manual: false };
-    fillProblemInfo(data);
-    status.textContent = `抓取成功：${data.title}（洛谷难度：${DIFF_NAMES[data.difficulty] || "未知"}，请自行确认后选择）`;
-    status.className = "fetch-status ok";
-  } catch (e) {
-    status.textContent = "抓取失败：" + (e.message || e) + "。可手动填写题目名称/难度/类别后直接保存。";
-    status.className = "fetch-status err";
-  }
-}
-
-function fillProblemInfo(info) {
-  // 难度：不自动填充「洛谷爬取值」（不可靠）；仅当本地缓存里有「用户手动选择过」的难度时自动带出
+/** 选定题目后，把该题的发布信息带入表单（题名/难度/类别；难度可按实际评级修改）。
+    fromPreset=true 表示从题目详情抽屉进入（提示语不同） */
+function applyProblemToForm(pid, fromPreset = false) {
+  const info = problems[pid] || {};
   if (info.title) $("#f-title").value = info.title;
-  const cachedManual = info.manual && info.difficulty != null;
-  if (cachedManual) $("#f-difficulty-input").value = String(info.difficulty);
+  if (info.difficulty != null) $("#f-difficulty-input").value = String(info.difficulty);
   if (Array.isArray(info.categories) && info.categories.length) {
     formCategories = [...new Set([...info.categories])];
     renderFormChips();
   }
+  const status = $("#fetch-status");
+  const src = info.manual ? "发布时手动维护" : "抓取于 " + (info.fetchedAt || "早前");
+  status.textContent = fromPreset
+    ? `题号已锁定为 ${pid}（${src}），难度/类别已带入，可修改`
+    : `已带入「${pid}」的发布信息（${src}）`;
+  status.className = "fetch-status ok";
 }
 
 async function saveRecord(e) {
@@ -1144,13 +1262,14 @@ async function saveRecord(e) {
   const thinking = THINKING_LEVELS.includes(thinkingRaw) ? thinkingRaw : DEFAULT_THINKING;
 
   if (!model) { toast("请填写 AI 名称", "err"); return; }
-  if (!pid || !PID_RE.test(pid)) { toast("题号格式不正确（示例：P1001 / B2001 / CF10A）", "err"); return; }
+  if (!pid) { toast("请选择题目", "err"); return; }
+  if (!problems[pid]) { toast("题目尚未发布——请从列表中选择，或让管理员先「发布新题」", "err"); return; }
   if (diffRaw === "") { toast("请选择难度（洛谷自动难度不可靠，需手动选择）", "err"); return; }
 
   const submissions = formSubs.map(normalizeSub);
   if (!submissions.length) { toast("至少需要一次提交记录", "err"); return; }
 
-  // 类别兜底：表单没填但本地缓存里有该题的类别，则沿用缓存（难度已强制手动选择）
+  // 类别兜底：表单没填但题目目录里有该题的类别，则沿用目录值（难度已强制手动选择）
   const cachedCats = (problems[pid] && problems[pid].categories) || [];
   const payload = {
     model, variant, pid, title,
@@ -1183,6 +1302,62 @@ async function saveRecord(e) {
   } finally {
     setBtnBusy(btn, false);
   }
+}
+
+/* ================= 题目详情抽屉 ================= */
+
+function openProblemDrawer(pid) {
+  if (!pid || !problems[pid]) { toast("题目不存在", "err"); return; }
+  detailPid = pid;
+  renderDrawer();
+  openOverlay("#problem-drawer");
+}
+
+function renderDrawer() {
+  const info = problems[detailPid] || {};
+  $("#drawer-title").textContent = `${detailPid} ${info.title || ""}`.trim();
+  const meta = [DIFF_NAMES[info.difficulty] || "未定难度"];
+  if (info.categories && info.categories.length) meta.push(info.categories.join(" / "));
+  $("#drawer-sub").textContent = meta.join(" · ");
+  $("#drawer-luogu").onclick = () =>
+    window.open(`https://www.luogu.com.cn/problem/${encodeURIComponent(detailPid)}`, "_blank", "noopener");
+
+  const rs = records.filter((r) => r.pid === detailPid)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const scored = rs.map(firstRoundScore).filter((x) => x != null);
+  const firstAvg = scored.length ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length) : null;
+  const passed = rs.filter(isPassed).length;
+  $("#drawer-stats").innerHTML = [
+    { label: "测试数", value: String(rs.length) },
+    { label: "首轮均分", value: firstAvg == null ? "–" : firstAvg + "分" },
+    { label: "最终通过率", value: rs.length ? Math.round(passed / rs.length * 100) + "%" : "–" },
+  ].map((s) => `<div class="drawer-stat"><b>${escapeHtml(s.value)}</b><span>${s.label}</span></div>`).join("");
+
+  $("#drawer-records").innerHTML = rs.length
+    ? rs.map(drawerRecordHtml).join("")
+    : '<div class="drawer-empty">该题还没有任何 AI 测试——快来提交第一条！</div>';
+
+  $("#btn-drawer-submit").textContent = rs.length ? "＋ 提交该题测试" : "＋ 抢先提交第一条测试";
+}
+
+function drawerRecordHtml(r) {
+  const fin = lastSub(r);
+  return `<div class="drawer-rec">
+    <div class="drawer-rec-head">
+      <span class="drawer-rec-model"><b>${escapeHtml(seriesKey(r))}</b>${r.variant ? ` <span class="muted">· ${escapeHtml(r.variant)}</span>` : ""}
+        <span class="think-tag">${escapeHtml(r.thinking || DEFAULT_THINKING)}</span>${isPending(r) ? ' <span class="status-tag">待审核</span>' : ""}</span>
+      <span class="muted">${escapeHtml(r.date)}${r.minutes != null && r.minutes !== "" ? " · " + escapeHtml(String(r.minutes)) + " 分钟" : ""}</span>
+    </div>
+    <div class="chain">${chainHtml(r)} <span class="muted">${isPassed(r) ? "最终通过" : "最终 " + escapeHtml(fin.result)}</span></div>
+    ${r.note ? `<div class="drawer-rec-note">${escapeHtml(r.note)}</div>` : ""}
+  </div>`;
+}
+
+function closeProblemDrawer() {
+  const el = $("#problem-drawer");
+  if (el) el.hidden = true;
+  detailPid = null;
+  closeOverlay("#problem-drawer");
 }
 
 /* ================= 导入 / 导出 / 旧数据迁移 ================= */
@@ -1311,18 +1486,33 @@ function bindEvents() {
   $("#modal").addEventListener("click", (e) => { if (e.target === $("#modal")) closeModal(); });
   $("#record-form").addEventListener("submit", saveRecord);
 
-  $("#btn-fetch").addEventListener("click", () => fetchProblemInfo(false));
-  // 输入题号后防抖自动抓取（兼容只触发 input 的输入方式）
-  let pidFetchTimer = null;
-  $("#f-pid").addEventListener("input", (e) => {
-    clearTimeout(pidFetchTimer);
+  // 题目下拉：选定后带入该题的发布信息
+  $("#f-pid").addEventListener("change", (e) => {
     const pid = normalizePid(e.target.value);
-    cachedScrapedDifficulty = null;   // 题号变更时清空上一题的洛谷难度参考值
-    if (!pid || !PID_RE.test(pid)) return;
-    pidFetchTimer = setTimeout(() => {
-      if (normalizePid($("#f-pid").value) === pid) fetchProblemInfo(false);
-    }, 600);
+    const status = $("#fetch-status");
+    if (pid && problems[pid]) applyProblemToForm(pid);
+    else { status.textContent = ""; status.className = "fetch-status"; }
   });
+
+  // 题目详情抽屉入口（矩阵行头 / 明细表题目，事件委托）：点题号外链不拦截
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("a")) return;
+    const t = e.target.closest("[data-detail]");
+    if (t) openProblemDrawer(t.dataset.detail);
+  });
+  $("#drawer-close").addEventListener("click", closeProblemDrawer);
+  $("#problem-drawer").addEventListener("click", (e) => { if (e.target === $("#problem-drawer")) closeProblemDrawer(); });
+  $("#btn-drawer-submit").addEventListener("click", () => {
+    const pid = detailPid;
+    closeProblemDrawer();
+    openModal(null, pid, true);   // 题号锁定为该题
+  });
+
+  // 管理员发布新题后刷新目录
+  document.addEventListener("problemschanged", () => { refreshData().catch(() => {}); });
+
+  // 选项卡 pill 跟随窗口宽度重定位
+  window.addEventListener("resize", positionPill);
 
   $("#btn-add-sub").addEventListener("click", () => {
     formSubs.push({ score: "", result: "WA", note: "" });
@@ -1345,6 +1535,10 @@ function bindEvents() {
       $("#radar-dim").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
       renderAll();
     });
+  });
+  $("#radar-problem").addEventListener("change", (e) => {
+    radarPid = normalizePid(e.target.value);
+    renderAll();
   });
   $("#radar-metric").querySelectorAll("button").forEach((b) => {
     b.addEventListener("click", () => {
@@ -1434,6 +1628,8 @@ async function init() {
   visibleSeries = new Set(seriesList());
   renderAll();   // 填充系列后重绘，确保雷达图/柱状图首次加载即显示
   switchView("matrix");   // 默认显示矩阵图
+  // 字体加载完成后按钮宽度可能变化，重定位选项卡 pill
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(positionPill);
   checkServer();
 }
 

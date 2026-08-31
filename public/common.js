@@ -7,7 +7,8 @@
 
 const DIFF_NAMES = ["暂无评定", "入门", "普及−", "普及/提高−", "普及+/提高", "提高+/省选−", "省选/NOI−", "NOI/NOI+/CTSC"];
 const RESULTS = ["AC", "WA", "TLE", "MLE", "RE", "CE", "未解出"];
-const THINKING_LEVELS = ["max", "high", "medium", "low", "off"];
+/* 思考等级 7 级（按投入程度降序，与 store.py 白名单一致）；旧数据 5 级取值是子集，天然兼容 */
+const THINKING_LEVELS = ["ultra", "max", "xhigh", "high", "medium", "low", "off"];
 const DEFAULT_THINKING = "max";
 const CATEGORY_ORDER = ["模拟/枚举", "贪心", "二分/分治", "搜索", "动态规划", "图论", "数据结构", "树", "字符串", "数学", "计算几何", "其他/未标注"];
 const SERIES_COLORS = ["#5aa9ff", "#46c266", "#b98cff", "#f0913e", "#f2635a", "#39c5cf", "#e4b53d", "#7ee787", "#ff9db1", "#8b9dff"];
@@ -75,6 +76,18 @@ function escapeHtml(s) {
 
 function normalizePid(pid) {
   return String(pid || "").trim().toUpperCase();
+}
+
+/** 已发布题目的排序键列表：难度降序、同难度按题号（数字感知）。
+    problems 是服务端题目目录 {pid: {title, difficulty, ...}}，即「游客可提交的题目全集」。 */
+function sortedProblemPids(problemMap) {
+  return Object.keys(problemMap || {}).sort((a, b) => {
+    const da = problemMap[a] && problemMap[a].difficulty;
+    const db = problemMap[b] && problemMap[b].difficulty;
+    const na = da == null ? -1 : da, nb = db == null ? -1 : db;
+    if (nb !== na) return nb - na;
+    return a.localeCompare(b, undefined, { numeric: true });
+  });
 }
 
 function todayStr() {
@@ -243,3 +256,139 @@ function loadCache() {
   } catch { /* ignore */ }
   return null;
 }
+
+/* ================= 返回顶部（移动端长页刚需；注入式，页面无需写标记） ================= */
+
+function initBackTop() {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "back-top";
+  btn.title = "回到顶部";
+  btn.setAttribute("aria-label", "回到顶部");
+  btn.textContent = "↑";
+  btn.addEventListener("click", () => {
+    const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
+  });
+  let ticking = false;
+  window.addEventListener("scroll", () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      btn.classList.toggle("show", window.scrollY > 400);
+      ticking = false;
+    });
+  }, { passive: true });
+  document.body.appendChild(btn);
+}
+
+/* ================= 发布新题（主页与管理台共用） =================
+   流程：题号 → 「抓取」由服务端代抓洛谷补全 → 核对/修改 → 发布（写入题目目录）。
+   发布成功后广播 problemschanged 事件，页面各自刷新数据。 */
+
+function initProblemPublish() {
+  const overlay = $("#problem-publish-modal");
+  if (!overlay) return;
+
+  const diffSel = $("#pub-difficulty");
+  diffSel.innerHTML = '<option value="">– 未知 –</option>' +
+    DIFF_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join("");
+
+  let lastFetch = null;   // 最近一次抓取结果（发布时附带 tags / fetchedAt）
+
+  function openPublish() {
+    $("#pub-pid").value = "";
+    $("#pub-title").value = "";
+    diffSel.value = "";
+    $("#pub-cats").value = "";
+    const status = $("#pub-status");
+    status.textContent = "";
+    status.className = "fetch-status";
+    lastFetch = null;
+    openOverlay("#problem-publish-modal");
+    $("#pub-pid").focus();
+  }
+
+  async function fetchInfo() {
+    const pid = normalizePid($("#pub-pid").value);
+    const status = $("#pub-status");
+    if (!pid) { status.textContent = "请先填写题号"; status.className = "fetch-status err"; return; }
+    if (!PID_RE.test(pid)) { status.textContent = "题号格式不太对（示例：P1001 / B2001 / CF10A）"; status.className = "fetch-status err"; return; }
+    status.textContent = "正在从洛谷抓取…";
+    status.className = "fetch-status loading";
+    try {
+      const data = await api(`/api/luogu?pid=${encodeURIComponent(pid)}`);
+      lastFetch = data;
+      $("#pub-title").value = data.title || "";
+      if (data.difficulty != null) diffSel.value = String(data.difficulty);
+      $("#pub-cats").value = (data.categories || []).join(", ");
+      status.textContent = `抓取成功：${data.title || pid}（洛谷难度 ${DIFF_NAMES[data.difficulty] || "未知"}，发布前请核对）`;
+      status.className = "fetch-status ok";
+    } catch (e) {
+      status.textContent = "抓取失败：" + (e.message || e) + "。可手动填写题名/难度/类别后直接发布。";
+      status.className = "fetch-status err";
+    }
+  }
+
+  async function submitPublish(e) {
+    e.preventDefault();
+    const btn = $("#pub-submit");
+    if (btn.disabled) return;
+    const pid = normalizePid($("#pub-pid").value);
+    const title = $("#pub-title").value.trim();
+    const diffRaw = diffSel.value;
+    if (!pid || !PID_RE.test(pid)) { toast("题号格式不正确（示例：P1001 / B2001 / CF10A）", "err"); return; }
+    if (diffRaw === "") { toast("请选择难度（洛谷自动难度不可靠，需核对后选择）", "err"); return; }
+    const cats = $("#pub-cats").value.split(/[,，、]/).map((s) => s.trim()).filter(Boolean);
+    const payload = {
+      pid,
+      problem: {
+        title,
+        difficulty: Number(diffRaw),
+        categories: [...new Set(cats)],
+        tags: (lastFetch && lastFetch.tags) || [],
+        manual: true,
+        fetchedAt: (lastFetch && lastFetch.fetchedAt) || "",
+      },
+    };
+    setBtnBusy(btn, true, "发布中…");
+    try {
+      await api("/api/problems", { method: "POST", body: payload });
+      toast(`题目 ${pid} 已发布，游客现在可以提交该题的测试`, "ok");
+      closeOverlay("#problem-publish-modal");
+      document.dispatchEvent(new CustomEvent("problemschanged"));
+    } catch (err) {
+      toast((err && err.message) || "发布失败", "err");
+    } finally {
+      setBtnBusy(btn, false);
+    }
+  }
+
+  const fetchBtn = $("#pub-fetch");
+  if (fetchBtn) fetchBtn.addEventListener("click", fetchInfo);
+  $("#pub-pid").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); fetchInfo(); }
+  });
+  $("#publish-form").addEventListener("submit", submitPublish);
+  bindOverlay("#problem-publish-modal", ["#pub-close", "#pub-cancel"]);
+}
+
+/* 页面各自绑定「发布新题」入口按钮（id 相同：btn-new-problem） */
+function bindPublishEntry() {
+  const btn = $("#btn-new-problem");
+  if (btn) btn.addEventListener("click", openProblemPublish);
+}
+
+/* 供空态等场景直接调用（app.js 空态里的「发布新题」按钮） */
+function openProblemPublish() {
+  const overlay = $("#problem-publish-modal");
+  if (!overlay) { toast("本页不支持发布题目，请到管理台操作", "err"); return; }
+  overlay.hidden = false;
+  document.body.classList.add("modal-open");
+  $("#pub-pid").focus();
+}
+
+/* 公共初始化（脚本位于 body 末尾加载，DOM 已就绪） */
+initBackTop();
+initProblemPublish();
+bindPublishEntry();

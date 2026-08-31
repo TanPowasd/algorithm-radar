@@ -328,9 +328,31 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_record_item(method, path)
 
         if path == "/api/problems" and method == "POST":
+            self._require_admin()
             payload = self._read_json()
-            info, rev = store.put_problem(payload.get("pid"), payload.get("problem") or payload)
-            return self._send(200, {"ok": True, "problem": info, "revision": rev})
+            pid = str(payload.get("pid") or "").strip().upper()
+            if not pid:
+                raise HttpError(400, "题号必填")
+            info = payload.get("problem") if isinstance(payload.get("problem"), dict) else payload
+            if not isinstance(info, dict):
+                info = {}
+            # 题名/难度缺失时由服务端代抓洛谷补全（失败不阻塞发布，可手动补填）
+            if not info.get("title") or info.get("difficulty") is None:
+                try:
+                    fetched = get_problem_info(pid)
+                    for k in ("title", "difficulty", "tags", "categories", "fetchedAt"):
+                        if not info.get(k) and fetched.get(k) is not None:
+                            info[k] = fetched[k]
+                except Exception:
+                    pass
+            data, rev = store.put_problem(pid, info)
+            return self._send(200, {"ok": True, "problem": data, "revision": rev})
+
+        if path.startswith("/api/problems/") and method == "DELETE":
+            self._require_admin()
+            pid = urllib.parse.unquote(path[len("/api/problems/"):])
+            rev = store.delete_problem(pid)
+            return self._send(200, {"ok": True, "revision": rev})
 
         if path == "/api/export" and method == "GET":
             self._require_admin()
@@ -438,6 +460,9 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(200, {"ok": True, "admin": True, "username": username})
 
     def _handle_luogu(self):
+        # 收紧为管理员专用：抓取仅服务于「发布新题」，游客提交走已发布题目目录，
+        # 避免开放代理被滥用刷洛谷请求
+        self._require_admin()
         self._rate_limit(auth.FETCH_LIMITER, "题目抓取")
         auth.FETCH_LIMITER.hit(self._client_key())
         pid = (self._query().get("pid") or [""])[0]

@@ -36,7 +36,9 @@ GIST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 DATA_VERSION = 3
 
 RESULTS = ("AC", "WA", "TLE", "MLE", "RE", "CE", "未解出")
-THINKING_LEVELS = ("max", "high", "medium", "low", "off")
+# 思考等级 7 级（按投入程度降序），与 OpenAI/Anthropic 的 reasoning_effort 对齐；
+# 旧数据的 5 级取值仍是子集，天然兼容
+THINKING_LEVELS = ("ultra", "max", "xhigh", "high", "medium", "low", "off")
 DEFAULT_THINKING = "max"
 STATUSES = ("approved", "pending")
 
@@ -254,6 +256,19 @@ def _normalize_bundle(raw):
             key, clean = sanitize_problem(pid, info)
             if key:
                 out["problems"][key] = clean
+    # 兼容旧数据：记录引用了目录里没有的题号时，按记录自带信息补一个题目条目。
+    # 新版要求「只能提交已发布题目」，若不补齐，历史数据会被整体锁死。
+    for rec in out["records"]:
+        pid = rec["pid"]
+        if pid not in out["problems"]:
+            _, clean = sanitize_problem(pid, {
+                "title": rec.get("title") or "",
+                "difficulty": rec.get("difficulty"),
+                "categories": rec.get("categories") or [],
+                "manual": True,
+            })
+            if clean:
+                out["problems"][pid] = clean
     try:
         out["revision"] = max(0, int(raw.get("revision") or 0))
     except (TypeError, ValueError):
@@ -327,12 +342,14 @@ def snapshot(include_pending):
 # ---------------------------------------------------------------- 记录操作
 
 def add_record(raw, author):
-    """新增记录：管理员直接通过，游客进入待审核"""
+    """新增记录：管理员直接通过，游客进入待审核。
+    题目必须已在发布目录（problems）中——游客只能对管理员发布的题目提交测试。"""
     data = load()
     with _LOCK:
         if len(data["records"]) >= MAX_RECORDS:
             raise ValidationError("记录数量已达上限（%d）" % MAX_RECORDS)
         rec = sanitize_record(raw, author=author, status="approved" if author == "admin" else "pending")
+        _require_published(rec["pid"])
         data["records"].append(rec)
         _merge_problem_from_record(rec, raw)
         rev = _commit()
@@ -348,10 +365,18 @@ def update_record(rid, raw):
             raise KeyError(rid)
         existing = data["records"][idx]
         rec = sanitize_record(raw, existing=existing, author="admin", status=existing["status"])
+        _require_published(rec["pid"])
         data["records"][idx] = rec
         _merge_problem_from_record(rec, raw)
         rev = _commit()
     return rec, rev
+
+
+def _require_published(pid):
+    """校验题号已发布（调用方需持有 _LOCK）。历史数据在 _normalize_bundle 里已自动补条目"""
+    if pid not in _CACHE["problems"]:
+        raise ValidationError(
+            "题目 %s 尚未发布：请让管理员先在「发布新题」中发布该题，再提交测试" % pid)
 
 
 def delete_record(rid):
@@ -428,6 +453,21 @@ def put_problem(pid, info):
     return merged, rev
 
 
+def delete_problem(pid):
+    """删除已发布题目（仅管理员）。仍有记录引用时拒绝，避免出现悬空记录"""
+    pid = _text(pid, 24, "题号").upper()
+    data = load()
+    with _LOCK:
+        if pid not in data["problems"]:
+            raise ValidationError("题目 %s 不存在（可能已被删除）" % pid)
+        used = sum(1 for r in data["records"] if r["pid"] == pid)
+        if used:
+            raise ValidationError("题目 %s 下仍有 %d 条测试记录，请先删除这些记录再移除题目" % (pid, used))
+        del data["problems"][pid]
+        rev = _commit()
+    return rev
+
+
 def import_bundle(raw, mode):
     """导入数据（仅管理员）。mode: replace 覆盖全部 / merge 按 id 合并（取 updatedAt 较新的）"""
     incoming = _normalize_bundle(raw if isinstance(raw, dict) else {"records": raw})
@@ -462,9 +502,12 @@ def _index_of(rid):
 
 
 def _merge_problem_from_record(rec, raw):
-    """保存记录时顺手把题目信息并入缓存（调用方需持有 _LOCK）"""
+    """保存记录时把题目信息并入「已发布」的题目条目（调用方需持有 _LOCK）。
+    不再自动创建新条目：题目目录由管理员发布维护，游客只能提交已发布题目。"""
     pid = rec["pid"]
-    prev = _CACHE["problems"].get(pid) or {}
+    prev = _CACHE["problems"].get(pid)
+    if prev is None:
+        return
     src = raw.get("problem") if isinstance(raw.get("problem"), dict) else {}
     _, clean = sanitize_problem(pid, {
         "title": rec["title"] or prev.get("title"),
