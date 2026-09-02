@@ -1,107 +1,124 @@
-# AI vs 洛谷（算法雷达站）📡
+# AI vs 洛谷
 
-比较多个 AI（或同一 AI 的不同版本 / 提示词策略）在洛谷题目上的解题能力。数据以「一条条提交记录」的形式录入，页面自动生成 **能力雷达图**、**AI × 题目覆盖矩阵** 和 **可筛选明细表**。
+多个 AI 模型在洛谷题目上的解题能力对比站。游客可浏览排名、下载数据；贡献者提交测评；管理员审核并发布题目；站长管理用户。
 
-## 快速开始
+> v3.0 · 2026-09 重构：React SPA + Cloudflare Pages/Workers Functions + D1（SQLite）。
+> 旧版（Python 标准库后端 + 原生 JS 前端）已由本版**取代**并删除；旧导出 JSON 可直接导入。
 
-1. 双击 `start.bat`（或在本目录运行 `python server.py`）
-2. 浏览器会自动打开 `http://127.0.0.1:8471/`
-3. 点右上角「提交记录」录入数据
+---
 
-## 功能
+## 一、四种身份
 
-- **题目发布机制**：由管理员「发布新题」（输入题号一键抓取洛谷信息，核对难度/类别后发布）；游客提交记录时**只能选择已发布题目**，矩阵行 = 已发布题目（含还没有测试的题，鼓励提交）
-- **提交记录**：AI 名称、版本/策略、Agent、Token 来源、思考等级（7 级：ultra / max / xhigh / high / medium / low / off，对齐各家 reasoning_effort 配置）、已发布题目、结果（AC/WA/TLE/MLE/RE/CE/未解出）、提交轮次、用时、日期、备注
-- **能力雷达图**：轴可在「算法类别 / 难度等级 / **单题对比**」三种维度间切换；单题对比 = 选一道题，各 AI 组合在该题上的取值排名（AC 率或首轮均分）；轴值 = AC 率；点击图例可显示/隐藏系列
-- **成绩时间趋势图**：每个 AI 组合一条线，X 轴 = 日期、Y 轴 = 得分；口径可切换「首轮 / 最终轮 / 全轮均分」；同日多次测试取均值，断点 = 当日无测试；图例与雷达图共用显隐
-- **题目详情抽屉**：点击矩阵行头、**矩阵单元格**（高亮定位到该 AI 组合的记录）或明细表题目，弹出该题的全部测试记录与统计，可一键带题号提交
-- **模型 × 思考等级 平均分柱状图**：按「模型 + 思考等级」组合展示所有有分数轮次的平均分，从高到低排列；仅显示样本量 n ≥ 5 的组合；可点击题目标签**忽略某些题目**（其分数不计入均分与 n，排除名单保存在本机浏览器，仅影响柱状图口径）；移动端自动切换为横向条形图
-- **AI × 题目覆盖矩阵**：一眼看出谁没做、谁没过；单元格悬停可看详情；支持提交状态 / 首轮均分 / 最终轮均分视图
-- **明细表**：按 AI 组合 / 难度 / 类别 / 结果 / 关键字筛选，点表头排序，支持编辑、删除
-- **导出 / 导入 JSON**：数据备份与迁移（仅管理员可见）
-- **移动端适配**：滑动 pill 选项卡、触摸目标 ≥ 36px、safe-area 适配、返回顶部按钮、矩阵横滑 + 粘性首列
+| 身份 | 权限 |
+|---|---|
+| 游客 | 浏览矩阵/雷达/柱状/趋势/榜单/明细六个视图；查看贡献者名册（按注册时间排序）；导出 CSV / JSON（仅已审核数据）；**不可提交** |
+| 贡献者 | 提交测评记录（进入待审核队列）；可见自己的待审记录 |
+| 管理员 | 审核测评（单条/批量通过、拒绝=删除）；编辑/删除任意记录；发布题目（输题号自动抓洛谷，失败可手动补全；可为每题配置**推荐提示词**作为统一测试口径）；增删 AI 模型；全量导出与导入 |
+| 站长 | 管理员全部权限 + 审核注册（批准为贡献者）+ 任命/免除管理员 |
 
-## 权限与审核
+- 注册：独立页面 `/register`，填写 **用户 ID + 昵称 + 密码**；登录使用 **用户 ID + 密码**，全站显示昵称。注册后为「待审核」，站长在 `/users` 批准后才能登录。密码一律 PBKDF2-SHA256（100k 迭代）哈希存储，明文不落库。
+- 贡献者名册：`/contributors`（公开），按**注册时间**排序（与贡献量无关），展示用户 ID/昵称/贡献数等；历史导入数据对应的 `admin`/`guest` 账号排在末尾。
+- 审计字段：每条测评记录带 `author_id`（提供者用户 ID）与 `reviewer_id`/`reviewed_at`（批准人用户 ID 与批准时间；管理员自己直接提交的记录自审自记）。**首次录入的历史数据没有这些 ID，提供者/审核人统一署名「全民制作人」**（名册中也合并为同一条目，按注册时间排在末尾）；待审核的记录审核人显示「待审核」。
+- 推荐提示词：发布题目时填写（再次发布同题号可更新），展示在题目详情抽屉与提交表单中，一键复制，统一所有人的测试提示词。
+- 站长产生：数据库无任何账号时，本地访问会显示「初始化站长」入口（仅一次）；公网部署时需配置 `SETUP_TOKEN`（见下文）。
+- 数据口径：聚合主键 = 模型名（版本/策略仅展示）；**无分数轮次（score=null）不计入任何均分、不按 0 计**；柱状图仅显示样本量 n≥5 的「模型 × 思考等级」组合；雷达 AC 率按「作答记录数」为分母。
 
-- **游客**（默认，无需登录）：可以**新增**记录（仅限已发布题目；提交后为「待审核」状态，**不进入统计**）；**不能**删除、编辑记录，**不能**导出/导入
-- **管理员**：点右上角「管理员登录」，输入管理员用户名与口令；可**发布/删除题目**、删除/编辑记录、审核游客提交（通过后计入统计）、导出/导入
-- **密码存储**：口令只以 PBKDF2 哈希保存在服务端（环境变量或 `credentials.json`，后者已 gitignore），校验全部在服务端完成，前端不持有任何凭据。修改口令的方法见下方「部署到 Render」一节
+## 二、目录结构
 
-## 数据存哪里？
+```
+├── frontend/            # React 19 + Vite SPA（构建产物部署到 Cloudflare Pages）
+│   └── src/             #   api/ 客户端 · state/ 全局状态 · views/ 六视图 · pages/ 三页面
+├── functions/           # Cloudflare Pages Functions：/api/* 全部路由（Workers）
+│   └── api/[[route]].ts
+├── worker/              # 共享后端逻辑（TypeScript）：auth（PBKDF2+HMAC 会话）、
+│                        # store（D1 存取/审核/导入）、luogu（洛谷抓取+SSRF 防护）、router
+├── db/schema.sql        # D1 表结构（幂等；Functions 首次请求自动建表）
+├── scripts/seed.mjs     # 本地种子：初始化站长 + 导入历史数据 JSON
+├── tags.json            # 洛谷标签 → 算法大类映射种子（后端打包引用）
+├── wrangler.toml        # Pages/D1 绑定配置
+└── start-website.bat    # Windows 双击启动
+```
 
-- 记录与题目目录保存在**服务端** `data.json`（服务端权威存储），浏览器 localStorage 只是离线只读缓存；多设备访问同一部署共享同一份数据。
-- 洛谷题目信息通过本地服务器代理抓取（洛谷接口有跨域限制和风控，不能从浏览器直接抓；该接口仅管理员可用），抓取结果缓存在服务器内存中。
-- 部署到 Render 后启用**多设备共享**：数据存服务器磁盘 `data.json`（主）+ GitHub Gist 备份，任何设备访问同一网址共享同一份数据。
-- ⚠️ 请养成习惯，定期点「导出 JSON」备份；换浏览器/设备用「导入 JSON」恢复。
+## 三、本地运行
 
-## 文件说明
+前置：Node.js 18+（本机 24 已验证）。
 
-| 文件 | 作用 |
-| --- | --- |
-| `server.py` | 服务器（Python 标准库，零依赖）：静态页面 + 洛谷代抓 + 数据同步 |
-| `luogu_fetch.py` | 洛谷抓取核心逻辑 |
-| `public/` | 前端页面（`index.html` `app.js` `style.css` `admin.html` `admin.js` `vendor/chart.umd.js`） |
-| `tags.json` | 洛谷标签 ID→名称映射种子（version zh-CN/2026082918，2026-08-29 抓取） |
-| `requirements.txt` | 依赖声明（零依赖，Render 部署需要） |
-| `start.bat` | 双击启动本地服务器 |
+**方式 A：双击 `start-website.bat`**（自动装依赖、构建、启动、打开浏览器）。
 
-## 部署到 Render（线上多设备共享）
+**方式 B：命令行**
 
-数据通过 **GitHub Gist 持久化**（免费方案）：Render 免费实例磁盘非持久，重启/重新部署会清空 `data.json`，所以项目把私有 Gist 当作真正的存储层——每次写入先落盘再异步备份到 Gist，启动时若磁盘无数据则自动从 Gist 恢复。**`GIST_TOKEN` 与 `GIST_ID` 是必需配置**。
+```bash
+npm install                      # 根目录：wrangler 等工具
+npm run install:web              # 前端依赖
+npm run build                    # 构建前端到 frontend/dist
+npm run dev                      # 启动 http://127.0.0.1:8788（Workers + 本地 D1）
+```
 
-### 一、准备 GitHub Gist 与令牌（一次性）
+前端热更新开发（可选）：
 
-1. 打开 <https://gist.github.com> → 新建一个 **Secret（私有）** Gist，文件名随意，内容初始为：
-   ```json
-   {"records":[],"problems":{}}
-   ```
-2. 创建后复制地址栏 URL，格式 `https://gist.github.com/<你的用户名>/<40位ID>`，记下这 40 位 **Gist ID**
-3. 到 <https://github.com/settings/tokens> → **Generate new token (classic)**：
-   - 勾选 `gist` 权限
-   - 过期时间按需（建议 90 天或永久）
-   - 生成后**立即复制**令牌（只显示一次）
+```bash
+npm run dev:web                  # Vite 开发服务器 http://localhost:5174（/api 代理到 8788）
+npm run dev                      # 另开一个终端
+```
 
-### 二、部署（二选一）
+**导入历史数据**（把旧站导出的 JSON 放在根目录，文件名含「算法雷达站数据」或叫 `data.json`）：
 
-**方式 A：Render Blueprint（推荐）**
-1. 把代码（含 `render.yaml`）推到 GitHub 仓库
-2. 到 [render.com](https://render.com) → **New** → **Blueprint** → 选择该仓库，Render 自动创建服务并生成 `SESSION_SECRET`
-3. 在服务 → **Environment** 里补填两个 secret：
-   - `GIST_TOKEN` = 上一步的 GitHub 令牌
-   - `GIST_ID` = Gist ID
-   - （可选）`ADMIN_PASSWORD_HASH` = 自定义管理员口令哈希，留空则使用代码内置默认账号
+```bash
+npm run seed                     # 已有站长时需 SEED_OWNER_PASSWORD=*** npm run seed
+```
 
-**方式 B：手动 Web Service**
-1. 把代码推到 GitHub 仓库
-2. 到 [render.com](https://render.com) → **New Web Service** → 导入该仓库
-3. 配置：
-   - **Build Command**: 留空
-   - **Start Command**: `python server.py`
-   - **Instance Type**: Free（免费，休眠时首次访问需等待唤醒）
-4. 环境变量（全部填入）：
-   - `GIST_TOKEN`（GitHub Personal Access Token，`gist` 权限）
-   - `GIST_ID`（私有 Gist ID）
-   - `SESSION_SECRET`（任意长随机串，建议 Generate）
-   - `ADMIN_USERNAME`（默认 `TanPowasd`）
-   - `ADMIN_PASSWORD_HASH`（自定义口令的 PBKDF2 哈希，可留空用默认）
-5. 部署完成后获得 `https://<project>.onrender.com` 地址
+首次使用：打开 http://127.0.0.1:8788 → 「登录 / 注册」→「初始化站长」。
 
-> ⚠️ 换口令：在任意 Python 环境运行 `python -c "import auth; print(auth.hash_password('新口令'))"`（需 8 位以上），把输出填进 `ADMIN_PASSWORD_HASH`。内置默认口令偏弱，**公网部署务必覆盖**。
+## 四、部署到 Cloudflare（Pages + D1）
 
-> 提示：洛谷风控偶发拦截时仍可手动填写题目信息（与本地版一致）。
+```bash
+npx wrangler login                                  # 1. 登录 Cloudflare
+npx wrangler d1 create ai-vs-luogu                  # 2. 创建 D1 数据库
+#    把返回的 database_id 填入 wrangler.toml
+npm run deploy                                      # 3. 构建并部署（Pages 自动识别 functions/ 与 D1 绑定）
+npx wrangler d1 execute DB --remote --file=db/schema.sql   # 4.（可选）远程建表；不执行也会在首个请求时自动建表
+```
 
-## 数据口径说明
+公网初始化站长（防止被抢注）：
 
-- **难度档位**采用洛谷官方八档：暂无评定 / 入门 / 普及− / 普及/提高− / 普及+/提高 / 提高+/省选− / 省选/NOI− / NOI/NOI+/CTSC。
-- **算法大类**由洛谷题目的算法标签沿标签树向上归类（标签表 version：zh-CN/2026082918）；无标签的题记入「其他/未标注」。
-- 雷达图轴值 = AC 记录数 ÷ 该 AI 在该轴上的作答记录数；**未作答的轴显示为空缺，不按 0% 计**，避免拉低均值造成误导。
-- 「AI 组合」即 AI 名称（模型）；版本/策略仅作为记录字段展示，**不参与分组统计**（矩阵列、雷达系列、筛选均按模型聚合）。
-- **题目目录**：服务端 `problems` 即「已发布题目」，是游客可提交的题目全集；保存记录时自动把题目信息并入已有条目，但**不会**新建条目。历史数据升级时按记录自带信息自动补齐条目（不会被锁定）；导入 JSON 亦按同规则自动补齐。
-- **思考等级** 7 级（ultra > max > xhigh > high > medium > low > off）；旧记录的 5 级取值是子集，直接兼容。
-- **柱状图忽略题目**：排除名单只影响「模型 × 思考等级 平均分」柱状图的均分与样本量，保存在浏览器 localStorage（`radar.bar.excludedPids`），不写入服务端数据；矩阵汇总行、雷达图等其他口径不受影响。
+```bash
+npx wrangler pages secret put SETUP_TOKEN --project-name ai-vs-luogu   # 设置一个一次性口令
+#    打开网站 → 登录/注册 → 初始化站长 → 填入该口令与站长账密
+npx wrangler pages secret delete SETUP_TOKEN --project-name ai-vs-luogu  # 用完即删
+```
 
-## 已知限制
+- 数据导入：登录站长 → 顶栏「导入」→ 选择旧站导出 JSON（合并 / 覆盖两种模式）。
+- 自定义域名、Git 集成部署均在 Cloudflare 控制台按 Pages 项目常规操作即可。
 
-- 洛谷有反爬风控：偶发 302 循环或拦截时会返回错误提示，此时手动填写题目信息即可；题目信息抓取成功后会缓存在浏览器中，不会重复请求。
-- 本地运行时服务器仅监听 `127.0.0.1`（数据不出本机）；部署到 Render 时自动监听 `0.0.0.0`（公网可访问）。
-- Render 免费实例 15 分钟无访问会休眠，再次访问需等待 30–60 秒唤醒（数据不受影响）。
+## 五、安全设计
+
+- PBKDF2-SHA256（100k 迭代）口令哈希（WebCrypto；迭代次数是 Workers CPU 限额与安全的平衡点）。
+- 会话 = HMAC-SHA256 签名令牌存 HttpOnly Cookie（12h，1h 自动续签）；密钥首次启动自动生成存 D1。**会话每次请求回查用户表**：改密（`password_version` 递增）、封禁、降权后旧令牌立即失效；登录用户可在顶栏「改密码」。
+- CSRF 双提交（`radar_csrf` Cookie + `X-CSRF-Token` 头）；登录限流 6 次/10 分钟；洛谷抓取 30 次/分；写操作 60 次/分。
+- 洛谷抓取：目标 host 编译期白名单（www.luogu.com.cn）+ 仅 https + 题号正则白名单 + 302 location 同样校验。
+- 请求体限额：导入 16MB / 测评记录 2MB / 其他 64KB；所有写入经白名单清洗（长度/枚举/正则）。
+- 待审核记录对游客与贡献者不可见；游客导出只含已审核数据。
+- Pages 静态资源带 CSP（`_headers`）：`default-src 'none'; script-src 'self'; …`。
+
+## 六、API 一览
+
+公开：`GET /api/ping` `GET /api/session` `GET /api/data` `GET /api/models` `GET /api/contributors` `GET /api/export/public?format=csv|json`
+认证：`POST /api/setup` `POST /api/login` `POST /api/logout` `POST /api/auth/register` `POST /api/change-password`（登录用户改密；成功后其他设备全部下线）
+贡献者：`POST /api/records`
+管理员：`PUT/DELETE /api/records/{id}` `POST /api/records/{id}/status` `POST /api/records/bulk` `POST /api/problems` `DELETE /api/problems/{pid}` `POST/PUT/DELETE /api/models*` `GET /api/luogu?pid=` `GET /api/export` `POST /api/import`
+站长：`GET /api/admin/users` `POST /api/admin/users/{id}/approve|reject|role`
+
+## 七、数据模型（records 表核心字段）
+
+`id`(16hex) · `model`(聚合主键) · `variant` · `agent` · `tokenSource` · `pid`+`title` · `thinking`(ultra>max>xhigh>high>medium>low>off) · `difficulty`(0–7) · `categories[]` · `submissions[]`(每轮 `score` 0–100 可空 / `result` AC|WA|TLE|MLE|RE|CE|未解出 / `note`) · `minutes` · `memory`(MB，可空) · `date` · `note` · `status`(approved|pending) · `author`(提供者登录 ID) + `author_id`(提供者用户 ID) + `reviewer_id`/`reviewed_at`(审核人) · 时间戳。
+
+`users` 表：`username`(登录 ID)、`nickname`(显示昵称)、`password_hash`(PBKDF2，非明文)、角色/状态/审批信息。`problems` 表额外含 `prompt`（推荐提示词，≤4000 字，统一测试口径）。
+
+## 八、日常开发
+
+```bash
+./node_modules/.bin/tsc --noEmit     # worker TS 类型检查
+npm --prefix frontend run build      # 前端构建（wrangler pages dev 直接读 dist）
+```
+
+注意：本机 Mimosa 安全钩子禁止通过 ZCode 的 Bash 执行 git commit/push——提交请在自己的终端手动执行。

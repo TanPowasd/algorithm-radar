@@ -1,0 +1,16 @@
+# Cloudflare Pages 项目配置（前端静态资源 + /api/* Pages Functions + D1 绑定）
+# 部署：npm run deploy；database_id 已填入下方。
+name = "ai-vs-luogu"
+pages_build_output_dir = "frontend/dist"
+compatibility_date = "2026-09-01"
+
+# 注意：Pages 项目不支持 [[rules]]，schema 文本改由 worker/schema.ts 内联提供
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-vs-luogu"
+database_id = "709c23c0-9908-40d2-982b-94bcc5e4cfff"
+
+[vars]
+# 可选：公网首次初始化站长用的一次性口令（更推荐 `wrangler pages secret put SETUP_TOKEN`）
+# SETUP_TOKEN = ""

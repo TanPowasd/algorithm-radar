@@ -1,0 +1,23 @@
+{
+  "name": "ai-vs-luogu",
+  "private": true,
+  "version": "3.0.0",
+  "description": "AI vs 洛谷 —— AI 解题能力对比站（Cloudflare Pages + Workers Functions + D1）",
+  "type": "module",
+  "scripts": {
+    "install:web": "npm --prefix frontend install",
+    "dev:web": "npm --prefix frontend run dev",
+    "dev": "wrangler pages dev frontend/dist --port 8788",
+    "dev:full": "npm run build && concurrently -k \"npm:dev:web\" \"npm:dev\" ",
+    "build": "npm --prefix frontend run build",
+    "seed": "node scripts/seed.mjs",
+    "deploy": "npm run build && wrangler pages deploy frontend/dist",
+    "d1:init:local": "wrangler d1 execute DB --local --file=db/schema.sql",
+    "d1:init:remote": "wrangler d1 execute DB --remote --file=db/schema.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260828.1",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.127.1"
+  }
+}
