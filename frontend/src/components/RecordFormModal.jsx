@@ -1,7 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
-import { normalizeSub, RESULTS, THINKING_LEVELS, THINKING_LABELS, DEFAULT_THINKING, todayStr, PID_RE } from '../aggregate'
+import { normalizeSub, RESULTS, THINKING_LEVELS, THINKING_LABELS, DEFAULT_THINKING, todayStr, PID_RE, DIFFICULTY_NAMES } from '../aggregate'
+
+/** 测评难度选项：1–7（value 字符串，与 select 的 state 一致） */
+const REC_DIFF_OPTIONS = Object.entries(DIFFICULTY_NAMES)
+  .filter(([d]) => d !== '0')
+  .map(([value, label]) => ({ value, label }))
 
 function Field({ label, children }) {
   return (
@@ -32,7 +37,7 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
       tokenSource: r?.tokenSource || '',
       pid: r?.pid || lockPid || '',
       title: r?.title || '',
-      difficulty: r?.difficulty ?? '',
+      difficulty: r?.difficulty === null || r?.difficulty === undefined ? '' : String(r.difficulty),
       categories: r?.categories || [],
       submissions: r?.submissions?.map((s) => ({ ...s })) || [{ score: '', result: 'AC', note: '' }],
       minutes: r?.minutes ?? '',
@@ -53,7 +58,8 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
       ...f,
       pid,
       title: p?.title || f.title,
-      difficulty: p?.difficulty ?? f.difficulty,
+      difficulty: p?.difficulty === null || p?.difficulty === undefined
+        ? f.difficulty : String(p.difficulty),
       categories: f.categories.length ? f.categories : (p?.categories || []),
     }))
   }
@@ -192,7 +198,7 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
           <Field label="难度 *">
             <select value={form.difficulty} onChange={(e) => set({ difficulty: e.target.value })}>
               <option value="">选择难度…</option>
-              {[1, 2, 3, 4, 5, 6, 7].map((d) => <option key={d} value={d}>{['', '入门', '普及−', '普及/提高−', '普及+/提高', '提高+/省选−', '省选/NOI−', 'NOI/NOI+/CTSC'][d]}</option>)}
+              {REC_DIFF_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </Field>
         </div>

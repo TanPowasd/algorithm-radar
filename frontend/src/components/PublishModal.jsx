@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
-import { PID_RE } from '../aggregate'
+import { PID_RE, DIFFICULTY_NAMES } from '../aggregate'
 
-const DIFFS = ['', '入门', '普及−', '普及/提高−', '普及+/提高', '提高+/省选−', '省选/NOI−', 'NOI/NOI+/CTSC']
-
-/** 难度下拉选项构造：value = 难度数值或 ''（选择占位）；索引0 → '' 占位 */
-const DIFF_OPTIONS = DIFFS.map((label, i) => ({ value: i === 0 ? '' : String(i - 1), label }))
+/** 难度选项：value = 实际难度值字符串（'' 为选择占位）。直接由共享难度表生成，杜绝档位错位。 */
+const DIFF_OPTIONS = [
+  { value: '', label: '选择难度…' },
+  ...Object.entries(DIFFICULTY_NAMES).map(([value, label]) => ({ value, label })),
+]
 
 function parseTags(text) {
   return text.split(/[、,，;；\s]+/).map((s) => s.trim()).filter(Boolean)
@@ -44,7 +45,9 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
       set({
         pid: info.pid,
         title: info.title || form.title,
-        difficulty: info.difficulty ?? form.difficulty,
+        // 难度转字符串以匹配下拉 option value（'' 表示暂无/未评定）
+        difficulty: info.difficulty === null || info.difficulty === undefined
+          ? '' : String(info.difficulty),
         tags: (info.tags || []).join('、'),
         manual: false,
       })
@@ -121,7 +124,7 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
           <div className="field">
             <label>难度 *</label>
             <select value={form.difficulty} onChange={(e) => set({ difficulty: e.target.value })}>
-              {DIFF_OPTIONS.map((o) => <option key={o.label} value={o.value}>{o.label || '选择难度…'}</option>)}
+              {DIFF_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label || '选择难度…'}</option>)}
             </select>
           </div>
         </div>
