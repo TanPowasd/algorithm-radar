@@ -6,6 +6,7 @@ import RegisterPage from './pages/RegisterPage'
 import ContributorsPage from './pages/ContributorsPage'
 import ToastHost from './components/ToastHost'
 import BackTop from './components/BackTop'
+import ShortcutHelp from './components/ShortcutHelp'
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
       </Routes>
       <ToastHost />
       <BackTop />
+      <ShortcutHelp />
     </>
   )
 }

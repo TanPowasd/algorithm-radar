@@ -3,11 +3,14 @@ import { Link, useLocation } from 'react-router-dom'
 import { useApp } from '../state'
 import { api, download } from '../api/client'
 import ChangePasswordModal from './ChangePasswordModal'
+import Hud from './Hud'
 
 const ROLE_LABELS = { owner: '站长', admin: '管理员', contributor: '贡献者' }
+const THEME_LABEL = { dark: ['☾', '夜间模式（按 T 切到日间）'], light: ['☀', '日间模式（按 T 切到跟随系统）'], system: ['◐', '跟随系统（按 T 切到夜间）'] }
 
-export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport }) {
-  const { session, offline, isAdmin, isOwner, toggleTheme, theme, toast, refreshAll } = useApp()
+export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud }) {
+  const { session, offline, isAdmin, isOwner, theme, themeMode, toggleTheme,
+    widthMode, setWidthMode, toast, refreshAll } = useApp()
   const location = useLocation()
   const [pwOpen, setPwOpen] = useState(false)
 
@@ -21,6 +24,8 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport }) {
     }
   }
 
+  const [icon, tip] = THEME_LABEL[themeMode] || THEME_LABEL.dark
+
   return (
     <header className="topbar">
       <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -30,6 +35,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport }) {
         </div>
       </Link>
       <span className={`conn ${offline ? 'bad' : 'ok'}`} title={offline ? '服务器离线（展示缓存数据）' : '已连接'} />
+      {hud && <Hud {...hud} />}
       <div className="spacer" />
       <nav style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {isAdmin && <Link className="btn small ghost" to="/admin">审核台</Link>}
@@ -57,7 +63,14 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport }) {
             <button className="btn small primary" onClick={onOpenAuth}>登录</button>
           </>
         )}
-        <button className="icon-btn" onClick={toggleTheme} title="切换明暗主题">{theme === 'dark' ? '☀' : '☾'}</button>
+        <button
+          className="icon-btn"
+          onClick={() => setWidthMode(widthMode === 'full' ? 'narrow' : 'full')}
+          title={widthMode === 'full' ? '当前：全宽铺满（按 W 切到限宽居中）' : '当前：限宽居中（按 W 切到全宽铺满）'}
+        >
+          {widthMode === 'full' ? '⤢' : '⤡'}
+        </button>
+        <button className="icon-btn" onClick={toggleTheme} title={`${tip}（当前 ${themeMode} → 实际 ${theme}）`}>{icon}</button>
       </nav>
       {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
     </header>

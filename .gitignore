@@ -10,6 +10,13 @@ credentials.json
 # 新前端（Vite + React）
 frontend/node_modules/
 frontend/dist/
+frontend/.selftest/
+
+# 本地验证产物（无头浏览器截图 / 临时 profile）
+.verify/
+
+# 自检样本里「含真实数据」的那份（纯合成的 fixture.basic.json 需要入库）
+frontend/selftest/fixture.json
 
 # Cloudflare 本地状态
 .wrangler/

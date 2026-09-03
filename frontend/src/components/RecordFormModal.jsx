@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
-import { normalizeSub, RESULTS, THINKING_LEVELS, THINKING_LABELS, DEFAULT_THINKING, todayStr, PID_RE, DIFFICULTY_NAMES } from '../aggregate'
+import { normalizeSub, RESULTS, THINKING_LEVELS, THINKING_LABELS, DEFAULT_THINKING, todayStr, DIFFICULTY_NAMES } from '../aggregate'
+import CopyButton from './CopyButton'
 
 /** 测评难度选项：1–7（value 字符串，与 select 的 state 一致） */
 const REC_DIFF_OPTIONS = Object.entries(DIFFICULTY_NAMES)
@@ -147,8 +148,7 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
 
         <div className="grid3">
           <Field label="AI 模型（已收录）*">
-            <input list="dl-models" value={form.model} onChange={(e) => set({ model: e.target.value })} placeholder="选择已收录模型…"
-              onInput={(e) => { /* 允许清空；提交时校验 */ }} />
+            <input list="dl-models" value={form.model} onChange={(e) => set({ model: e.target.value })} placeholder="选择已收录模型…" />
             <datalist id="dl-models">
               {modelNames.map((m) => (
                 <option key={m.name} value={m.name}>
@@ -204,22 +204,13 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
         </div>
 
         {form.pid && data.problems?.[form.pid]?.prompt && (
-          <div className="callout" style={{ position: 'relative', paddingRight: 90 }}>
-            <strong style={{ color: 'var(--accent)' }}>该题推荐提示词</strong>
-            <span className="chain">（统一测试口径）</span>
-            <div style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fs-sm)', color: 'var(--text)', marginTop: 4, maxHeight: 120, overflowY: 'auto' }}>
-              {data.problems[form.pid].prompt}
+          <div className="callout prompt-box" style={{ paddingRight: 12 }}>
+            <div className="prompt-head">
+              <span className="prompt-title">该题推荐提示词</span>
+              <span className="chain">（统一测试口径 · 粘贴到你的 Agent 前先读一遍）</span>
+              <CopyButton text={data.problems[form.pid].prompt} toast={toast} />
             </div>
-            <button
-              type="button"
-              className="btn small"
-              style={{ position: 'absolute', top: 10, right: 10 }}
-              onClick={() => {
-                navigator.clipboard.writeText(data.problems[form.pid].prompt)
-                  .then(() => toast('推荐提示词已复制'))
-                  .catch(() => toast('复制失败，请手动选择文本', 'err'))
-              }}
-            >复制</button>
+            <pre style={{ maxHeight: 160, overflowY: 'auto' }}>{data.problems[form.pid].prompt}</pre>
           </div>
         )}
 

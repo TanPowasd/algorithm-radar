@@ -1,8 +1,10 @@
 import { useMemo } from 'react'
 import { useApp } from '../state'
-import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLabel, reviewerLabel } from '../aggregate'
+import CopyButton from './CopyButton'
+import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLabel, reviewerLabel, fmtClock, fmtDateTime } from '../aggregate'
+import { THINKING_LABELS } from '../aggregate'
 
-/** 题目详情抽屉：题目信息 + 推荐提示词 + 该题全部记录 + 三个统计 */
+/** 题目详情抽屉：题目信息 + 推荐提示词（一键复制）+ 该题全部记录 + 三个统计 */
 export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitClick }) {
   const { data, toast, nicknameOf, nameByUid } = useApp()
   const problem = data.problems?.[pid]
@@ -31,29 +33,19 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
             <div className="meta">
               <span className={`diff-tag d-${problem?.difficulty ?? 0}`}>{difficultyName(problem?.difficulty)}</span>
               {(problem?.categories || []).map((c) => <span key={c} className="cat-tag">{c}</span>)}
-              {problem?.fetchedAt && <span>抓取于 {problem.fetchedAt}</span>}
+              {problem?.fetchedAt && <span>抓取于 {fmtDateTime(problem.fetchedAt) || problem.fetchedAt}</span>}
             </div>
           </div>
-          <button className="icon-btn close" onClick={onClose}>✕</button>
+          <button className="icon-btn close" onClick={onClose} aria-label="关闭">✕</button>
         </div>
         <div className="drawer-body">
           {problem?.prompt && (
-            <div className="callout" id="problem-prompt">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <strong style={{ color: 'var(--accent)' }}>推荐提示词（统一测试口径）</strong>
-                <button
-                  className="btn small"
-                  style={{ marginLeft: 'auto' }}
-                  onClick={() => {
-                    navigator.clipboard.writeText(problem.prompt)
-                      .then(() => toast('推荐提示词已复制'))
-                      .catch(() => toast('复制失败，请手动选择文本', 'err'))
-                  }}
-                >复制</button>
+            <div className="callout prompt-box" id="problem-prompt">
+              <div className="prompt-head">
+                <span className="prompt-title">推荐提示词 · 统一测试口径</span>
+                <CopyButton text={problem.prompt} toast={toast} />
               </div>
-              <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontFamily: 'inherit', fontSize: 'var(--fs-sm)', color: 'var(--text)' }}>
-                {problem.prompt}
-              </pre>
+              <pre>{problem.prompt}</pre>
             </div>
           )}
           {stats && (
@@ -70,12 +62,12 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
               <div key={r.id} className={`drawer-rec ${highlightModel && seriesKey(r) === highlightModel ? 'hl' : ''}`}>
                 <div className="dr-head">
                   <span className="m">{seriesKey(r)}</span>
-                  <span className="think-tag">{r.thinking}</span>
+                  <span className={`think-tag lv-${r.thinking}`}>{THINKING_LABELS[r.thinking] || r.thinking}</span>
                   <span className={`sub-badge ${last ? subBadgeClass(last.score) : 'b-na'}`}>
                     {last ? `${last.result} ${last.score ?? ''}` : '无提交'}
                   </span>
-                  <span className="meta">
-                    {r.date} · 提供 {providerLabel(r, nicknameOf)}
+                  <span className="meta" title={`录入 ${fmtDateTime(r.createdAt)} · 更新 ${fmtDateTime(r.updatedAt)}`}>
+                    {r.date} {fmtClock(r.createdAt)} · 提供 {providerLabel(r, nicknameOf)}
                     {reviewerLabel(r, nameByUid) ? ` · 审核 ${reviewerLabel(r, nameByUid)}` : ''}
                   </span>
                 </div>

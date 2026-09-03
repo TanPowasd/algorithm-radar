@@ -16,10 +16,14 @@ export function makeChart(canvas, config) {
   })
 }
 
+/** 图表取色：统一从 CSS 变量读，日间/夜间自动跟随（变量在 styles.css 里定义） */
 export function themeColors() {
   return {
-    text: cssVar('--text-2') || '#99a3b5',
-    grid: cssVar('--chart-grid') || 'rgba(255,255,255,0.08)',
-    accent: cssVar('--accent') || '#4d9dff',
+    text: cssVar('--text-2') || '#8fa2bc',
+    grid: cssVar('--chart-grid') || 'rgba(143,162,188,0.18)',
+    accent: cssVar('--accent') || '#5ad9ff',
+    accent2: cssVar('--accent-2') || '#6f8cff',
+    accent3: cssVar('--accent-3') || '#b8ff5c',
+    surface: cssVar('--surface') || '#0b0e16',
   }
 }

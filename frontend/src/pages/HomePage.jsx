@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useApp } from '../state'
 import Topbar from '../components/Topbar'
 import Notice from '../components/Notice'
@@ -10,13 +10,16 @@ import RadarView from '../views/RadarView'
 import BarView from '../views/BarView'
 import TrendView from '../views/TrendView'
 import LeaderboardView from '../views/LeaderboardView'
+import RollBoardView from '../views/RollBoardView'
 import RecordsTable from '../views/RecordsTable'
 import RecordFormModal from '../components/RecordFormModal'
 import ProblemDrawer from '../components/ProblemDrawer'
 import PublishModal from '../components/PublishModal'
 import AuthModal from '../components/AuthModal'
 import ImportModal from '../components/ImportModal'
-import { isPending, lastSub, providerLabel } from '../aggregate'
+import { isApproved, isPending, lastSub, providerLabel, seriesList, filterByModels } from '../aggregate'
+import { useUrlState } from '../hooks/useUrlState'
+import { useHotkeys } from '../hooks/useHotkeys'
 
 const TABS = [
   { key: 'matrix', label: '矩阵' },
@@ -24,19 +27,33 @@ const TABS = [
   { key: 'bar', label: '柱状图' },
   { key: 'trend', label: '趋势图' },
   { key: 'leaderboard', label: '榜单' },
+  { key: 'roll', label: '滚榜' },
 ]
 
 export default function HomePage() {
-  const { data, loaded, offline, isContributor, isAdmin, nicknameOf } = useApp()
+  const { data, loaded, offline, isContributor, isAdmin, nicknameOf, toggleTheme, widthMode, setWidthMode, refreshData } = useApp()
   const providerCell = (r) => providerLabel(r, nicknameOf)
-  const [view, setView] = useState('matrix')
+  const url = useUrlState()
+  const [view, setViewRaw] = useState(() => {
+    const v = url.get('v', 'matrix')
+    return TABS.some((t) => t.key === v) ? v : 'matrix'
+  })
   const [drawer, setDrawer] = useState(null) // {pid, model}
   const [recordModal, setRecordModal] = useState(null) // {edit, lockPid}
   const [publishOpen, setPublishOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
 
+  const setView = useCallback((v) => {
+    setViewRaw(v)
+    url.set('v', v)
+  }, [url])
+
   const pending = (data.records || []).filter(isPending)
+  const hud = useMemo(() => {
+    const approved = filterByModels((data.records || []).filter(isApproved))
+    return { samples: approved.length, models: seriesList(approved).length, view }
+  }, [data.records, view])
 
   const openDetail = (pid, model) => setDrawer({ pid, model: model || null })
 
@@ -45,12 +62,32 @@ export default function HomePage() {
     setRecordModal({ edit: null, lockPid: pid })
   }
 
+  const focusSearch = () => {
+    const el = document.getElementById('f-keyword')
+    if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus(); el.select?.() }
+  }
+
+  useHotkeys({
+    1: () => setView('matrix'),
+    2: () => setView('radar'),
+    3: () => setView('bar'),
+    4: () => setView('trend'),
+    5: () => setView('leaderboard'),
+    6: () => setView('roll'),
+    t: toggleTheme,
+    w: () => setWidthMode(widthMode === 'full' ? 'narrow' : 'full'),
+    f: focusSearch,
+    r: () => { refreshData() },
+    Escape: () => { setDrawer(null) },
+  }, [setView, toggleTheme, widthMode, setWidthMode, refreshData])
+
   return (
     <>
       <Topbar
         onOpenAuth={() => setAuthOpen(true)}
         onOpenPublish={() => setPublishOpen(true)}
         onOpenImport={() => setImportOpen(true)}
+        hud={hud}
       />
       <main className="layout">
         <Notice />
@@ -61,6 +98,7 @@ export default function HomePage() {
           <div className="card-head" style={{ marginBottom: 0 }}>
             <ViewTabs tabs={TABS} active={view} onChange={setView} />
             <div className="card-tools">
+              <span className="hint">按 1–6 切视图 · ? 看快捷键</span>
               {isContributor && (
                 <button className="btn primary" onClick={() => setRecordModal({ edit: null, lockPid: null })}>
                   + 提交测评
@@ -76,11 +114,18 @@ export default function HomePage() {
           </div>
         )}
 
-        {view === 'matrix' && <MatrixView onOpenDetail={openDetail} />}
+        {view === 'matrix' && (
+          <MatrixView
+            onOpenDetail={openDetail}
+            onQuickAdd={isContributor ? openSubmitFor : undefined}
+            canSubmit={isContributor}
+          />
+        )}
         {view === 'radar' && <RadarView />}
         {view === 'bar' && <BarView />}
         {view === 'trend' && <TrendView />}
         {view === 'leaderboard' && <LeaderboardView onOpenDetail={openDetail} />}
+        {view === 'roll' && <RollBoardView onOpenDetail={openDetail} />}
 
         <RecordsTable
           onOpenDetail={openDetail}
@@ -100,7 +145,7 @@ export default function HomePage() {
             <div className="table-scroll" id="pending-wrap">
               <table className="data review-table">
                 <thead>
-                  <tr><th>模型</th><th>题目</th><th>思考</th><th>末轮</th><th>提供者</th><th>日期</th></tr>
+                  <tr><th>模型</th><th>题目</th><th>思考</th><th>末轮</th><th>提供者</th><th>时间</th></tr>
                 </thead>
                 <tbody>
                   {pending.slice(0, 8).map((r) => (

@@ -1,33 +1,33 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../state'
 import {
-  applyFilters, difficultyName, lastSub, subBadgeClass, seriesKey, seriesList,
-  THINKING_LABELS, isPending, providerLabel, reviewerLabel, filterByModels,
+  applyFilters, difficultyName, fmtClock, fmtDateTime, lastSub, recordTs, subBadgeClass, seriesKey,
+  seriesList, THINKING_LABELS, isPending, providerLabel, reviewerLabel, filterByModels,
 } from '../aggregate'
+import { useUrlState } from '../hooks/useUrlState'
 
 const PAGE_SIZE = 50
-const COLUMNS = [
-  { key: 'model', label: '模型' },
-  { key: 'pid', label: '题目' },
-  { key: 'difficulty', label: '难度' },
-  { key: 'thinking', label: '思考' },
-  { key: 'agent', label: 'Agent' },
-  { key: 'tokenSource', label: 'Token 来源' },
-  { key: 'submissions', label: '提交轨迹' },
-  { key: 'minutes', label: '用时' },
-  { key: 'memory', label: '内存' },
-  { key: 'date', label: '日期' },
-  { key: 'author', label: '提交人' },
-  { key: 'note', label: '备注' },
-]
+const FILTER_KEYS = ['keyword', 'series', 'difficulty', 'category', 'result', 'thinking']
 
 function diffClass(d) { return `d-${d ?? 0}` }
 
 export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
   const { data, nicknameOf, nameByUid, focusModels } = useApp()
-  const [filters, setFilters] = useState({ keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '' })
-  const [sort, setSort] = useState({ key: 'date', dir: 'desc' })
-  const [page, setPage] = useState(0)
+  const url = useUrlState('rec')
+  const [filters, setFilters] = useState(() => {
+    const init = { keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '' }
+    for (const k of FILTER_KEYS) {
+      const v = url.get(k, '')
+      if (v) init[k] = v
+    }
+    return init
+  })
+  const [sort, setSort] = useState(() => {
+    const k = url.get('sort', 'date')
+    const d = url.get('dir', 'desc')
+    return { key: k, dir: d === 'asc' ? 'asc' : 'desc' }
+  })
+  const [page, setPage] = useState(() => Number(url.get('page', '')) || 0)
 
   const approved = useMemo(() => filterByModels(
     (data.records || []).filter((r) => !isPending(r)), focusModels), [data.records, focusModels])
@@ -40,6 +40,7 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
     list.sort((a, b) => {
       let va = a[key]
       let vb = b[key]
+      if (key === 'date') return (recordTs(a) - recordTs(b)) * mul
       if (key === 'difficulty') { va = va ?? -1; vb = vb ?? -1; return (va - vb) * mul }
       if (key === 'minutes' || key === 'memory') { va = va ?? -1; vb = vb ?? -1; return (va - vb) * mul }
       if (key === 'submissions') {
@@ -59,7 +60,6 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
   const pageRows = sorted.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE)
 
   const seriesOpts = seriesList(approved)
-  // 全局模型选择变化后，若已选筛选模型不在候选中则自动清空该筛选项
   useEffect(() => {
     if (filters.series && !seriesOpts.includes(filters.series)) {
       setFilters((f) => ({ ...f, series: '' }))
@@ -72,19 +72,38 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
     return [...set].sort()
   }, [approved])
 
+  /** 筛选/排序/翻页写进 URL（?rec:keyword=…），刷新与分享都保持现场 */
   const setF = (patch) => {
     setFilters((f) => ({ ...f, ...patch }))
     setPage(0)
+    url.setMany({ ...patch, page: '' })
+  }
+  const setSortBoth = (next) => {
+    setSort(next)
+    url.setMany({ sort: next.key, dir: next.dir })
+  }
+  const goPage = (p) => {
+    setPage(p)
+    url.set('page', p === 0 ? '' : p)
+  }
+  const clearAll = () => {
+    const blank = { keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '' }
+    setFilters(blank)
+    setPage(0)
+    url.setMany({ ...blank, page: '' })
   }
 
   const th = (key, label) => (
     <th
-      className="sortable"
-      onClick={() => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }))}
+      className={`sortable ${sort.key === key ? 'sorted' : ''}`}
+      title="点击切换排序"
+      onClick={() => setSortBoth({ key, dir: sort.key === key ? (sort.dir === 'asc' ? 'desc' : 'asc') : 'desc' })}
     >
       {label}{sort.key === key ? (sort.dir === 'asc' ? ' ↑' : ' ↓') : ''}
     </th>
   )
+
+  const hasFilter = !!(filters.keyword || filters.series || filters.difficulty !== '' || filters.category || filters.result || filters.thinking)
 
   return (
     <div className="card" id="records-card">
@@ -92,16 +111,17 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
         <h2>测评明细</h2>
         <span className="hint" id="records-count">{filtered.length} 条</span>
         <div className="card-tools">
-          {(filters.keyword || filters.series || filters.difficulty !== '' || filters.category || filters.result || filters.thinking) ? (
-            <button className="btn small ghost" onClick={() => setFilters({ keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '' })}>
-              清除筛选
-            </button>
+          <span className="hint">时间列 = 测评日期 + 录入时分</span>
+          {hasFilter ? (
+            <button className="btn small ghost" onClick={clearAll}>清除筛选</button>
           ) : null}
         </div>
       </div>
       <div className="filters">
-        <input id="f-keyword" placeholder="搜索 题号/标题/模型/备注…" value={filters.keyword}
-          onChange={(e) => setF({ keyword: e.target.value })} />
+        <input
+          id="f-keyword" placeholder="搜索 题号/标题/模型/备注…（按 F 聚焦）" value={filters.keyword}
+          onChange={(e) => setF({ keyword: e.target.value })}
+        />
         <select id="f-series" value={filters.series} onChange={(e) => setF({ series: e.target.value })}>
           <option value="">全部模型</option>
           {seriesOpts.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -140,7 +160,7 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
               {th('submissions', '提交轨迹')}
               {th('minutes', '用时')}
               {th('memory', '内存')}
-              {th('date', '日期')}
+              {th('date', '时间')}
               {th('author', '提供者')}
               {th('reviewerId', '审核人')}
               {th('note', '备注')}
@@ -150,7 +170,9 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
           <tbody>
             {pageRows.map((r) => (
               <tr key={r.id}>
-                <td>{seriesKey(r)}{r.variant ? <span className="chain">（{r.variant}）</span> : null}</td>
+                <td className="sticky-col">
+                  {seriesKey(r)}{r.variant ? <span className="chain">（{r.variant}）</span> : null}
+                </td>
                 <td>
                   <a className="pid-link" data-detail={r.pid} onClick={(e) => { e.preventDefault(); onOpenDetail && onOpenDetail(r.pid, seriesKey(r)) }} href={`#${r.pid}`}>
                     {r.pid}
@@ -158,7 +180,7 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
                   <div className="chain">{r.title}</div>
                 </td>
                 <td><span className={`diff-tag ${diffClass(r.difficulty)}`}>{difficultyName(r.difficulty)}</span></td>
-                <td><span className="think-tag">{THINKING_LABELS[r.thinking] || r.thinking}</span></td>
+                <td><span className={`think-tag lv-${r.thinking}`}>{THINKING_LABELS[r.thinking] || r.thinking}</span></td>
                 <td>{r.agent || <span className="chain">—</span>}</td>
                 <td>{r.tokenSource || <span className="chain">—</span>}</td>
                 <td>
@@ -170,13 +192,18 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
                 </td>
                 <td className="num">{r.minutes ?? '—'}</td>
                 <td className="num">{r.memory ?? '—'}</td>
-                <td>{r.date}</td>
+                <td title={`测评日期 ${r.date}\n录入时间 ${fmtDateTime(r.createdAt)}\n更新时间 ${fmtDateTime(r.updatedAt)}`}>
+                  <div className="tcell">
+                    <span className="t-date">{r.date}</span>
+                    <span className="t-time">{fmtClock(r.createdAt) || '—:—'}</span>
+                  </div>
+                </td>
                 <td title={r.authorId ? `提供者 ID #${r.authorId}` : '网站首次录入的历史数据'}>
                   {providerLabel(r, nicknameOf)}
                 </td>
                 <td title={r.reviewerId ? `审核人 ID #${r.reviewerId}` : (r.status === 'approved' ? '网站首次录入的历史数据' : '尚未审核')}>
                   {reviewerLabel(r, nameByUid) || <span className="chain">待审核</span>}
-                  <div className="chain">{r.reviewedAt || ''}</div>
+                  <div className="chain">{r.reviewedAt ? fmtDateTime(r.reviewedAt) : ''}</div>
                 </td>
                 <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.note}>{r.note || '—'}</td>
                 {isAdmin && (
@@ -195,9 +222,9 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
       </div>
       {pages > 1 && (
         <div className="pager">
-          <button className="btn small ghost" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>上一页</button>
-          <span>{safePage + 1} / {pages}</span>
-          <button className="btn small ghost" disabled={safePage >= pages - 1} onClick={() => setPage(safePage + 1)}>下一页</button>
+          <button className="btn small ghost" disabled={safePage === 0} onClick={() => goPage(safePage - 1)}>上一页</button>
+          <span className="pages">{safePage + 1} / {pages}</span>
+          <button className="btn small ghost" disabled={safePage >= pages - 1} onClick={() => goPage(safePage + 1)}>下一页</button>
         </div>
       )}
     </div>

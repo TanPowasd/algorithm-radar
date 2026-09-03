@@ -4,6 +4,8 @@
  * 无分数轮次（score=null）一律跳过、不按 0 计。
  */
 
+import { vendorColorMap } from './palette'
+
 export const RESULTS = ['AC', 'WA', 'TLE', 'MLE', 'RE', 'CE', '未解出']
 export const THINKING_LEVELS = ['ultra', 'max', 'xhigh', 'high', 'medium', 'low', 'off']
 export const DEFAULT_THINKING = 'max'
@@ -63,10 +65,118 @@ export function seriesList(records) {
   return [...set].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
 }
 
-export function seriesColorMap(records) {
+/**
+ * 系列（模型）→ 颜色。
+ * 传入 opts.vendorOf 时按「厂商同色」方案上色（见 palette.js）；
+ * 不传时保留旧的回环调色板（向后兼容）。
+ */
+export function seriesColorMap(records, opts) {
   const map = new Map()
-  seriesList(records).forEach((s, i) => map.set(s, SERIES_COLORS[i % SERIES_COLORS.length]))
+  const list = seriesList(records)
+  if (opts && typeof opts.vendorOf === 'function') {
+    const colors = vendorColorMap(list, opts.vendorOf, opts.dark !== false)
+    for (const s of list) map.set(s, colors.get(s))
+    return map
+  }
+  list.forEach((s, i) => map.set(s, SERIES_COLORS[i % SERIES_COLORS.length]))
   return map
+}
+
+/** 思考等级强弱（ultra 最强）。未知等级按中等（3）处理。 */
+export const THINKING_RANK = { ultra: 6, max: 5, xhigh: 4, high: 3, medium: 2, low: 1, off: 0 }
+export const thinkingRank = (t) => (THINKING_RANK[t] ?? 3)
+
+/**
+ * 「该题该模型的最佳思考等级」：同一模型在同一题上只留思考等级最高的那批记录。
+ * 并列时（同等级多条）合并取分数。
+ */
+export function bestLevelRecords(recs) {
+  if (!recs.length) return []
+  const top = Math.max(...recs.map((r) => thinkingRank(r.thinking)))
+  return recs.filter((r) => thinkingRank(r.thinking) === top)
+}
+
+/**
+ * 矩阵单元格（最佳思考等级口径）：
+ *  mode = 'level' → 取该题该模型「思考等级最高」的记录打分
+ *  mode = 'score' → 取该题该模型「分数最高」的记录打分
+ * 返回 { kind, value, thinking, n, recs }；无记录时 { kind: 'none' }
+ */
+export function bestThinkingCell(recs, mode = 'level', metric = 'avgscore') {
+  if (!recs.length) return { kind: 'none' }
+  let pick
+  if (mode === 'score') {
+    const scored = recs.map((r) => ({ r, v: metricScore(r, metric === 'final' ? 'final' : metric) }))
+    const withVal = scored.filter((x) => x.v !== null)
+    if (withVal.length) {
+      withVal.sort((a, b) => b.v - a.v || thinkingRank(b.r.thinking) - thinkingRank(a.r.thinking))
+      const best = withVal[0].v
+      pick = withVal.filter((x) => Math.abs(x.v - best) < 1e-9).map((x) => x.r)
+    } else {
+      pick = bestLevelRecords(recs)
+    }
+  } else {
+    pick = bestLevelRecords(recs)
+  }
+  const passed = pick.filter(isPassed).length
+  const gaveUp = pick.filter((r) => lastSub(r)?.result === '未解出').length
+  const failed = pick.length - passed - gaveUp
+  const kind = passed > 0 ? 'ac' : failed > 0 ? 'fail' : 'giveup'
+  const info = roundsAvg(pick)
+  const useFinal = metric === 'final' || metric === 'first'
+  let value = null
+  if (useFinal) {
+    const vals = pick.map((r) => metricScore(r, metric)).filter((v) => v !== null)
+    if (vals.length) value = vals.reduce((a, c) => a + c, 0) / vals.length
+  } else {
+    value = info ? info.avg : null
+  }
+  const levels = [...new Set(pick.map((r) => r.thinking))].sort((a, b) => thinkingRank(b) - thinkingRank(a))
+  return {
+    kind, value, thinking: levels[0] || null, levels,
+    n: pick.length, rounds: info ? info.n : 0, total: recs.length, recs: pick,
+    allRecs: recs,
+  }
+}
+
+/* ---------------- 时间（明细/滚榜展示与排序用） ---------------- */
+
+/** 记录的精确时间戳（毫秒）：录入时间优先，退化为测评日期 00:00 */
+export function recordTs(r) {
+  const iso = r.createdAt || r.updatedAt
+  const t = iso ? Date.parse(iso) : NaN
+  if (!Number.isNaN(t)) return t
+  const d = Date.parse(`${r.date || ''}T00:00:00Z`)
+  return Number.isNaN(d) ? 0 : d
+}
+
+const pad2 = (n) => String(n).padStart(2, '0')
+
+/** YYYY-MM-DD HH:mm（本地时区） */
+export function fmtDateTime(isoOrTs) {
+  if (!isoOrTs) return '—'
+  const d = new Date(typeof isoOrTs === 'number' ? isoOrTs : isoOrTs)
+  if (Number.isNaN(d.getTime())) return String(isoOrTs)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+/** HH:mm（明细表第二行用） */
+export function fmtClock(isoOrTs) {
+  if (!isoOrTs) return ''
+  const d = new Date(typeof isoOrTs === 'number' ? isoOrTs : isoOrTs)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+/** 相对时间（滚榜 HUD 用） */
+export function fmtSpan(ms) {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s} 秒`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m} 分 ${pad2(s % 60)} 秒`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h} 小时 ${pad2(m % 60)} 分`
+  return `${Math.floor(h / 24)} 天 ${pad2(h % 24)} 小时`
 }
 
 export function difficultyName(d) {

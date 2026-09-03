@@ -1,9 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client'
+import { makeVendorOf } from './palette'
 
 const LS_CACHE = 'radar.cache.v3'
 const LS_THEME = 'radar.theme'
 const LS_FOCUS = 'radar.focusModels'
+const LS_WIDTH = 'radar.widthMode'
+const LS_BARN = 'radar.bar.minSamples'
+const LS_RADAR = 'radar.radarSize'
 
 const AppContext = createContext(null)
 
@@ -24,6 +28,32 @@ function saveCache(data) {
   }
 }
 
+function readLS(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw === null ? fallback : raw
+  } catch {
+    return fallback
+  }
+}
+
+/** 隐私模式 / 存储写满时不能把整个应用带崩 */
+function writeLS(key, value) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* 忽略 */
+  }
+}
+
+const prefersDark = () => {
+  try {
+    return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  } catch {
+    return true // 读不到系统偏好时保持本站传统：夜间优先
+  }
+}
+
 export function AppProvider({ children }) {
   const [session, setSession] = useState({ loggedIn: false, username: '', role: '', admin: false, canSetup: false, configured: false })
   const [data, setData] = useState(() => loadCache() || { revision: 0, records: [], problems: {} })
@@ -31,7 +61,24 @@ export function AppProvider({ children }) {
   const [nicknames, setNicknames] = useState({})
   const [offline, setOffline] = useState(false)
   const [loaded, setLoaded] = useState(false)
-  const [theme, setTheme] = useState(() => localStorage.getItem(LS_THEME) || 'dark')
+  /** 主题三态：'system' | 'light' | 'dark'（旧值 light/dark 直接兼容） */
+  const [themeMode, setThemeMode] = useState(() => {
+    const v = readLS(LS_THEME, 'dark')
+    return v === 'system' || v === 'light' || v === 'dark' ? v : 'dark'
+  })
+  const [systemDark, setSystemDark] = useState(() => prefersDark())
+  /** 版心：'full' 全宽铺满（默认） / 'narrow' 限宽居中 */
+  const [widthMode, setWidthMode] = useState(() => (readLS(LS_WIDTH, 'full') === 'narrow' ? 'narrow' : 'full'))
+  /** 柱状图最小样本量（原写死 n≥5，现可自定义） */
+  const [barMinSamples, setBarMinSamples] = useState(() => {
+    const n = Number(readLS(LS_BARN, '5'))
+    return Number.isFinite(n) && n >= 1 && n <= 50 ? Math.round(n) : 5
+  })
+  /** 雷达图尺寸（0 = 自适应填满容器） */
+  const [radarSize, setRadarSize] = useState(() => {
+    const n = Number(readLS(LS_RADAR, '0'))
+    return Number.isFinite(n) && n >= 0 && n <= 1600 ? Math.round(n) : 0
+  })
   // 全局“只看这些模型”：Set（空/无 = 全部模型都看）
   const [focusModels, setFocusModels] = useState(() => {
     try {
@@ -113,19 +160,56 @@ export function AppProvider({ children }) {
     await Promise.all([refreshSession(), refreshData(), refreshModels(), refreshNicknames()])
   }, [refreshSession, refreshData, refreshModels, refreshNicknames])
 
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
-    localStorage.setItem(LS_THEME, theme)
-  }, [theme])
+  /* ---------------- 主题（三态 + 跟随系统） ---------------- */
+  const theme = themeMode === 'system' ? (systemDark ? 'dark' : 'light') : themeMode
 
   useEffect(() => {
-    refreshAll()
-  }, [refreshAll])
-
-  const toggleTheme = useCallback(() => {
-    setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
+    if (!window.matchMedia) return undefined
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const on = (e) => setSystemDark(e.matches)
+    setSystemDark(Boolean(mq.matches))
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', on)
+      return () => mq.removeEventListener('change', on)
+    }
+    if (typeof mq.addListener === 'function') {
+      mq.addListener(on)
+      return () => mq.removeListener(on)
+    }
+    return undefined
   }, [])
 
+  useEffect(() => {
+    const root = document.documentElement
+    root.setAttribute('data-theme', theme)
+    root.setAttribute('data-theme-mode', themeMode)
+    writeLS(LS_THEME, themeMode)
+  }, [theme, themeMode])
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-width', widthMode)
+    try {
+      writeLS(LS_WIDTH, widthMode)
+    } catch { /* 忽略 */ }
+  }, [widthMode])
+
+  useEffect(() => {
+    try {
+      writeLS(LS_BARN, String(barMinSamples))
+    } catch { /* 忽略 */ }
+  }, [barMinSamples])
+
+  useEffect(() => {
+    try {
+      writeLS(LS_RADAR, String(radarSize))
+    } catch { /* 忽略 */ }
+  }, [radarSize])
+
+  const toggleTheme = useCallback(() => {
+    setThemeMode((m) => (m === 'dark' ? 'light' : m === 'light' ? 'system' : 'dark'))
+  }, [])
+
+  /* ---------------- 模型筛选 ---------------- */
   /** 聚焦某模型（加入/移出选择集）；选择集为空 = 全部 */
   const toggleFocusModel = useCallback((name) => {
     setFocusModels((prev) => {
@@ -142,8 +226,11 @@ export function AppProvider({ children }) {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem(LS_FOCUS, JSON.stringify([...focusModels]))
+    writeLS(LS_FOCUS, JSON.stringify([...focusModels]))
   }, [focusModels])
+
+  /* ---------------- 厂商解析（配色用） ---------------- */
+  const vendorOf = useMemo(() => makeVendorOf(models), [models])
 
   const value = useMemo(() => ({
     session,
@@ -155,12 +242,21 @@ export function AppProvider({ children }) {
     offline,
     loaded,
     theme,
+    themeMode,
+    setThemeMode,
+    toggleTheme,
+    widthMode,
+    setWidthMode,
+    barMinSamples,
+    setBarMinSamples,
+    radarSize,
+    setRadarSize,
+    vendorOf,
     focusModels,
     toggleFocusModel,
     focusOnly,
     toasts,
     toast,
-    toggleTheme,
     refreshAll,
     refreshSession,
     refreshData,
@@ -169,7 +265,9 @@ export function AppProvider({ children }) {
     isOwner: session.role === 'owner',
     isAdmin: session.role === 'admin' || session.role === 'owner',
     isContributor: session.role === 'contributor' || session.role === 'admin' || session.role === 'owner',
-  }), [session, data, models, nicknames, nicknameOf, nameByUid, offline, loaded, theme, focusModels, toggleFocusModel, focusOnly, toasts, toast, toggleTheme, refreshAll, refreshSession, refreshData, refreshModels, refreshNicknames])
+  }), [session, data, models, nicknames, nicknameOf, nameByUid, offline, loaded, theme, themeMode, toggleTheme,
+    widthMode, barMinSamples, radarSize, vendorOf, focusModels, toggleFocusModel, focusOnly, toasts, toast,
+    refreshAll, refreshSession, refreshData, refreshModels, refreshNicknames])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }

@@ -3,12 +3,20 @@ import { Link } from 'react-router-dom'
 import Topbar from '../components/Topbar'
 import { useApp } from '../state'
 import { api } from '../api/client'
+import { fmtClock, fmtDateTime } from '../aggregate'
 
 const ROLE_LABEL = { owner: '站长', admin: '管理员', contributor: '贡献者', legacy: '历史数据' }
 
-function fmtJoined(iso) {
-  if (!iso) return '—'
-  return String(iso).slice(0, 10)
+/** 一行两排：上=日期，下=时分（全站统一时间显示口径） */
+function TimeCell({ iso, fallback = '—' }) {
+  if (!iso) return <span className="chain">{fallback}</span>
+  const date = String(iso).slice(0, 10)
+  return (
+    <div className="tcell" title={fmtDateTime(iso)}>
+      <span className="t-date">{date}</span>
+      <span className="t-time">{fmtClock(iso) || '—:—'}</span>
+    </div>
+  )
 }
 
 /**
@@ -78,7 +86,7 @@ export default function ContributorsPage() {
                       <td className="num">{r.problems}</td>
                       <td className="num">{r.models}</td>
                       <td>{r.lastDate || '—'}</td>
-                      <td>{fmtJoined(r.joinedAt)}</td>
+                      <td><TimeCell iso={r.joinedAt} /></td>
                     </tr>
                   ))}
                   {!ordered.length && <tr><td colSpan={9}><div className="empty">还没有贡献者</div></td></tr>}

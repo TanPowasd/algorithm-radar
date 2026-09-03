@@ -2,6 +2,13 @@ import { useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
 import { PID_RE, DIFFICULTY_NAMES } from '../aggregate'
+import CopyButton from './CopyButton'
+
+/** 统一测试口径模板：纯前端文案，管理员可在此基础上再改 */
+const PROMPT_TEMPLATE = (pid) => `请独立完成这道洛谷题${pid ? `（${pid}）` : ''}。要求：
+1）只输出一段完整、可直接提交的 C++17 代码（用 \`\`\`cpp 代码块包裹），不要解释、不要伪码、不要多份实现；
+2）自己构造边界样例并在脑内逐条验证后再给最终版本；
+3）不使用任何在线评测反馈，一次性给出终版。`
 
 /** 难度选项：value = 实际难度值字符串（'' 为选择占位）。直接由共享难度表生成，杜绝档位错位。 */
 const DIFF_OPTIONS = [
@@ -134,13 +141,24 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
           {isEdit && <span className="chain">编辑保存后标签将被下方内容整体替换（留空 = 清空标签）。</span>}
         </div>
         <div className="field">
-          <label>推荐提示词（该题的统一测试提示词，可空）</label>
+          <div className="field-head">
+            <label>推荐提示词（该题的统一测试提示词，可空）</label>
+            <CopyButton text={form.prompt} toast={toast} size="small" kind="ghost" title="复制当前填写的提示词" />
+          </div>
           <textarea
             value={form.prompt}
             onChange={(e) => set({ prompt: e.target.value })}
             placeholder="贴上推荐给所有贡献者使用的统一提示词，例如：请独立完成这道洛谷题，给出完整可提交的 C++17 代码，只输出代码块。"
             rows={4}
           />
+          <div className="prompt-tools">
+            <button type="button" className="btn small ghost" id="pub-prompt-tpl" onClick={() => set({ prompt: PROMPT_TEMPLATE(form.pid) })}>
+              填入统一模板
+            </button>
+            <button type="button" className="btn small ghost" onClick={() => set({ prompt: '' })} disabled={!form.prompt}>
+              清空
+            </button>
+          </div>
           <span className="chain">
             {isEdit
               ? '编辑保存后提示词被下方内容整体替换（留空 = 移除推荐提示词）。'

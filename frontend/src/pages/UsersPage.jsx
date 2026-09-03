@@ -4,6 +4,7 @@ import { useApp } from '../state'
 import Topbar from '../components/Topbar'
 import AuthModal from '../components/AuthModal'
 import { api } from '../api/client'
+import TimeCell from '../components/TimeCell'
 
 const ROLE_LABEL = { owner: '站长', admin: '管理员', contributor: '贡献者' }
 const STATUS_LABEL = { active: '已激活', pending: '待审核', rejected: '已拒绝' }
@@ -84,7 +85,7 @@ export default function UsersPage() {
                 {(pending || []).map((u) => (
                   <tr key={u.id}>
                     <td style={{ fontWeight: 600 }}>{u.username}</td>
-                    <td>{u.createdAt}</td>
+                    <td><TimeCell value={u.createdAt} /></td>
                     <td className="actions">
                       <button className="btn small" onClick={() => act(`/api/admin/users/${u.id}/approve`)}>批准为贡献者</button>
                       <button className="btn small danger" onClick={() => act(`/api/admin/users/${u.id}/reject`, `拒绝 ${u.username} 的注册申请？`)}>拒绝</button>
@@ -114,7 +115,7 @@ export default function UsersPage() {
                       <td>{u.nickname || <span className="chain">—</span>}</td>
                       <td><span className={`status-tag role-${u.role}`}>{ROLE_LABEL[u.role] || u.role}</span></td>
                       <td><span className={`status-tag st-${u.status}`}>{STATUS_LABEL[u.status] || u.status}</span></td>
-                      <td>{u.createdAt}</td>
+                      <td><TimeCell value={u.createdAt} /></td>
                       <td>{u.approvedBy || '—'}</td>
                     <td className="actions">
                       {u.role !== 'owner' && u.status === 'active' && (
@@ -126,7 +127,7 @@ export default function UsersPage() {
                     </td>
                   </tr>
                 ))}
-                {!others.length && <tr><td colSpan={6}><div className="empty">暂无用户</div></td></tr>}
+                {!others.length && <tr><td colSpan={7}><div className="empty">{loaded || users ? '暂无用户' : '加载中…'}</div></td></tr>}
               </tbody>
             </table>
           </div>

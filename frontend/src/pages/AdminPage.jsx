@@ -5,7 +5,8 @@ import Topbar from '../components/Topbar'
 import AuthModal from '../components/AuthModal'
 import PublishModal from '../components/PublishModal'
 import { api } from '../api/client'
-import { difficultyName, lastSub, seriesKey, isPending, isApproved, providerLabel } from '../aggregate'
+import { difficultyName, seriesKey, isPending, isApproved, providerLabel, fmtClock, fmtDateTime } from '../aggregate'
+import CopyButton from '../components/CopyButton'
 
 /**
  * 回收站：软删除的记录（deleted_at 非空）统一在这里管理。
@@ -110,7 +111,7 @@ function TrashManager({ onChanged }) {
           <thead>
             <tr>
               <th><input type="checkbox" checked={!!records?.length && sel.size === records.length} onChange={toggleAll} /></th>
-              <th>模型</th><th>题目</th><th>日期</th><th>提供者</th><th>删除时间</th><th>原因</th>
+              <th>模型</th><th>题目</th><th>时间</th><th>提供者</th><th>删除时间</th><th>原因</th>
             </tr>
           </thead>
           <tbody>
@@ -119,7 +120,12 @@ function TrashManager({ onChanged }) {
                 <td><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
                 <td style={{ fontWeight: 600 }}>{r.model}</td>
                 <td>{r.pid}<span className="chain"> {r.title}</span></td>
-                <td>{r.date}</td>
+                <td>
+                  <div className="tcell" title={`测评日期 ${r.date} · 录入 ${fmtDateTime(r.createdAt)}`}>
+                    <span className="t-date">{r.date}</span>
+                    <span className="t-time">{fmtClock(r.createdAt) || '—:—'}</span>
+                  </div>
+                </td>
                 <td>{providerLabel(r, nicknameOf)}</td>
                 <td className="chain">{(r.deletedAt || '').slice(0, 19).replace('T', ' ')}</td>
                 <td className="chain">{r.status === 'pending' ? '审核拒绝' : '管理员删除'}</td>
@@ -475,8 +481,9 @@ export default function AdminPage() {
         <div className="card">
           <div className="card-head">
             <h2>待审核记录</h2>
-            <input className="filters" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 6, padding: '6px 10px' }}
-              placeholder="筛选 模型/题号/提交人…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <input className="filter-search" id="admin-pending-filter"
+              placeholder="筛选 模型/题号/提交人…（输入即筛）" value={filter} onChange={(e) => setFilter(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setFilter('') }} />
             <div className="card-tools">
               <button className="btn small" onClick={() => bulk('approve')} disabled={!shownPending.length}>全部通过</button>
               <button className="btn small danger" onClick={() => bulk('reject')} disabled={!shownPending.length}>全部拒绝</button>
@@ -486,7 +493,7 @@ export default function AdminPage() {
             <table className="data review-table">
               <thead>
                 <tr>
-                  <th>模型</th><th>题目</th><th>思考</th><th>Agent / Token</th><th>提交轨迹</th><th>提供者</th><th>日期</th><th>操作</th>
+                  <th>模型</th><th>题目</th><th>思考</th><th>Agent / Token</th><th>提交轨迹</th><th>提供者</th><th>时间</th><th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -498,7 +505,12 @@ export default function AdminPage() {
                     <td>{r.agent || '—'} / {r.tokenSource || '—'}</td>
                     <td>{(r.submissions || []).map((s, i) => <span key={i} className="chain">{i + 1}:{s.result} {s.score ?? ''} </span>)}</td>
                     <td>{providerCell(r)}</td>
-                    <td>{r.date}</td>
+                    <td>
+                      <div className="tcell" title={`测评日期 ${r.date} · 录入 ${fmtDateTime(r.createdAt)}`}>
+                        <span className="t-date">{r.date}</span>
+                        <span className="t-time">{fmtClock(r.createdAt) || '—:—'}</span>
+                      </div>
+                    </td>
                     <td className="actions">
                       <button className="btn small" onClick={() => setStatus(r, 'approved')}>通过</button>
                       <button className="btn small ghost" onClick={() => setStatus(r, 'pending')} disabled={r.status === 'pending'}>退回</button>
@@ -537,9 +549,16 @@ export default function AdminPage() {
                       {(p.tags || []).length > 8 && <span className="chain">…</span>}
                     </td>
                     <td>
-                      {p.prompt
-                        ? <span className="status-tag approved" title={p.prompt}>已配置</span>
-                        : <span className="chain" title="再次发布该题号并填写提示词即可补充">未配置</span>}
+                      {p.prompt ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, maxWidth: 340 }}>
+                          <span className="chain" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={p.prompt}>
+                            {p.prompt}
+                          </span>
+                          <CopyButton text={p.prompt} toast={toast} label="复制" okLabel="已复制" />
+                        </div>
+                      ) : (
+                        <span className="chain" title="点「编辑」为该题补充统一测试提示词">未配置</span>
+                      )}
                     </td>
                     <td className="num">{recordCountByPid.get(p.pid) || 0}</td>
                     <td className="actions">
@@ -630,14 +649,19 @@ export default function AdminPage() {
                 <div className="table-scroll" style={{ marginTop: 'var(--sp-3)' }}>
                   <table className="data">
                     <thead>
-                      <tr><th>模型</th><th>题目</th><th>日期</th><th>提供者</th><th>原因</th><th>操作</th></tr>
+                      <tr><th>模型</th><th>题目</th><th>时间</th><th>提供者</th><th>原因</th><th>操作</th></tr>
                     </thead>
                     <tbody>
                       {hiddenDetail.map((r) => (
                         <tr key={r.id}>
                           <td style={{ fontWeight: 600 }}>{r.model}</td>
                           <td>{r.pid}<span className="chain"> {r.title}</span></td>
-                          <td>{r.date}</td>
+                          <td>
+                      <div className="tcell" title={`测评日期 ${r.date} · 录入 ${fmtDateTime(r.createdAt)}`}>
+                        <span className="t-date">{r.date}</span>
+                        <span className="t-time">{fmtClock(r.createdAt) || '—:—'}</span>
+                      </div>
+                    </td>
                           <td>{providerCell(r)}</td>
                           <td className="chain">
                             {!data.problems?.[r.pid] ? '题目未收录' : ''}
