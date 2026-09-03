@@ -12,7 +12,6 @@ import { ApiError, DIFFICULTY_NAMES, forbidden, tooMany, unauthorized } from "./
 import * as store from "./store";
 import { fetchLuoguProblem } from "./luogu";
 import { ensureSchema } from "./ensureSchema";
-
 export interface Env {
     DB: D1Database;
     /** 公网首次初始化站长用的一次性口令（wrangler pages secret put SETUP_TOKEN） */
@@ -373,12 +372,39 @@ const routes: Route[] = [
 
     { method: "GET", path: "/api/export", role: "admin", handler: async (ctx) => {
         requireRole(ctx, "admin");
-        const snap = await store.snapshot(ctx.env.DB, null, true);
+        const snap = await store.exportBundle(ctx.env.DB);
         return {
             app: "AI vs 洛谷", version: 3, exportedAt: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
             revision: snap.revision, updatedAt: snap.updatedAt,
-            records: snap.records, problems: snap.problems,
+            records: snap.records, problems: snap.problems, models: snap.models,
         };
+    } },
+
+    /** 未收录历史记录分组（收录管理页用）：approved 中题目/模型不在目录的 pid/model 及计数 */
+    { method: "GET", path: "/api/hidden-records", role: "admin", handler: async (ctx) => {
+        requireRole(ctx, "admin");
+        const { problems, models, total } = await store.listHiddenGroups(ctx.env.DB);
+        return { ok: true, problems, models, total };
+    } },
+
+    /** 隐藏（approved 但未收录）记录明细：管理端查看/处理用 */
+    { method: "GET", path: "/api/hidden-records/detail", role: "admin", handler: async (ctx) => {
+        requireRole(ctx, "admin");
+        return { ok: true, records: await store.listHiddenRecords(ctx.env.DB) };
+    } },
+
+    /** 彻底删除某个未收录模型名下的全部隐藏历史记录（按模型名，删除后不可恢复） */
+    { method: "POST", path: "/api/admin/purge-records", role: "admin", handler: async (ctx) => {
+        requireRole(ctx, "admin");
+        const deleted = await store.purgeRecordsByModel(ctx.env.DB, str(ctx.body?.model));
+        return { ok: true, deleted };
+    } },
+
+    /** 一键清空收录目录（题目 + 模型）与全部记录：清库重建，重新开始收录 */
+    { method: "POST", path: "/api/catalog/reset", role: "owner", handler: async (ctx) => {
+        requireRole(ctx, "owner");
+        await store.resetCatalog(ctx.env.DB);
+        return { ok: true, revision: await store.getRevision(ctx.env.DB) };
     } },
 
     { method: "GET", path: "/api/export/public", role: null, handler: async (ctx) => {

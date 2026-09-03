@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApp } from '../state'
 import Topbar from '../components/Topbar'
@@ -7,8 +7,56 @@ import PublishModal from '../components/PublishModal'
 import { api } from '../api/client'
 import { difficultyName, lastSub, seriesKey, isPending, isApproved, todayStr, providerLabel } from '../aggregate'
 
-function ModelManager() {
-  const { models, toast, refreshAll } = useApp()
+/** 「收录旧模型」卡片：列出 records 中出现过但不在 models 目录的模型，一键收录 */
+function MissingModelCard({ missing, onCollected }) {
+  const { toast, refreshAll } = useApp()
+  const [busyKey, setBusyKey] = useState('')
+  const collect = async (name) => {
+    setBusyKey(name)
+    try {
+      await api('/api/models', { method: 'POST', body: { name, vendor: '', note: '' } })
+      toast(`模型「${name}」已收录，相关记录即刻可见`)
+      await refreshAll()
+      onCollected && onCollected()
+    } catch (e) {
+      toast(e.message, 'err')
+    } finally {
+      setBusyKey('')
+    }
+  }
+  return (
+    <div className="card" id="missing-models-card">
+      <div className="card-head">
+        <h2>未收录的模型</h2>
+        <span className="hint">历史记录中出现但尚未收录进「AI 模型管理」</span>
+      </div>
+      <div className="table-scroll">
+        <table className="data">
+          <thead>
+            <tr><th>模型名</th><th className="num">关联记录数</th><th className="num">操作</th></tr>
+          </thead>
+          <tbody>
+            {missing.map((m) => (
+              <tr key={m.key}>
+                <td style={{ fontWeight: 600 }}>{m.name}</td>
+                <td className="num">{m.count}</td>
+                <td className="num">
+                  <button className="btn small" disabled={busyKey === m.name} onClick={() => collect(m.name)}>
+                    {busyKey === m.name ? '收录中…' : '一键收录'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!missing.length && <tr><td colSpan={3}><div className="empty">所有记录中的模型均已收录</div></td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function ModelManager({ onChanged }) {
+  const { models, data, toast, refreshAll } = useApp()
   const [form, setForm] = useState({ name: '', vendor: '', note: '' })
   const [busy, setBusy] = useState(false)
 
@@ -20,6 +68,7 @@ function ModelManager() {
       toast(`模型 ${form.name} 已添加`)
       setForm({ name: '', vendor: '', note: '' })
       await refreshAll()
+      onChanged && onChanged()
     } catch (err) {
       toast(err.message, 'err')
     } finally {
@@ -28,11 +77,15 @@ function ModelManager() {
   }
 
   const remove = async (m) => {
-    if (!window.confirm(`删除模型「${m.name}」？`)) return
+    const used = (data.records || []).some((r) => r.model === m.name)
+    if (!window.confirm(used
+      ? `从目录删除模型「${m.name}」？\n该模型下的历史记录将隐藏（保留在库，重新收录模型后恢复显示）。`
+      : `从目录删除模型「${m.name}」？`)) return
     try {
       await api(`/api/models/${m.id}`, { method: 'DELETE' })
       toast(`已删除 ${m.name}`)
       await refreshAll()
+      onChanged && onChanged()
     } catch (err) {
       toast(err.message, 'err')
     }
@@ -42,7 +95,7 @@ function ModelManager() {
     <div className="card" id="models-card">
       <div className="card-head">
         <h2>AI 模型管理</h2>
-        <span className="hint">提交测评时从这里选择；已出现在测评记录中的模型不可删除</span>
+        <span className="hint">已收录 = 可提交 + 历史同名记录可见；删除只移出目录，记录隐藏不删除</span>
       </div>
       <div className="table-scroll">
         <table className="data">
@@ -78,12 +131,46 @@ function ModelManager() {
 }
 
 export default function AdminPage() {
-  const { session, data, isAdmin, toast, refreshAll, loaded, nicknameOf } = useApp()
+  const { session, data, models, isAdmin, isOwner, toast, refreshAll, loaded, nicknameOf } = useApp()
   const providerCell = (r) => providerLabel(r, nicknameOf)
   const [authOpen, setAuthOpen] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
   const [filter, setFilter] = useState('')
+  const [hidden, setHidden] = useState(null) // {problems:[],models:[],total} 未收录分组
+  const [collectPid, setCollectPid] = useState('') // 预填发布弹窗的题号
+  const [hiddenDetail, setHiddenDetail] = useState(null) // 隐藏记录明细列表（null=未展开）
 
+  // 加载未收录历史数据分组（管理员视角）
+  const loadHidden = async () => {
+    if (!isAdmin) return
+    try {
+      const res = await api('/api/hidden-records')
+      setHidden(res)
+    } catch { /* 静默 */ }
+  }
+
+  /** 刷新分组 +（若展开）同步明细 */
+  const reloadHidden = async () => {
+    await loadHidden()
+    if (hiddenDetail) {
+      try {
+        const d = await api('/api/hidden-records/detail')
+        setHiddenDetail(d.records || [])
+      } catch { /* 静默 */ }
+    }
+  }
+
+  const toggleHiddenDetail = async () => {
+    if (hiddenDetail) { setHiddenDetail(null); return }
+    try {
+      const res = await api('/api/hidden-records/detail')
+      setHiddenDetail(res.records || [])
+    } catch (e) {
+      toast(e.message, 'err')
+    }
+  }
+
+  useEffect(() => { if (isAdmin) loadHidden() }, [isAdmin])
   const pending = useMemo(() => (data.records || []).filter(isPending), [data.records])
   const problems = useMemo(() => {
     const list = Object.values(data.problems || {})
@@ -147,11 +234,74 @@ export default function AdminPage() {
   }
 
   const deleteProblem = async (p) => {
-    if (!window.confirm(`删除题目 ${p.pid}？`)) return
+    if (!window.confirm(`从目录移除题目 ${p.pid}？\n该题下的测评记录将隐藏（保留在库，可重新发布该题恢复）。`)) return
     try {
       await api(`/api/problems/${encodeURIComponent(p.pid)}`, { method: 'DELETE' })
-      toast(`已删除 ${p.pid}`)
+      toast(`已从目录移除 ${p.pid}，记录已隐藏`)
       await refreshAll()
+      reloadHidden()
+    } catch (e) {
+      toast(e.message, 'err')
+    }
+  }
+
+  /** 一键收录：发布弹窗预填（题目） / 直接 POST models（模型） */
+  const collectProblem = (pid) => {
+    setCollectPid(pid)
+    setPublishOpen(true)
+  }
+
+  const collectModel = async (name) => {
+    try {
+      await api('/api/models', { method: 'POST', body: { name, vendor: '', note: '' } })
+      toast(`模型「${name}」已收录`)
+      await refreshAll()
+      reloadHidden()
+    } catch (e) {
+      toast(e.message, 'err')
+    }
+  }
+
+  /** 彻底删除“未收录”模型对应的隐藏历史记录 */
+  const purgeHiddenModel = async (name) => {
+    const grp = hidden?.models?.find((m) => m.name === name)
+    if (!window.confirm(`删除模型「${name}」名下 ${grp?.count ?? ''} 条已审核但未收录的历史记录？此操作不可恢复。`)) return
+    try {
+      const res = await api('/api/admin/purge-records', {
+        method: 'POST',
+        body: { model: name },
+      })
+      toast(`已删除 ${res.deleted} 条记录`)
+      await refreshAll()
+      reloadHidden()
+    } catch (e) {
+      toast(e.message, 'err')
+    }
+  }
+
+  /** 单条删除隐藏历史记录 */
+  const removeHiddenRecord = async (r) => {
+    if (!window.confirm(`删除该隐藏记录？\n${r.model} · ${r.pid} · ${r.date}`)) return
+    try {
+      await api(`/api/records/${r.id}`, { method: 'DELETE' })
+      toast('已删除')
+      setHiddenDetail((list) => (list || []).filter((x) => x.id !== r.id))
+      await refreshAll()
+      reloadHidden()
+    } catch (e) {
+      toast(e.message, 'err')
+    }
+  }
+
+  /** 站长：一键清空目录 + 记录，重新收录 */
+  const resetCatalog = async () => {
+    if (!window.confirm('⚠️ 清空全部记录、题目目录与模型目录？\n（建议先使用「导出 JSON」备份全量数据。此操作不可恢复）')) return
+    try {
+      await api('/api/catalog/reset', { method: 'POST' })
+      toast('已清空，从零重新收录')
+      setHiddenDetail(null)
+      await refreshAll()
+      reloadHidden()
     } catch (e) {
       toast(e.message, 'err')
     }
@@ -264,8 +414,8 @@ export default function AdminPage() {
                     </td>
                     <td className="num">{recordCountByPid.get(p.pid) || 0}</td>
                     <td>
-                      <button className="btn small danger" onClick={() => deleteProblem(p)} disabled={(recordCountByPid.get(p.pid) || 0) > 0}>
-                        删除
+                      <button className="btn small danger" onClick={() => deleteProblem(p)}>
+                        移除
                       </button>
                     </td>
                   </tr>
@@ -276,13 +426,121 @@ export default function AdminPage() {
           </div>
         </div>
 
-        <ModelManager />
+        <div className="card" id="history-card">
+          <div className="card-head">
+            <h2>未收录历史数据</h2>
+            <span className="hint">导入的旧数据统一署名「全民制作人」；收录题目与模型后对应记录才显示</span>
+          </div>
+          {!hidden ? (
+            <div className="empty">加载中…</div>
+          ) : (
+            <>
+              <div className="callout" style={{ marginBottom: 'var(--sp-3)' }}>
+                当前有 <strong>{hidden.problems.length}</strong> 道未收录题目、<strong>{hidden.models.length}</strong> 个未收录模型，
+                <strong> {hidden.total ?? 0}</strong> 条记录暂不显示（游客/贡献者不可见）。
+                发布该题 / 收录该模型后，其下的记录即刻可见。
+              </div>
+              <div className="grid2" style={{ gap: 'var(--sp-4)', alignItems: 'start' }}>
+                <div>
+                  <div className="hint" style={{ marginBottom: 6 }}>未收录题目（点击发布收录）</div>
+                  <div className="table-scroll">
+                    <table className="data">
+                      <thead><tr><th>题号</th><th className="num">隐藏记录</th><th>操作</th></tr></thead>
+                      <tbody>
+                        {hidden.problems.map((g) => (
+                          <tr key={g.key} title={g.sample}>
+                            <td className="pid-link">{g.name}</td>
+                            <td className="num">{g.count}</td>
+                            <td><button className="btn small" onClick={() => collectProblem(g.name)}>发布该题</button></td>
+                          </tr>
+                        ))}
+                        {!hidden.problems.length && <tr><td colSpan={3}><div className="empty">全部题目已收录</div></td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div>
+                  <div className="hint" style={{ marginBottom: 6 }}>未收录模型（点击一键收录）</div>
+                  <div className="table-scroll">
+                    <table className="data">
+                      <thead><tr><th>模型</th><th className="num">隐藏记录</th><th>操作</th></tr></thead>
+                      <tbody>
+                        {hidden.models.map((g) => (
+                          <tr key={g.key}>
+                            <td style={{ fontWeight: 600 }}>{g.name}</td>
+                            <td className="num">{g.count}</td>
+                            <td>
+                              <button className="btn small" onClick={() => collectModel(g.name)}>收录</button>
+                              <button className="btn small danger" style={{ marginLeft: 6 }} onClick={() => purgeHiddenModel(g.name)}>删除记录</button>
+                            </td>
+                          </tr>
+                        ))}
+                        {!hidden.models.length && <tr><td colSpan={3}><div className="empty">全部模型已收录</div></td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              {isOwner && (
+                <div style={{ marginTop: 'var(--sp-4)', display: 'flex', justifyContent: 'flex-end', gap: 'var(--sp-2)' }}>
+                  <button className="btn small" onClick={toggleHiddenDetail}>
+                    {hiddenDetail ? '收起隐藏记录' : `查看 ${hidden.total ?? 0} 条隐藏记录明细`}
+                  </button>
+                  <button className="btn small danger" onClick={resetCatalog}>⚠ 清空并重新收录（站长）</button>
+                </div>
+              )}
+              {!isOwner && (hidden.total ?? 0) > 0 && (
+                <div style={{ marginTop: 'var(--sp-3)', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button className="btn small" onClick={toggleHiddenDetail}>
+                    {hiddenDetail ? '收起隐藏记录' : `查看 ${hidden.total} 条隐藏记录明细`}
+                  </button>
+                </div>
+              )}
+              {hiddenDetail && (
+                <div className="table-scroll" style={{ marginTop: 'var(--sp-3)' }}>
+                  <table className="data">
+                    <thead>
+                      <tr><th>模型</th><th>题目</th><th>日期</th><th>提供者</th><th>原因</th><th>操作</th></tr>
+                    </thead>
+                    <tbody>
+                      {hiddenDetail.map((r) => (
+                        <tr key={r.id}>
+                          <td style={{ fontWeight: 600 }}>{r.model}</td>
+                          <td>{r.pid}<span className="chain"> {r.title}</span></td>
+                          <td>{r.date}</td>
+                          <td>{providerCell(r)}</td>
+                          <td className="chain">
+                            {!data.problems?.[r.pid] ? '题目未收录' : ''}
+                            {!data.problems?.[r.pid] && !models.some((m) => m.name === r.model) ? ' + ' : ''}
+                            {!models.some((m) => m.name === r.model) ? '模型未收录' : ''}
+                          </td>
+                          <td className="actions">
+                            <button className="btn small danger" onClick={() => removeHiddenRecord(r)}>删除</button>
+                          </td>
+                        </tr>
+                      ))}
+                      {!hiddenDetail.length && <tr><td colSpan={6}><div className="empty">没有隐藏记录</div></td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <ModelManager onChanged={reloadHidden} />
 
         <footer className="foot">
           <Link to="/">← 返回总览</Link>
         </footer>
       </main>
-      {publishOpen && <PublishModal onClose={() => setPublishOpen(false)} />}
+      {publishOpen && (
+        <PublishModal
+          initialPid={collectPid}
+          onClose={() => { setPublishOpen(false); setCollectPid('') }}
+          onPublished={() => { reloadHidden(); refreshAll() }}
+        />
+      )}
     </>
   )
 }

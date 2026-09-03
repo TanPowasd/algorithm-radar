@@ -41,8 +41,8 @@ export default function ContributorsPage() {
 
         <div className="stats" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
           <div className="stat"><div className="s-label"><span className="tone-dot tone-accent" />贡献者人数</div><div className="s-value">{ordered.length}</div></div>
-          <div className="stat"><div className="s-label"><span className="tone-dot tone-green" />贡献总数（已审核）</div><div className="s-value">{totalContributions}</div></div>
-          <div className="stat"><div className="s-label"><span className="tone-dot tone-purple" />统计口径</div><div className="s-value" style={{ fontSize: 'var(--fs-lg)', paddingTop: 6 }}>已审核测评记录</div></div>
+          <div className="stat"><div className="s-label"><span className="tone-dot tone-green" />贡献总数（已收录）</div><div className="s-value">{totalContributions}</div></div>
+          <div className="stat"><div className="s-label"><span className="tone-dot tone-purple" />统计口径</div><div className="s-value" style={{ fontSize: 'var(--fs-lg)', paddingTop: 6 }}>题目与模型均已收录的记录</div></div>
         </div>
 
         <div className="card">

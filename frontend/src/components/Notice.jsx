@@ -27,8 +27,9 @@ export default function Notice() {
     <div className="notice">
       <div className="n-body">
         <span className="n-title">公告</span>
-        欢迎来到 AI vs 洛谷！提交测评请先选择<strong>已发布题目</strong>并如实填写 Agent 与 Token 来源（官方 API/套餐填「官方」）；
-        游客可浏览全部榜单并下载数据，提交测评需注册成为贡献者并等待站长审核。
+        欢迎来到 AI vs 洛谷！本站按「收录制」展示：只有题目与模型均被管理员收录的测评数据才计入统计；
+        历史数据统一署名「全民制作人」，收录对应题目/模型后自动显示。提交测评请选择<strong>已发布题目</strong>与<strong>已收录模型</strong>，
+        并如实填写 Agent 与 Token 来源（官方 API/套餐填「官方」）；游客可浏览全部榜单并下载数据。
       </div>
       <div className="n-actions">
         <button className="btn small ghost" onClick={dismissSession}>本次关闭</button>

@@ -122,9 +122,15 @@ async function main() {
     }
     console.log(`已从 ${file.split(/[\\/]/).pop()} 导入 ${imported.data.imported} 条测评记录（mode=${mode}）✓`);
 
-    // 3) 验证
+    // 3) 验证（v3.4 收录制：导入后题目/模型目录为空，游客可见 records 可能为 0；
+    //    站长需到审核台「未收录历史数据」发布题目、收录模型后数据才会显示）
     const check = await api("/api/data");
+    const exp = await api("/api/export");
     console.log(`当前游客可见：records=${(check.data.records || []).length} problems=${Object.keys(check.data.problems || {}).length} revision=${check.data.revision}`);
+    console.log(`库中全量（管理员导出口径）：records=${(exp.data.records || []).length} problems=${Object.keys(exp.data.problems || {}).length} models=${(exp.data.models || []).length}`);
+    if ((exp.data.records || []).length === 0) {
+        console.log("提示：未导入任何记录。若已导入但游客不可见，请登录站长 → 审核台 → 「未收录历史数据」中发布题目/收录模型。");
+    }
     console.log("种子完成 ✓");
 }
 

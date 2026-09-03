@@ -71,10 +71,15 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
   }, [data.records])
 
   const modelNames = useMemo(() => {
+    // 收录制：只能提交/编辑为已收录模型（未收录模型即使出现在历史记录里也不可选）
     const fromTable = models.map((m) => m.name)
-    const fromRecords = new Set((data.records || []).map((r) => r.model))
-    return [...new Set([...fromTable, ...fromRecords])].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
-  }, [models, data.records])
+    const sorted = [...fromTable].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+    // 编辑场景：若当前记录的模型不在目录（历史隐藏数据），仍显示为占位以便识别
+    if (isEdit && editRecord?.model && !fromTable.includes(editRecord.model)) {
+      return [{ name: editRecord.model, placeholder: true }, ...sorted]
+    }
+    return sorted.map((name) => ({ name }))
+  }, [models, data.records, isEdit, editRecord])
 
   const addCat = () => {
     const name = catInput.trim()
@@ -86,7 +91,9 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
   const submit = async (e) => {
     e.preventDefault()
     setError('')
-    if (!form.model.trim()) return setError('请填写 AI 名称')
+    const modelInCatalog = models.some((m) => m.name === form.model.trim())
+    if (!form.model.trim()) return setError('请选择已收录的 AI 模型')
+    if (!modelInCatalog) return setError(`模型「${form.model.trim()}」尚未收录：请先让管理员在「AI 模型管理」中添加`)
     if (!form.pid) return setError('请选择已发布的题目')
     if (form.difficulty === '' || form.difficulty === null) return setError('请选择难度')
     if (!form.submissions.length) return setError('至少需要一次提交记录')
@@ -133,9 +140,19 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
         </div>
 
         <div className="grid3">
-          <Field label="AI 模型 *">
-            <input list="dl-models" value={form.model} onChange={(e) => set({ model: e.target.value })} placeholder="如 glm-5.3" />
-            <datalist id="dl-models">{modelNames.map((m) => <option key={m} value={m} />)}</datalist>
+          <Field label="AI 模型（已收录）*">
+            <input list="dl-models" value={form.model} onChange={(e) => set({ model: e.target.value })} placeholder="选择已收录模型…"
+              onInput={(e) => { /* 允许清空；提交时校验 */ }} />
+            <datalist id="dl-models">
+              {modelNames.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.placeholder ? '（当前模型未收录，收录后恢复显示）' : ''}
+                </option>
+              ))}
+            </datalist>
+            <span className="chain" style={{ marginTop: 2 }}>
+              只能选择「AI 模型管理」中已收录的模型；历史记录模型由管理员收录后自动显示。
+            </span>
           </Field>
           <Field label="版本 / 策略">
             <input list="dl-variants" value={form.variant} onChange={(e) => set({ variant: e.target.value })} placeholder="可留空" />

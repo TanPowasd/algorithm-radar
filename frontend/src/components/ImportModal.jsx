@@ -56,7 +56,8 @@ export default function ImportModal({ onClose }) {
           <button type="button" className="icon-btn close" onClick={onClose}>✕</button>
         </div>
         <div className="callout">
-          支持旧站「AI vs 洛谷 / 算法雷达站」导出的 JSON（含 records/problems）。历史记录里引用了但目录中不存在的题目会按记录自带信息自动补齐。
+          导入只写入测评记录；<strong>题目与模型目录不会自动填充</strong>——请到审核台「未收录历史数据」中
+          发布题目、收录模型后，对应记录才会显示给访客。历史记录统一署名「全民制作人」。
         </div>
         <div className="field">
           <label>导出 JSON 文件</label>
@@ -67,7 +68,7 @@ export default function ImportModal({ onClose }) {
           <label>导入方式</label>
           <select value={mode} onChange={(e) => setMode(e.target.value)}>
             <option value="merge">合并：按 id 合并，updatedAt 较新者胜（推荐）</option>
-            <option value="replace">覆盖：清空现有测评与题目后整体导入</option>
+            <option value="replace">覆盖：清空现有测评记录、题目目录与模型目录后整体导入</option>
           </select>
         </div>
         {error && <div className="form-error">{error}</div>}

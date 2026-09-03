@@ -1,6 +1,10 @@
 /**
  * 服务端权威存储（D1/SQLite）：记录与题目的读写、审核流程、题目发布制、
  * revision 单调递增、导入导出、AI 模型目录。写操作走 db.batch（原子事务）。
+ *
+ * v3.4「收录制」口径：统计展示只纳入「题目已收录（problems 表）且模型已收录
+ * （models 表）」的已审核记录；其余记录保留入库但一律隐藏（不含游客导出的公开数据，
+ * 但含管理员全量导出）。旧数据由管理员重新收录题目/模型后逐步可见。
  */
 import type { ProblemEntry, Rec, Sub } from "./util";
 import {
@@ -76,7 +80,7 @@ const bumpMetaStmts = (db: D1Database): D1PreparedStatement[] => [
     db.prepare("UPDATE meta SET value = ?1 WHERE key = 'updatedAt'").bind(nowIso()),
 ];
 
-async function getRevision(db: D1Database): Promise<number> {
+export async function getRevision(db: D1Database): Promise<number> {
     const row = await db.prepare("SELECT CAST(value AS INTEGER) AS n FROM meta WHERE key = 'revision'").first<{ n: number }>();
     return row?.n ?? 0;
 }
@@ -88,7 +92,39 @@ async function getUpdatedAt(db: D1Database): Promise<string> {
 
 // ---------------------------------------------------------------- 快照
 
-export async function snapshot(db: D1Database, username: string | null, adminLike: boolean): Promise<Snapshot> {
+export interface SnapshotOpts {
+    /** 记录可见性过滤：true=全量（管理员导出）；false=收录制可见（已审核且题目/模型均已收录） */
+    all?: boolean;
+}
+
+/**
+ * 可见记录：status=approved 且题目在 problems 目录、模型在 models 目录。
+ * 收录制口径统一作用于前台/统计/公开导出/隐藏原因判断（单处实现）。
+ */
+export function isRecordVisible(r: Pick<Rec, "pid" | "model" | "status">, problems: Set<string>, models: Set<string>): boolean {
+    return r.status === "approved" && problems.has(r.pid) && models.has(r.model);
+}
+
+export async function loadVisibleSets(db: D1Database): Promise<{ problems: Set<string>; models: Set<string> }> {
+    const [probs, mods] = await Promise.all([
+        db.prepare("SELECT pid FROM problems").all<{ pid: string }>(),
+        db.prepare("SELECT name FROM models").all<{ name: string }>(),
+    ]);
+    const problems = new Set((probs.results || []).map((r) => r.pid));
+    const models = new Set((mods.results || []).map((r) => r.name));
+    return { problems, models };
+}
+
+export async function loadCatalog(db: D1Database): Promise<{ problemPids: string[]; modelNames: string[] }> {
+    const [visible, mods] = await Promise.all([
+        loadVisibleSets(db),
+        db.prepare("SELECT name FROM models").all<{ name: string }>(),
+    ]);
+    return { problemPids: [...visible.problems], modelNames: (mods.results || []).map((r) => r.name) };
+}
+
+export async function snapshot(db: D1Database, username: string | null, adminLike: boolean, opts: SnapshotOpts = {}): Promise<Snapshot> {
+    // 查询范围：管理员=全部行（待审全部可见）；登录用户=已通过+自己的待审；游客=仅已通过
     let recStmt: D1PreparedStatement;
     if (adminLike) {
         recStmt = db.prepare("SELECT * FROM records ORDER BY created_at, id");
@@ -108,7 +144,18 @@ export async function snapshot(db: D1Database, username: string | null, adminLik
         const p = mapProblem(row);
         problems[p.pid] = p;
     }
-    return { revision, updatedAt, records: (recs.results || []).map(mapRec), problems };
+    let records = (recs.results || []).map(mapRec);
+    if (!opts.all) {
+        // 收录制过滤（只对 approved 生效）：pending 走审核流程可见性
+        const { problems: pset, models: mset } = await loadVisibleSets(db);
+        records = records.filter((r) => {
+            if (r.status === "pending") {
+                return adminLike || (username !== null && r.author === username);
+            }
+            return isRecordVisible(r, pset, mset);
+        });
+    }
+    return { revision, updatedAt, records, problems };
 }
 
 // ---------------------------------------------------------------- 记录操作
@@ -144,6 +191,13 @@ function mergedProblemFromRecord(prev: ProblemEntry, rec: Rec, raw: any): Proble
 
 export interface AddRecordResult { rec: Rec; revision: number }
 
+async function requirePublishedModel(db: D1Database, model: string) {
+    const row = await db.prepare("SELECT id FROM models WHERE name = ?1").bind(model).first();
+    if (!row) {
+        throw badRequest(`模型 ${model} 尚未收录：请让管理员先在「AI 模型管理」中添加该模型，再提交测试`);
+    }
+}
+
 export async function addRecord(db: D1Database, raw: any, user: { uid: number; username: string; isAdminLike: boolean }): Promise<AddRecordResult> {
     const status = user.isAdminLike ? "approved" : "pending";
     const rec = sanitizeRecord(raw, null, status);
@@ -157,6 +211,7 @@ export async function addRecord(db: D1Database, raw: any, user: { uid: number; u
     const countRow = await db.prepare("SELECT COUNT(*) AS n FROM records").first<{ n: number }>();
     if ((countRow?.n ?? 0) >= MAX_RECORDS) throw badRequest(`记录数量已达上限（${MAX_RECORDS}）`);
     await requirePublished(db, rec.pid);
+    await requirePublishedModel(db, rec.model);
     const prev = await findProblem(db, rec.pid);
     const stmts: D1PreparedStatement[] = [insertRecStmt(db, rec)];
     if (prev) stmts.push(saveProblemStmt(db, mergedProblemFromRecord(prev, rec, raw)));
@@ -171,6 +226,7 @@ export async function updateRecord(db: D1Database, rid: string, raw: any): Promi
     const existing = mapRec(row);
     const rec = sanitizeRecord(raw, existing, existing.status);
     await requirePublished(db, rec.pid);
+    await requirePublishedModel(db, rec.model);
     const prev = await findProblem(db, rec.pid);
     const stmts: D1PreparedStatement[] = [updateRecStmt(db, rec)];
     if (prev) stmts.push(saveProblemStmt(db, mergedProblemFromRecord(prev, rec, raw)));
@@ -259,15 +315,12 @@ export async function putProblem(db: D1Database, pid: string, info: any): Promis
 export async function deleteProblem(db: D1Database, pid: string): Promise<number> {
     const key = String(pid ?? "").trim().toUpperCase();
     if (!(await findProblem(db, key))) throw badRequest(`题目 ${key} 不存在（可能已被删除）`);
-    const used = await db.prepare("SELECT COUNT(*) AS n FROM records WHERE pid = ?1").bind(key).first<{ n: number }>();
-    if ((used?.n ?? 0) > 0) {
-        throw badRequest(`题目 ${key} 下仍有 ${used!.n} 条测试记录，请先删除这些记录再移除题目`);
-    }
+    // 只移出目录：该题下的记录保留入库、暂时隐藏（可在「历史数据收录」中重新收录该题找回）
     await db.batch([db.prepare("DELETE FROM problems WHERE pid = ?1").bind(key), ...bumpMetaStmts(db)]);
     return getRevision(db);
 }
 
-// ---------------------------------------------------------------- AI 模型目录
+// ---------------------------------------------------------------- AI 模型目录（收录制下即“已收录模型”）
 
 export interface ModelView { id: number; name: string; vendor: string; note: string; createdAt: string }
 
@@ -286,15 +339,22 @@ function checkModelFields(name: string, vendor: string, note: string) {
     if (note.length > 300) throw badRequest("备注过长（上限 300 字）");
 }
 
+/** 新建/改名一律重写相关记录：目录只负责“收录”，历史记录不因改名丢失 */
+export function renameRecordsModel(db: D1Database, from: string, to: string): D1PreparedStatement {
+    return db.prepare("UPDATE records SET model = ?1, updated_at = ?2 WHERE model = ?3")
+        .bind(to, nowIso(), from);
+}
+
 export async function createModel(db: D1Database, name: string, vendor: string, note: string): Promise<ModelView> {
     name = (name || "").trim(); vendor = (vendor || "").trim(); note = (note || "").trim();
     checkModelFields(name, vendor, note);
     const dup = await db.prepare("SELECT id FROM models WHERE name = ?1").bind(name).first();
     if (dup) throw badRequest(`模型 ${name} 已存在`);
+    // 只登记目录：库中同名历史记录（如有）即刻满足“模型已收录”，无需改记录
     await db.prepare("INSERT INTO models(name, vendor, note, created_at) VALUES (?1, ?2, ?3, ?4)")
         .bind(name, vendor, note, new Date().toISOString()).run();
-    const row = await db.prepare("SELECT id, name, vendor, note FROM models WHERE name = ?1").bind(name).first<any>();
-    return { id: row.id, name: row.name, vendor: row.vendor, note: row.note, createdAt: "" };
+    const row = await db.prepare("SELECT id, name, vendor, note, created_at FROM models WHERE name = ?1").bind(name).first<any>();
+    return { id: row.id, name: row.name, vendor: row.vendor ?? "", note: row.note ?? "", createdAt: row.created_at };
 }
 
 async function findModelById(db: D1Database, id: number): Promise<ModelView | null> {
@@ -310,10 +370,12 @@ export async function updateModel(db: D1Database, id: number, name: string, vend
     if (name !== prev.name) {
         const dup = await db.prepare("SELECT id FROM models WHERE name = ?1").bind(name).first();
         if (dup) throw badRequest(`模型 ${name} 已存在`);
-        const used = await db.prepare("SELECT COUNT(*) AS n FROM records WHERE model = ?1").bind(prev.name).first<{ n: number }>();
-        if ((used?.n ?? 0) > 0) {
-            throw badRequest(`模型 ${prev.name} 已有 ${used!.n} 条测评记录，不能改名`);
-        }
+        // 改名 = 换一个“收录名”，历史记录跟着改；同名历史记录并入（写入后由收录判断继续可见）
+        await db.batch([
+            db.prepare("UPDATE models SET name = ?1, vendor = ?2, note = ?3 WHERE id = ?4").bind(name, vendor, note, id),
+            renameRecordsModel(db, prev.name, name),
+        ]);
+        return (await findModelById(db, id))!;
     }
     await db.prepare("UPDATE models SET name = ?1, vendor = ?2, note = ?3 WHERE id = ?4").bind(name, vendor, note, id).run();
     return (await findModelById(db, id))!;
@@ -322,24 +384,60 @@ export async function updateModel(db: D1Database, id: number, name: string, vend
 export async function deleteModel(db: D1Database, id: number): Promise<void> {
     const prev = await findModelById(db, id);
     if (!prev) throw notFound("模型不存在");
-    const used = await db.prepare("SELECT COUNT(*) AS n FROM records WHERE model = ?1").bind(prev.name).first<{ n: number }>();
-    if ((used?.n ?? 0) > 0) {
-        throw badRequest(`模型 ${prev.name} 下仍有 ${used!.n} 条测评记录，无法删除`);
-    }
     await db.prepare("DELETE FROM models WHERE id = ?1").bind(id).run();
+    // 注意：不删 records —— 仅目录移除后，相关记录回到“隐藏（模型未收录）”，数据保留
 }
 
-/** 导入历史数据后，把出现过的模型名登记进模型目录（管理员可后续补全厂商/备注） */
-async function seedModelsFromRecords(db: D1Database): Promise<void> {
-    await db.prepare(
-        "INSERT OR IGNORE INTO models(name, vendor, note, created_at) SELECT model, '', '', ?1 FROM records GROUP BY model")
-        .bind(new Date().toISOString()).run();
+/** 重写一条历史记录（收录题目/改名模型时保持“已收录”且带最新 author/审计字段） */
+function retouchRecordStmt(db: D1Database, r: Rec): D1PreparedStatement {
+    return updateRecStmt(db, { ...r, updatedAt: nowIso() });
+}
+
+/** 隐藏记录分组查询：approved 记录中 pid/model 未进目录的分组计数与样本（收录管理页用）
+ *  problems/models 分组按各自维度聚合（同一记录可能双计），total 为去重后的隐藏记录数。 */
+export interface HiddenGroup { key: string; kind: "problem" | "model"; name: string; count: number; sample: string }
+
+export async function listHiddenGroups(db: D1Database): Promise<{ problems: HiddenGroup[]; models: HiddenGroup[]; total: number }> {
+    const [recs, probs, mods] = await Promise.all([
+        db.prepare("SELECT pid, title, model, date, author FROM records WHERE status = 'approved'").all<any>(),
+        db.prepare("SELECT pid FROM problems").all<{ pid: string }>(),
+        db.prepare("SELECT name FROM models").all<{ name: string }>(),
+    ]);
+    const probSet = new Set((probs.results || []).map((r) => r.pid));
+    const modelSet = new Set((mods.results || []).map((r) => r.name));
+    const pCount = new Map<string, number>();
+    const mCount = new Map<string, number>();
+    const pSample = new Map<string, string>();
+    const mSample = new Map<string, string>();
+    let total = 0;
+    for (const r of recs.results || []) {
+        const missingP = !probSet.has(r.pid);
+        const missingM = !modelSet.has(r.model);
+        if (!missingP && !missingM) continue;
+        total += 1;
+        if (missingP) {
+            pCount.set(r.pid, (pCount.get(r.pid) || 0) + 1);
+            if (!pSample.has(r.pid)) pSample.set(r.pid, `${r.title || r.pid} · ${r.model} · ${r.date}`);
+        }
+        if (missingM) {
+            mCount.set(r.model, (mCount.get(r.model) || 0) + 1);
+            if (!mSample.has(r.model)) mSample.set(r.model, `${r.pid} · ${r.date}`);
+        }
+    }
+    const problems: HiddenGroup[] = [...pCount.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([pid, n]) => ({ key: "p:" + pid, kind: "problem", name: pid, count: n, sample: pSample.get(pid) || "" }));
+    const models: HiddenGroup[] = [...mCount.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([name, n]) => ({ key: "m:" + name, kind: "model", name, count: n, sample: mSample.get(name) || "" }));
+    return { problems, models, total };
 }
 
 // ---------------------------------------------------------------- 导入导出
 
 export interface ImportResult { imported: number }
 
+/** 收录制导入：只导入记录本身；题目/模型目录一律由管理员重新「收录」后才显示对应旧数据 */
 export async function importBundle(db: D1Database, raw: any, mode: string): Promise<ImportResult> {
     let root = raw && typeof raw === "object" ? raw : {};
     if (root.data && typeof root.data === "object") root = root.data;
@@ -354,62 +452,78 @@ export async function importBundle(db: D1Database, raw: any, mode: string): Prom
             incomingRecords.push(rec);
         }
     }
-    const incomingProblems = new Map<string, ProblemEntry>();
-    const probs = root.problems && typeof root.problems === "object" ? root.problems : {};
-    let taken = 0;
-    for (const [pid, info] of Object.entries(probs)) {
-        if (taken++ >= MAX_PROBLEMS) break;
-        const p = sanitizeProblem(pid, info);
-        if (p) incomingProblems.set(p.pid, p);
-    }
-    // 兼容旧数据：记录引用了目录里没有的题号时，按记录自带信息补一个题目条目
-    for (const rec of incomingRecords) {
-        if (!incomingProblems.has(rec.pid)) {
-            const p = sanitizeProblem(rec.pid, {
-                title: rec.title ?? "", difficulty: rec.difficulty,
-                categories: rec.categories ?? [], manual: true,
-            });
-            if (p) incomingProblems.set(p.pid, p);
-        }
-    }
     const incomingRevision = Math.max(0, Math.floor(Number(root.revision) || 0));
     const replace = mode === "replace";
     if (!replace && mode !== "merge") throw badRequest("mode 只能是 replace 或 merge");
 
     if (replace) {
+        // 覆盖 = 清空 records + problems + models（题目/模型目录一并重建）
         const clear: D1PreparedStatement[] = [
             db.prepare("DELETE FROM records"),
             db.prepare("DELETE FROM problems"),
+            db.prepare("DELETE FROM models"),
         ];
         const inserts: D1PreparedStatement[] = incomingRecords.map((r) => insertRecStmt(db, r));
-        for (const p of incomingProblems.values()) inserts.push(saveProblemStmt(db, p));
-        // 分批（每批留出 bumpMeta 的位置），保证整体原子性由最后一并完成：
-        // D1 batch 是事务，但单批有语句数上限，这里先清库再分批插入会破坏原子性，
-        // 因此把全部语句合并为一个批次（数据量远低于 D1 批次上限）
         await db.batch([...clear, ...inserts,
             db.prepare("UPDATE meta SET value = ?1 WHERE key = 'revision'").bind(String(incomingRevision)),
             db.prepare("INSERT OR IGNORE INTO meta(key, value) VALUES ('updatedAt', '')"),
             db.prepare("UPDATE meta SET value = ?1 WHERE key = 'updatedAt'").bind(nowIso())]);
     } else {
+        // merge：只按 id 合并记录；目录不动（已收录的继续收录，未收录的历史数据依然隐藏）
         const stmts: D1PreparedStatement[] = [];
-        let merged = 0;
         for (const rec of incomingRecords) {
             const row = await db.prepare("SELECT updated_at FROM records WHERE id = ?1").bind(rec.id).first<{ updated_at: string }>();
             if (!row || (rec.updatedAt ?? "") > (row.updated_at ?? "")) {
                 stmts.push(row ? updateRecStmt(db, rec) : insertRecStmt(db, rec));
-                merged++;
             }
-        }
-        for (const p of incomingProblems.values()) {
-            if (!(await findProblem(db, p.pid))) stmts.push(saveProblemStmt(db, p));
         }
         for (let i = 0; i < stmts.length; i += 90) {
             await db.batch(stmts.slice(i, i + 90));
         }
         await db.batch(bumpMetaStmts(db));
     }
-    await seedModelsFromRecords(db);
     return { imported: incomingRecords.length };
+}
+
+/** 管理员全量导出（含隐藏历史数据与完整 problems/models），供备份/迁移 */
+export async function exportBundle(db: D1Database): Promise<Snapshot & { models: ModelView[] }> {
+    const snap = await snapshot(db, null, true, { all: true });
+    return { ...snap, models: await listModels(db) };
+}
+
+/** 全部隐藏（approved 但题目或模型未收录）记录的明细，收录管理页“查看隐藏记录”用 */
+export async function listHiddenRecords(db: D1Database): Promise<Rec[]> {
+    const [recs, probs, mods] = await Promise.all([
+        db.prepare("SELECT * FROM records WHERE status = 'approved' ORDER BY date DESC, created_at DESC").all<any>(),
+        db.prepare("SELECT pid FROM problems").all<{ pid: string }>(),
+        db.prepare("SELECT name FROM models").all<{ name: string }>(),
+    ]);
+    const probSet = new Set((probs.results || []).map((r) => r.pid));
+    const modelSet = new Set((mods.results || []).map((r) => r.name));
+    return (recs.results || [])
+        .map(mapRec)
+        .filter((r) => !isRecordVisible(r, probSet, modelSet));
+}
+
+/** 按模型彻底删除 approved 隐藏记录（收录管理页“删除隐藏”用）；返回删除数 */
+export async function purgeRecordsByModel(db: D1Database, model: string): Promise<number> {
+    const res = await db.batch([
+        db.prepare("DELETE FROM records WHERE model = ?1 AND status = 'approved'").bind(model),
+        ...bumpMetaStmts(db),
+    ]);
+    return res[0].meta?.changes ?? 0;
+}
+
+/** 一键清空收录目录（problems + models + records），从头重新收录（仅站长，需二次确认） */
+export async function resetCatalog(db: D1Database): Promise<void> {
+    await db.batch([
+        db.prepare("DELETE FROM records"),
+        db.prepare("DELETE FROM problems"),
+        db.prepare("DELETE FROM models"),
+        db.prepare("UPDATE meta SET value = '0' WHERE key = 'revision'"),
+        db.prepare("INSERT OR IGNORE INTO meta(key, value) VALUES ('updatedAt', '')"),
+        db.prepare("UPDATE meta SET value = ?1 WHERE key = 'updatedAt'").bind(nowIso()),
+    ]);
 }
 
 // ---------------------------------------------------------------- 公开导出 CSV

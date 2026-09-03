@@ -5,10 +5,10 @@ import { PID_RE } from '../aggregate'
 
 const DIFFS = ['', '入门', '普及−', '普及/提高−', '普及+/提高', '提高+/省选−', '省选/NOI−', 'NOI/NOI+/CTSC']
 
-/** 发布新题：输题号自动抓洛谷补全，失败可手动填写后照常发布 */
-export default function PublishModal({ onClose }) {
+/** 发布新题：输题号自动抓洛谷补全，失败可手动填写后照常发布。initialPid 用于“未收录历史数据”一键跳转发布 */
+export default function PublishModal({ onClose, initialPid, onPublished }) {
   const { toast, refreshAll } = useApp()
-  const [form, setForm] = useState({ pid: '', title: '', difficulty: '', tags: '', prompt: '', manual: false })
+  const [form, setForm] = useState({ pid: (initialPid || '').toUpperCase(), title: '', difficulty: '', tags: '', prompt: '', manual: false })
   const [fetchState, setFetchState] = useState(null) // {kind, text}
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -56,6 +56,7 @@ export default function PublishModal({ onClose }) {
       })
       toast(`题目 ${pid} 已发布`)
       await refreshAll()
+      onPublished && onPublished()
       onClose()
     } catch (err) {
       setError(err.message)
