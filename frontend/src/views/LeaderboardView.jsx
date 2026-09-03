@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useApp } from '../state'
-import { isApproved, leaderboard, THINKING_LABELS, seriesKey } from '../aggregate'
+import { isApproved, leaderboard, THINKING_LABELS, seriesKey, filterByModels } from '../aggregate'
 
 const METRICS = [
   { key: 'ac', label: '最终 AC 数' },
@@ -17,20 +17,20 @@ function fmt(metric, row) {
 }
 
 export default function LeaderboardView({ onOpenDetail }) {
-  const { data } = useApp()
+  const { data, focusModels } = useApp()
   const [metric, setMetric] = useState('ac')
   const [expanded, setExpanded] = useState(null)
 
   const rows = useMemo(() => {
-    const list = leaderboard((data.records || []).filter(isApproved))
+    const list = leaderboard(filterByModels((data.records || []).filter(isApproved), focusModels))
     list.sort((a, b) => (b[metric] ?? -1) - (a[metric] ?? -1) || b.ac - a.ac)
     return list
-  }, [data.records, metric])
+  }, [data.records, metric, focusModels])
 
   const detail = useMemo(() => {
     if (!expanded) return null
     // 模型 × 思考等级明细
-    const recs = (data.records || []).filter((r) => isApproved(r) && seriesKey(r) === expanded)
+    const recs = filterByModels((data.records || []).filter((r) => isApproved(r) && seriesKey(r) === expanded), focusModels)
     const byThinking = new Map()
     for (const r of recs) {
       if (!byThinking.has(r.thinking)) byThinking.set(r.thinking, { total: 0, ac: 0 })

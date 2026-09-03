@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../state'
 import {
   applyFilters, difficultyName, lastSub, subBadgeClass, seriesKey, seriesList,
-  THINKING_LABELS, isPending, providerLabel, reviewerLabel,
+  THINKING_LABELS, isPending, providerLabel, reviewerLabel, filterByModels,
 } from '../aggregate'
 
 const PAGE_SIZE = 50
@@ -24,12 +24,13 @@ const COLUMNS = [
 function diffClass(d) { return `d-${d ?? 0}` }
 
 export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
-  const { data, nicknameOf, nameByUid } = useApp()
+  const { data, nicknameOf, nameByUid, focusModels } = useApp()
   const [filters, setFilters] = useState({ keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '' })
   const [sort, setSort] = useState({ key: 'date', dir: 'desc' })
   const [page, setPage] = useState(0)
 
-  const approved = useMemo(() => (data.records || []).filter((r) => !isPending(r)), [data.records])
+  const approved = useMemo(() => filterByModels(
+    (data.records || []).filter((r) => !isPending(r)), focusModels), [data.records, focusModels])
   const filtered = useMemo(() => applyFilters(approved, filters), [approved, filters])
 
   const sorted = useMemo(() => {
@@ -58,6 +59,13 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
   const pageRows = sorted.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE)
 
   const seriesOpts = seriesList(approved)
+  // 全局模型选择变化后，若已选筛选模型不在候选中则自动清空该筛选项
+  useEffect(() => {
+    if (filters.series && !seriesOpts.includes(filters.series)) {
+      setFilters((f) => ({ ...f, series: '' }))
+    }
+  }, [seriesOpts.join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const categoryOpts = useMemo(() => {
     const set = new Set()
     approved.forEach((r) => (r.categories || []).forEach((c) => set.add(c)))

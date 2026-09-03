@@ -27,6 +27,10 @@ export const isPassed = (r) => lastSub(r)?.result === 'AC'
 export const isFirstPassed = (r) => firstSub(r)?.result === 'AC'
 export const answered = (r) => (r.submissions && r.submissions.length > 0)
 
+/** 按“已选模型集合”过滤记录；set 为空/undefined 表示不过滤（全部） */
+export const filterByModels = (records, focus) =>
+  (!focus || focus.size === 0) ? records : records.filter((r) => focus.has(seriesKey(r)))
+
 export const roundScores = (r) =>
   (r.submissions || []).map((s) => s.score).filter((s) => s !== null && s !== undefined)
 

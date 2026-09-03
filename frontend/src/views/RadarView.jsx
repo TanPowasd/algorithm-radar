@@ -4,6 +4,7 @@ import { makeChart, themeColors } from '../components/charts'
 import SeriesLegend from '../components/SeriesLegend'
 import {
   axisStats, CATEGORY_ORDER, difficultyName, isApproved, seriesColorMap, seriesKey, seriesList,
+  filterByModels,
 } from '../aggregate'
 
 const METRICS = [
@@ -18,7 +19,7 @@ const DIMS = [
 ]
 
 export default function RadarView() {
-  const { data, theme } = useApp()
+  const { data, theme, focusModels } = useApp()
   const [metric, setMetric] = useState('final')
   const [dim, setDim] = useState('category')
   const [problem, setProblem] = useState('')
@@ -26,7 +27,8 @@ export default function RadarView() {
   const canvasRef = useRef(null)
   const chartRef = useRef(null)
 
-  const approved = useMemo(() => (data.records || []).filter(isApproved), [data.records])
+  const approved = useMemo(() => filterByModels(
+    (data.records || []).filter(isApproved), focusModels), [data.records, focusModels])
   const series = useMemo(() => seriesList(approved), [approved])
   const colorMap = useMemo(() => seriesColorMap(approved), [approved])
   const problemOptions = useMemo(() => {

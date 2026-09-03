@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '../state'
 import { makeChart, themeColors } from '../components/charts'
 import SeriesLegend from '../components/SeriesLegend'
-import { isApproved, metricScore, seriesColorMap, seriesKey, seriesList } from '../aggregate'
+import { isApproved, metricScore, seriesColorMap, seriesKey, seriesList, filterByModels } from '../aggregate'
 
 const METRICS = [
   { key: 'first', label: '首轮分' },
@@ -11,13 +11,14 @@ const METRICS = [
 ]
 
 export default function TrendView() {
-  const { data, theme } = useApp()
+  const { data, theme, focusModels } = useApp()
   const [metric, setMetric] = useState('avgscore')
   const [visible, setVisible] = useState(null)
   const canvasRef = useRef(null)
   const chartRef = useRef(null)
 
-  const approved = useMemo(() => (data.records || []).filter(isApproved), [data.records])
+  const approved = useMemo(() => filterByModels(
+    (data.records || []).filter(isApproved), focusModels), [data.records, focusModels])
   const series = useMemo(() => seriesList(approved), [approved])
   const colorMap = useMemo(() => seriesColorMap(approved), [approved])
 

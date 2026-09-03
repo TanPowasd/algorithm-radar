@@ -322,6 +322,22 @@ tr.sum-row td { font-weight: 650; background: var(--surface-2); }
 
 /* 柱状图忽略题 chips */
 .bar-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--sp-2); align-items: center; }
+
+/* ---------------- 模型多选查看器 ---------------- */
+.filter-card { padding-top: var(--sp-3); padding-bottom: var(--sp-3); }
+.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--sp-2); align-items: center; }
+.fchip {
+  appearance: none; font-family: inherit; cursor: pointer;
+  background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border);
+  border-radius: var(--r-pill); font-size: var(--fs-xs); padding: 3px 12px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.fchip:hover { color: var(--text); border-color: var(--accent); }
+.fchip.on {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  font-weight: 600;
+}
+
 .bar-chip {
   appearance: none; font-family: inherit; cursor: pointer;
   background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border);

@@ -3,6 +3,7 @@ import { api } from './api/client'
 
 const LS_CACHE = 'radar.cache.v3'
 const LS_THEME = 'radar.theme'
+const LS_FOCUS = 'radar.focusModels'
 
 const AppContext = createContext(null)
 
@@ -31,6 +32,16 @@ export function AppProvider({ children }) {
   const [offline, setOffline] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [theme, setTheme] = useState(() => localStorage.getItem(LS_THEME) || 'dark')
+  // 全局“只看这些模型”：Set（空/无 = 全部模型都看）
+  const [focusModels, setFocusModels] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LS_FOCUS)
+      const arr = raw ? JSON.parse(raw) : []
+      return Array.isArray(arr) && arr.length ? new Set(arr) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
   const [toasts, setToasts] = useState([])
   const toastSeq = useRef(1)
 
@@ -115,6 +126,25 @@ export function AppProvider({ children }) {
     setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
   }, [])
 
+  /** 聚焦某模型（加入/移出选择集）；选择集为空 = 全部 */
+  const toggleFocusModel = useCallback((name) => {
+    setFocusModels((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }, [])
+
+  /** 只看指定模型（空数组 = 全部） */
+  const focusOnly = useCallback((names) => {
+    setFocusModels(new Set(Array.isArray(names) ? names : []))
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem(LS_FOCUS, JSON.stringify([...focusModels]))
+  }, [focusModels])
+
   const value = useMemo(() => ({
     session,
     data,
@@ -125,6 +155,9 @@ export function AppProvider({ children }) {
     offline,
     loaded,
     theme,
+    focusModels,
+    toggleFocusModel,
+    focusOnly,
     toasts,
     toast,
     toggleTheme,
@@ -136,7 +169,7 @@ export function AppProvider({ children }) {
     isOwner: session.role === 'owner',
     isAdmin: session.role === 'admin' || session.role === 'owner',
     isContributor: session.role === 'contributor' || session.role === 'admin' || session.role === 'owner',
-  }), [session, data, models, nicknames, nicknameOf, nameByUid, offline, loaded, theme, toasts, toast, toggleTheme, refreshAll, refreshSession, refreshData, refreshModels, refreshNicknames])
+  }), [session, data, models, nicknames, nicknameOf, nameByUid, offline, loaded, theme, focusModels, toggleFocusModel, focusOnly, toasts, toast, toggleTheme, refreshAll, refreshSession, refreshData, refreshModels, refreshNicknames])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }

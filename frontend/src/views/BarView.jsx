@@ -3,6 +3,7 @@ import { useApp } from '../state'
 import { makeChart, themeColors } from '../components/charts'
 import {
   isApproved, roundsAvg, seriesKey, seriesList, THINKING_LEVELS, THINKING_LABELS,
+  filterByModels,
 } from '../aggregate'
 
 const BAR_MIN_SAMPLES = 5
@@ -51,7 +52,7 @@ const barTopLabel = {
 }
 
 export default function BarView() {
-  const { data, theme } = useApp()
+  const { data, theme, focusModels } = useApp()
   const [excluded, setExcluded] = useState(loadExcluded)
   const canvasRef = useRef(null)
   const chartRef = useRef(null)
@@ -63,7 +64,8 @@ export default function BarView() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  const approved = useMemo(() => (data.records || []).filter(isApproved), [data.records])
+  const approved = useMemo(() => filterByModels(
+    (data.records || []).filter(isApproved), focusModels), [data.records, focusModels])
   const combos = useMemo(() => {
     // 模型 × 思考等级，均分降序，n≥5 门槛（排除题后重算）
     const list = []

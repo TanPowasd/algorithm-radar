@@ -3,6 +3,7 @@ import { useApp } from '../state'
 import Topbar from '../components/Topbar'
 import Notice from '../components/Notice'
 import StatsBar from '../components/StatsBar'
+import ModelFilter from '../components/ModelFilter'
 import ViewTabs from '../components/ViewTabs'
 import MatrixView from '../views/MatrixView'
 import RadarView from '../views/RadarView'
@@ -54,6 +55,7 @@ export default function HomePage() {
       <main className="layout">
         <Notice />
         <StatsBar />
+        <ModelFilter />
 
         <div className="card">
           <div className="card-head" style={{ marginBottom: 0 }}>

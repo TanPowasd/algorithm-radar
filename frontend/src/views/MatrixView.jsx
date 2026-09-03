@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useApp } from '../state'
 import {
   difficultyName, isApproved, isPassed, matrixCell, metricScore, seriesKey, seriesList,
-  scoreTierClass,
+  scoreTierClass, filterByModels,
 } from '../aggregate'
 
 const MODES = [
@@ -12,10 +12,11 @@ const MODES = [
 ]
 
 export default function MatrixView({ onOpenDetail }) {
-  const { data } = useApp()
+  const { data, focusModels } = useApp()
   const [mode, setMode] = useState('score')
 
-  const approved = useMemo(() => (data.records || []).filter(isApproved), [data.records])
+  const approved = useMemo(() => filterByModels(
+    (data.records || []).filter(isApproved), focusModels), [data.records, focusModels])
   const series = useMemo(() => seriesList(approved), [approved])
   const problems = useMemo(() => {
     const list = Object.values(data.problems || {})
