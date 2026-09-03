@@ -33,6 +33,9 @@ export function ensureSchema(db: D1Database): Promise<void> {
             // 迁移 v3.3：users.password_version（改密后旧会话失效）
             await ensureColumn(db, "users", "password_version",
                 "ALTER TABLE users ADD COLUMN password_version INTEGER NOT NULL DEFAULT 0");
+            // 迁移 v3.5：records.deleted_at（软删除回收站；非空 = 在回收站）
+            await ensureColumn(db, "records", "deleted_at",
+                "ALTER TABLE records ADD COLUMN deleted_at TEXT");
         })().catch((e) => {
             ready = null; // 失败允许下次重试
             throw e;

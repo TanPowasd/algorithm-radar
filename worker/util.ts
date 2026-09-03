@@ -32,6 +32,8 @@ export interface Rec {
     /** 审核人用户 id（批准该记录的管理员/站长） */
     reviewerId: number | null;
     reviewedAt: string | null;
+    /** 软删除时间（回收站）；null = 未删除 */
+    deletedAt: string | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -200,6 +202,8 @@ export function sanitizeRecord(raw: any, existing?: Partial<Rec> | null, status?
         authorId: existing?.authorId ?? null,
         reviewerId: existing?.reviewerId ?? null,
         reviewedAt: existing?.reviewedAt ?? null,
+        // 回收站记录恢复/重导入时：清空软删除标记
+        deletedAt: existing?.deletedAt ?? null,
         createdAt: existing?.createdAt ?? nowIso(),
         updatedAt: nowIso(),
     };

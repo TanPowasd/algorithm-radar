@@ -215,8 +215,34 @@ const routes: Route[] = [
 
     { method: "DELETE", path: "/api/records/:id", role: "admin", handler: async (ctx) => {
         requireRole(ctx, "admin");
-        const revision = await store.deleteRecord(ctx.env.DB, ctx.params.id);
+        const revision = await store.deleteRecord(ctx.env.DB, ctx.params.id); // 软删除 → 回收站
         return { ok: true, revision };
+    } },
+
+    // ---- 回收站（软删除记录：查看 / 恢复 / 永久删除 / 清空）----
+    { method: "GET", path: "/api/trash", role: "admin", handler: async (ctx) => {
+        requireRole(ctx, "admin");
+        return { ok: true, records: await store.listTrash(ctx.env.DB) };
+    } },
+
+    { method: "POST", path: "/api/trash/restore", role: "admin", handler: async (ctx) => {
+        requireRole(ctx, "admin");
+        const ids: string[] = Array.isArray(ctx.body?.ids) ? ctx.body.ids.map(String) : [];
+        const restored = await store.restoreTrash(ctx.env.DB, ids);
+        return { ok: true, restored, revision: await currentRevision(ctx.env.DB) };
+    } },
+
+    { method: "POST", path: "/api/trash/purge", role: "admin", handler: async (ctx) => {
+        requireRole(ctx, "admin");
+        const ids: string[] = Array.isArray(ctx.body?.ids) ? ctx.body.ids.map(String) : [];
+        const purged = await store.purgeTrash(ctx.env.DB, ids);
+        return { ok: true, purged, revision: await currentRevision(ctx.env.DB) };
+    } },
+
+    { method: "POST", path: "/api/trash/empty", role: "admin", handler: async (ctx) => {
+        requireRole(ctx, "admin");
+        const purged = await store.emptyTrash(ctx.env.DB);
+        return { ok: true, purged, revision: await currentRevision(ctx.env.DB) };
     } },
 
     { method: "POST", path: "/api/records/:id/status", role: "admin", handler: async (ctx) => {
@@ -393,11 +419,11 @@ const routes: Route[] = [
         return { ok: true, records: await store.listHiddenRecords(ctx.env.DB) };
     } },
 
-    /** 彻底删除某个未收录模型名下的全部隐藏历史记录（按模型名，删除后不可恢复） */
+    /** 把某个未收录模型名下的全部隐藏历史记录移入回收站（按模型名；可在回收站恢复） */
     { method: "POST", path: "/api/admin/purge-records", role: "admin", handler: async (ctx) => {
         requireRole(ctx, "admin");
-        const deleted = await store.purgeRecordsByModel(ctx.env.DB, str(ctx.body?.model));
-        return { ok: true, deleted };
+        const moved = await store.purgeRecordsByModel(ctx.env.DB, str(ctx.body?.model));
+        return { ok: true, moved };
     } },
 
     /** 一键清空收录目录（题目 + 模型）与全部记录：清库重建，重新开始收录 */

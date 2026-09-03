@@ -5,49 +5,132 @@ import Topbar from '../components/Topbar'
 import AuthModal from '../components/AuthModal'
 import PublishModal from '../components/PublishModal'
 import { api } from '../api/client'
-import { difficultyName, lastSub, seriesKey, isPending, isApproved, todayStr, providerLabel } from '../aggregate'
+import { difficultyName, lastSub, seriesKey, isPending, isApproved, providerLabel } from '../aggregate'
 
-/** 「收录旧模型」卡片：列出 records 中出现过但不在 models 目录的模型，一键收录 */
-function MissingModelCard({ missing, onCollected }) {
-  const { toast, refreshAll } = useApp()
-  const [busyKey, setBusyKey] = useState('')
-  const collect = async (name) => {
-    setBusyKey(name)
+/**
+ * 回收站：软删除的记录（deleted_at 非空）统一在这里管理。
+ * 支持 恢复（回原区：可见与否由收录制判定）/ 永久删除 / 清空回收站。
+ */
+function TrashManager({ onChanged }) {
+  const { toast, refreshAll, nicknameOf } = useApp()
+  const [records, setRecords] = useState(null) // null=加载中
+  const [sel, setSel] = useState(new Set())
+  const [busy, setBusy] = useState(false)
+
+  const load = async () => {
     try {
-      await api('/api/models', { method: 'POST', body: { name, vendor: '', note: '' } })
-      toast(`模型「${name}」已收录，相关记录即刻可见`)
+      const res = await api('/api/trash')
+      setRecords(res.records || [])
+    } catch (e) {
+      toast(e.message, 'err')
+    }
+  }
+  useEffect(() => { load() }, [])
+
+  const toggle = (id) => {
+    setSel((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const toggleAll = () => {
+    setSel((prev) => prev.size === records.length ? new Set() : new Set((records || []).map((r) => r.id)))
+  }
+
+  const restore = async (ids) => {
+    if (!ids.length) return
+    setBusy(true)
+    try {
+      const res = await api('/api/trash/restore', { method: 'POST', body: { ids } })
+      toast(`已恢复 ${res.restored} 条记录（恢复后按收录制判定是否显示）`)
+      setSel(new Set())
+      await load()
       await refreshAll()
-      onCollected && onCollected()
+      onChanged && onChanged()
     } catch (e) {
       toast(e.message, 'err')
     } finally {
-      setBusyKey('')
+      setBusy(false)
     }
   }
+
+  const purge = async (ids) => {
+    if (!ids.length) return
+    if (!window.confirm(`永久删除 ${ids.length} 条记录？此操作不可恢复。`)) return
+    setBusy(true)
+    try {
+      const res = await api('/api/trash/purge', { method: 'POST', body: { ids } })
+      toast(`已永久删除 ${res.purged} 条`)
+      setSel(new Set())
+      await load()
+      await refreshAll()
+    } catch (e) {
+      toast(e.message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const empty = async () => {
+    if (!records?.length) return
+    if (!window.confirm(`清空回收站（${records.length} 条）？全部永久删除，不可恢复。`)) return
+    setBusy(true)
+    try {
+      const res = await api('/api/trash/empty', { method: 'POST' })
+      toast(`回收站已清空（${res.purged} 条）`)
+      setSel(new Set())
+      setRecords([])
+      await refreshAll()
+      onChanged && onChanged()
+    } catch (e) {
+      toast(e.message, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <div className="card" id="missing-models-card">
+    <div className="card" id="trash-card">
       <div className="card-head">
-        <h2>未收录的模型</h2>
-        <span className="hint">历史记录中出现但尚未收录进「AI 模型管理」</span>
+        <h2>回收站</h2>
+        <span className="hint">被删除/拒绝的记录暂存于此，可恢复或永久清除（防止误删）</span>
+        <div className="card-tools">
+          <button className="btn small ghost" onClick={toggleAll} disabled={!records?.length}>
+            {sel.size === records?.length && records?.length ? '取消全选' : '全选'}
+          </button>
+          <button className="btn small" onClick={() => restore([...sel])} disabled={!sel.size || busy}>恢复所选</button>
+          <button className="btn small danger" onClick={() => purge([...sel])} disabled={!sel.size || busy}>永久删除所选</button>
+          <button className="btn small danger" onClick={empty} disabled={!records?.length || busy}>清空回收站</button>
+        </div>
       </div>
       <div className="table-scroll">
         <table className="data">
           <thead>
-            <tr><th>模型名</th><th className="num">关联记录数</th><th className="num">操作</th></tr>
+            <tr>
+              <th><input type="checkbox" checked={!!records?.length && sel.size === records.length} onChange={toggleAll} /></th>
+              <th>模型</th><th>题目</th><th>日期</th><th>提供者</th><th>删除时间</th><th>原因</th>
+            </tr>
           </thead>
           <tbody>
-            {missing.map((m) => (
-              <tr key={m.key}>
-                <td style={{ fontWeight: 600 }}>{m.name}</td>
-                <td className="num">{m.count}</td>
-                <td className="num">
-                  <button className="btn small" disabled={busyKey === m.name} onClick={() => collect(m.name)}>
-                    {busyKey === m.name ? '收录中…' : '一键收录'}
-                  </button>
-                </td>
+            {(records || []).map((r) => (
+              <tr key={r.id}>
+                <td><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
+                <td style={{ fontWeight: 600 }}>{r.model}</td>
+                <td>{r.pid}<span className="chain"> {r.title}</span></td>
+                <td>{r.date}</td>
+                <td>{providerLabel(r, nicknameOf)}</td>
+                <td className="chain">{(r.deletedAt || '').slice(0, 19).replace('T', ' ')}</td>
+                <td className="chain">{r.status === 'pending' ? '审核拒绝' : '管理员删除'}</td>
               </tr>
             ))}
-            {!missing.length && <tr><td colSpan={3}><div className="empty">所有记录中的模型均已收录</div></td></tr>}
+            {records !== null && records.length === 0 && (
+              <tr><td colSpan={7}><div className="empty">回收站是空的</div></td></tr>
+            )}
+            {records === null && (
+              <tr><td colSpan={7}><div className="empty">加载中…</div></td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -173,13 +256,18 @@ export default function AdminPage() {
   const [hidden, setHidden] = useState(null) // {problems:[],models:[],total} 未收录分组
   const [collectPid, setCollectPid] = useState('') // 预填发布弹窗的题号
   const [hiddenDetail, setHiddenDetail] = useState(null) // 隐藏记录明细列表（null=未展开）
+  const [trashCount, setTrashCount] = useState(0) // 回收站条数（stat 卡用）
 
   // 加载未收录历史数据分组（管理员视角）
   const loadHidden = async () => {
     if (!isAdmin) return
     try {
-      const res = await api('/api/hidden-records')
-      setHidden(res)
+      const [h, t] = await Promise.all([
+        api('/api/hidden-records'),
+        api('/api/trash').catch(() => null),
+      ])
+      setHidden(h)
+      if (t) setTrashCount((t.records || []).length)
     } catch { /* 静默 */ }
   }
 
@@ -225,8 +313,6 @@ export default function AdminPage() {
 
   const stats = useMemo(() => ({
     pending: pending.length,
-    today: (data.records || []).filter((r) => r.date === todayStr()).length,
-    guest: (data.records || []).filter((r) => r.author === 'guest' || r.author === '').length,
     approved: (data.records || []).filter(isApproved).length,
   }), [data.records, pending])
 
@@ -241,10 +327,10 @@ export default function AdminPage() {
   }
 
   const removeRecord = async (r) => {
-    if (!window.confirm(`拒绝并删除该记录？\n${r.model} · ${r.pid} · ${r.author || '—'}`)) return
+    if (!window.confirm(`删除该记录（移入回收站）？\n${r.model} · ${r.pid} · ${r.author || '—'}\n可在回收站恢复。`)) return
     try {
       await api(`/api/records/${r.id}`, { method: 'DELETE' })
-      toast('已删除')
+      toast('已移入回收站')
       await refreshAll()
     } catch (e) {
       toast(e.message, 'err')
@@ -253,8 +339,8 @@ export default function AdminPage() {
 
   const bulk = async (action) => {
     if (!shownPending.length) return
-    const label = action === 'approve' ? '通过' : '拒绝并删除'
-    if (!window.confirm(`批量${label}当前筛选出的 ${shownPending.length} 条待审记录？`)) return
+    const label = action === 'approve' ? '通过' : '拒绝并移入回收站'
+    if (!window.confirm(`批量${label}当前筛选出的 ${shownPending.length} 条待审记录？\n（回收站内可恢复）`)) return
     try {
       const res = await api('/api/records/bulk', {
         method: 'POST',
@@ -296,16 +382,16 @@ export default function AdminPage() {
     }
   }
 
-  /** 彻底删除“未收录”模型对应的隐藏历史记录 */
+  /** 把“未收录”模型对应的隐藏历史记录移入回收站 */
   const purgeHiddenModel = async (name) => {
     const grp = hidden?.models?.find((m) => m.name === name)
-    if (!window.confirm(`删除模型「${name}」名下 ${grp?.count ?? ''} 条已审核但未收录的历史记录？此操作不可恢复。`)) return
+    if (!window.confirm(`将模型「${name}」名下 ${grp?.count ?? ''} 条隐藏历史记录移入回收站？\n（可在回收站恢复）`)) return
     try {
       const res = await api('/api/admin/purge-records', {
         method: 'POST',
         body: { model: name },
       })
-      toast(`已删除 ${res.deleted} 条记录`)
+      toast(`已移入回收站 ${res.moved} 条`)
       await refreshAll()
       reloadHidden()
     } catch (e) {
@@ -313,12 +399,12 @@ export default function AdminPage() {
     }
   }
 
-  /** 单条删除隐藏历史记录 */
+  /** 单条隐藏历史记录移入回收站 */
   const removeHiddenRecord = async (r) => {
-    if (!window.confirm(`删除该隐藏记录？\n${r.model} · ${r.pid} · ${r.date}`)) return
+    if (!window.confirm(`将该隐藏记录移入回收站？\n${r.model} · ${r.pid} · ${r.date}\n（可在回收站恢复）`)) return
     try {
       await api(`/api/records/${r.id}`, { method: 'DELETE' })
-      toast('已删除')
+      toast('已移入回收站')
       setHiddenDetail((list) => (list || []).filter((x) => x.id !== r.id))
       await refreshAll()
       reloadHidden()
@@ -372,9 +458,9 @@ export default function AdminPage() {
 
         <div className="stat-cards">
           <div className="stat"><div className="s-label">待审核</div><div className="s-value">{stats.pending}</div></div>
-          <div className="stat"><div className="s-label">今日新增</div><div className="s-value">{stats.today}</div></div>
-          <div className="stat"><div className="s-label">已通过</div><div className="s-value">{stats.approved}</div></div>
-          <div className="stat"><div className="s-label">已发布题目</div><div className="s-value">{problems.length}</div></div>
+          <div className="stat"><div className="s-label">显示区（已收录·已审核）</div><div className="s-value">{stats.approved}</div></div>
+          <div className="stat"><div className="s-label">隐藏区（未收录）</div><div className="s-value">{hidden?.total ?? '…'}</div></div>
+          <div className="stat"><div className="s-label">回收站</div><div className="s-value">{trashCount ?? '…'}</div></div>
         </div>
 
         <div className="card">
@@ -505,7 +591,7 @@ export default function AdminPage() {
                             <td className="num">{g.count}</td>
                             <td>
                               <button className="btn small" onClick={() => collectModel(g.name)}>收录</button>
-                              <button className="btn small danger" style={{ marginLeft: 6 }} onClick={() => purgeHiddenModel(g.name)}>删除记录</button>
+                              <button className="btn small danger" style={{ marginLeft: 6 }} onClick={() => purgeHiddenModel(g.name)}>移入回收站</button>
                             </td>
                           </tr>
                         ))}
@@ -549,7 +635,7 @@ export default function AdminPage() {
                             {!models.some((m) => m.name === r.model) ? '模型未收录' : ''}
                           </td>
                           <td className="actions">
-                            <button className="btn small danger" onClick={() => removeHiddenRecord(r)}>删除</button>
+                            <button className="btn small danger" onClick={() => removeHiddenRecord(r)}>移入回收站</button>
                           </td>
                         </tr>
                       ))}
@@ -561,6 +647,8 @@ export default function AdminPage() {
             </>
           )}
         </div>
+
+        <TrashManager onChanged={reloadHidden} />
 
         <ModelManager onChanged={reloadHidden} />
 

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS records (
     author_id    INTEGER,
     reviewer_id  INTEGER,
     reviewed_at  TEXT,
+    deleted_at   TEXT,
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );

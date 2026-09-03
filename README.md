@@ -2,10 +2,12 @@
 
 多个 AI 模型在洛谷题目上的解题能力对比站。游客可浏览排名、下载数据；贡献者提交测评；管理员审核并发布题目；站长管理用户。
 
-> v3.4 · 2026-09：「收录制」——旧数据（含历史导入）先以「全民制作人」身份挂在库中，但只有
-> **题目与模型均被管理员收录**（发布题目 / 添加到模型管理）后，对应记录才会显示并计入统计；
-> 未收录的部分对访客、统计、公开导出一律不可见（保留在库，管理员可在审核台查看与处理）。
-> v3.0 重构：React SPA + Cloudflare Pages/Workers Functions + D1（SQLite）。
+> v3.5 · 2026-09：「三区数据」——测评记录分为 **显示区 / 隐藏区 / 回收站** 三类管理：
+> - **显示区**：题目与模型均已被收录、且审核通过的记录（访客可见、计入统计与公开导出）
+> - **隐藏区**：已审核但题目或模型尚未被收录的记录（保留在库，暂不显示；收录后自动转显示区）
+> - **回收站**：删除/拒绝的记录软删除暂存于此（`deleted_at`），支持恢复（回原区）或永久清除，防误删
+> v3.4：「收录制」——旧数据（含历史导入）先以「全民制作人」身份挂在库中，管理员在审核台
+> 「未收录历史数据」发布题目 / 收录模型后对应记录才会显示。v3.0 重构：React SPA + Cloudflare Pages/Workers Functions + D1（SQLite）。
 
 ---
 
@@ -15,17 +17,18 @@
 |---|---|
 | 游客 | 浏览矩阵/雷达/柱状/趋势/榜单/明细六个视图（仅收录制可见数据）；查看贡献者名册（按注册时间排序）；导出 CSV / JSON（仅收录且已审核数据）；**不可提交** |
 | 贡献者 | 提交测评记录（仅可选**已发布题目**与**已收录模型**，进入待审核队列）；可见自己的待审记录 |
-| 管理员 | 审核测评（单条/批量通过、拒绝=删除）；编辑/删除记录；发布题目（收录：输题号自动抓洛谷，失败可手动补全；可配推荐提示词）；增删 AI 模型（收录）；**历史数据收录台**（查看未收录的题目/模型与隐藏记录、一键收录、按模型删除历史数据、导出全量备份）；全量导出与导入 |
+| 管理员 | 审核测评（单条/批量通过、拒绝=移入回收站）；编辑记录；发布题目（收录：输题号自动抓洛谷，失败可手动补全；可配推荐提示词）；增删改 AI 模型（收录+改名）；**历史数据收录台**（未收录题目/模型的隐藏记录分组、一键收录、移入回收站）；**回收站管理**（恢复 / 永久删除 / 清空）；全量导出与导入 |
 | 站长 | 管理员全部权限 + 审核注册（批准为贡献者）+ 任命/免除管理员 + **清空目录重新收录** |
 
 - 注册：独立页面 `/register`，填写 **用户 ID + 昵称 + 密码**；登录使用 **用户 ID + 密码**，全站显示昵称。注册后为「待审核」，站长在 `/users` 批准后才能登录。密码一律 PBKDF2-SHA256（100k 迭代）哈希存储，明文不落库。
 - 贡献者名册：`/contributors`（公开），按**注册时间**排序（与贡献量无关），展示用户 ID/昵称/贡献数等；历史导入数据对应的 `admin`/`guest` 账号排在末尾。
 - 审计字段：每条测评记录带 `author_id`（提供者用户 ID）与 `reviewer_id`/`reviewed_at`（批准人用户 ID 与批准时间；管理员自己直接提交的记录自审自记）。**首次录入的历史数据没有这些 ID，提供者/审核人统一署名「全民制作人」**（名册中也合并为同一条目，按注册时间排在末尾）；待审核的记录审核人显示「待审核」。
 - 推荐提示词：发布题目时填写（再次发布同题号可更新），展示在题目详情抽屉与提交表单中，一键复制，统一所有人的测试提示词。
+- **三区数据（v3.5）**：显示区=已收录+已审核（访客可见）；隐藏区=已审核但未收录（保留待收录，管理员可在
+  「未收录历史数据」查看、一键发布/收录或移入回收站）；回收站=删除/拒绝的记录（软删除 `deleted_at`，
+  支持恢复/永久删除/清空）。待审核记录不因未收录而隐藏：管理员可见全部待审，提交者可见自己的待审。
 - **收录制口径（v3.4）**：历史/导入数据统一署名「全民制作人」（记录里无提供者/审核人 ID 时）。任何记录只有在
-  「题目已发布（收录）且模型已收录」时才对访客可见并计入统计/榜单/公开导出；未收录的记录保留在库（管理员
-  `/api/export` 全量备份可见），审核台「未收录历史数据」卡展示缺失的题目/模型分组，支持一键发布/收录、查看与删除隐藏记录。
-  待审核记录不因未收录而隐藏：管理员可见全部待审，提交者可见自己的待审。
+  「题目已发布（收录）且模型已收录」时才计入统计/榜单/公开导出。管理员 `/api/export` 全量备份可见（不含回收站）。
 - 站长产生：数据库无任何账号时，本地访问会显示「初始化站长」入口（仅一次）；公网部署时需配置 `SETUP_TOKEN`（见下文）。
 - 数据口径：聚合主键 = 模型名（版本/策略仅展示）；**无分数轮次（score=null）不计入任何均分、不按 0 计**；柱状图仅显示样本量 n≥5 的「模型 × 思考等级」组合；雷达 AC 率按「作答记录数」为分母。
 
@@ -114,12 +117,12 @@ npx wrangler pages secret delete SETUP_TOKEN --project-name ai-vs-luogu  # 用�
 公开：`GET /api/ping` `GET /api/session` `GET /api/data` `GET /api/models` `GET /api/contributors` `GET /api/export/public?format=csv|json`
 认证：`POST /api/setup` `POST /api/login` `POST /api/logout` `POST /api/auth/register` `POST /api/change-password`（登录用户改密；成功后其他设备全部下线）
 贡献者：`POST /api/records`（模型须已收录）
-管理员：`PUT/DELETE /api/records/{id}` `POST /api/records/{id}/status` `POST /api/records/bulk` `POST /api/problems` `DELETE /api/problems/{pid}` `POST/PUT/DELETE /api/models*` `GET /api/luogu?pid=` `GET /api/hidden-records` `GET /api/hidden-records/detail` `POST /api/admin/purge-records` `GET /api/export`（全量含 models） `POST /api/import`
+管理员：`PUT/DELETE /api/records/{id}`（DELETE=软删除入回收站） `POST /api/records/{id}/status` `POST /api/records/bulk`（reject=入回收站） `POST /api/problems` `DELETE /api/problems/{pid}` `POST/PUT/DELETE /api/models*` `GET /api/luogu?pid=` `GET /api/hidden-records` `GET /api/hidden-records/detail` `POST /api/admin/purge-records`（隐藏记录入回收站） `GET /api/trash` `POST /api/trash/restore|purge|empty` `GET /api/export`（全量含 models） `POST /api/import`
 站长：`GET /api/admin/users` `POST /api/admin/users/{id}/approve|reject|role` `POST /api/catalog/reset`
 
 ## 七、数据模型（records 表核心字段）
 
-`id`(16hex) · `model`(聚合主键) · `variant` · `agent` · `tokenSource` · `pid`+`title` · `thinking`(ultra>max>xhigh>high>medium>low>off) · `difficulty`(0–7) · `categories[]` · `submissions[]`(每轮 `score` 0–100 可空 / `result` AC|WA|TLE|MLE|RE|CE|未解出 / `note`) · `minutes` · `memory`(MB，可空) · `date` · `note` · `status`(approved|pending) · `author`(提供者登录 ID) + `author_id`(提供者用户 ID) + `reviewer_id`/`reviewed_at`(审核人) · 时间戳。
+`id`(16hex) · `model`(聚合主键) · `variant` · `agent` · `tokenSource` · `pid`+`title` · `thinking`(ultra>max>xhigh>high>medium>low>off) · `difficulty`(0–7) · `categories[]` · `submissions[]`(每轮 `score` 0–100 可空 / `result` AC|WA|TLE|MLE|RE|CE|未解出 / `note`) · `minutes` · `memory`(MB，可空) · `date` · `note` · `status`(approved|pending) · `author`(提供者登录 ID) + `author_id`(提供者用户 ID) + `reviewer_id`/`reviewed_at`(审核人) · `deleted_at`(软删除/回收站标记) · 时间戳。
 
 `users` 表：`username`(登录 ID)、`nickname`(显示昵称)、`password_hash`(PBKDF2，非明文)、角色/状态/审批信息。`problems` 表额外含 `prompt`（推荐提示词，≤4000 字，统一测试口径）。
 

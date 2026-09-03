@@ -36,6 +36,7 @@ function mapRec(row: any): Rec {
         authorId: row.author_id ?? null,
         reviewerId: row.reviewer_id ?? null,
         reviewedAt: row.reviewed_at ?? null,
+        deletedAt: row.deleted_at ?? null,
         createdAt: row.created_at, updatedAt: row.updated_at,
     };
 }
@@ -56,17 +57,17 @@ const recParams = (r: Rec): unknown[] => [
     r.id, r.model, r.variant, r.agent, r.tokenSource, r.pid, r.title, r.thinking,
     r.difficulty, JSON.stringify(r.categories), JSON.stringify(r.submissions),
     r.minutes, r.memory, r.date, r.note, r.status, r.author, r.authorId,
-    r.reviewerId, r.reviewedAt, r.createdAt, r.updatedAt,
+    r.reviewerId, r.reviewedAt, r.deletedAt, r.createdAt, r.updatedAt,
 ];
 
 const insertRecStmt = (db: D1Database, r: Rec) => db.prepare(
-    "INSERT INTO records(id, model, variant, agent, token_source, pid, title, thinking, difficulty, categories, submissions, minutes, memory, date, note, status, author, author_id, reviewer_id, reviewed_at, created_at, updated_at) " +
-    "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)").bind(...recParams(r));
+    "INSERT INTO records(id, model, variant, agent, token_source, pid, title, thinking, difficulty, categories, submissions, minutes, memory, date, note, status, author, author_id, reviewer_id, reviewed_at, deleted_at, created_at, updated_at) " +
+    "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)").bind(...recParams(r));
 
 const updateRecStmt = (db: D1Database, r: Rec) => db.prepare(
     "UPDATE records SET model=?2, variant=?3, agent=?4, token_source=?5, pid=?6, title=?7, thinking=?8, " +
     "difficulty=?9, categories=?10, submissions=?11, minutes=?12, memory=?13, date=?14, note=?15, " +
-    "status=?16, author=?17, author_id=?18, reviewer_id=?19, reviewed_at=?20, created_at=?21, updated_at=?22 WHERE id=?1").bind(...recParams(r));
+    "status=?16, author=?17, author_id=?18, reviewer_id=?19, reviewed_at=?20, deleted_at=?21, created_at=?22, updated_at=?23 WHERE id=?1").bind(...recParams(r));
 
 const saveProblemStmt = (db: D1Database, p: ProblemEntry) => db.prepare(
     "INSERT INTO problems(pid, title, difficulty, tags, categories, manual, prompt, fetched_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) " +
@@ -127,11 +128,11 @@ export async function snapshot(db: D1Database, username: string | null, adminLik
     // 查询范围：管理员=全部行（待审全部可见）；登录用户=已通过+自己的待审；游客=仅已通过
     let recStmt: D1PreparedStatement;
     if (adminLike) {
-        recStmt = db.prepare("SELECT * FROM records ORDER BY created_at, id");
+        recStmt = db.prepare("SELECT * FROM records WHERE deleted_at IS NULL ORDER BY created_at, id");
     } else if (username) {
-        recStmt = db.prepare("SELECT * FROM records WHERE status = 'approved' OR author = ?1 ORDER BY created_at, id").bind(username);
+        recStmt = db.prepare("SELECT * FROM records WHERE deleted_at IS NULL AND (status = 'approved' OR author = ?1) ORDER BY created_at, id").bind(username);
     } else {
-        recStmt = db.prepare("SELECT * FROM records WHERE status = 'approved' ORDER BY created_at, id");
+        recStmt = db.prepare("SELECT * FROM records WHERE deleted_at IS NULL AND status = 'approved' ORDER BY created_at, id");
     }
     const [recs, probs, revision, updatedAt] = await Promise.all([
         recStmt.all<any>(),
@@ -208,7 +209,7 @@ export async function addRecord(db: D1Database, raw: any, user: { uid: number; u
         rec.reviewerId = user.uid;
         rec.reviewedAt = nowIso();
     }
-    const countRow = await db.prepare("SELECT COUNT(*) AS n FROM records").first<{ n: number }>();
+    const countRow = await db.prepare("SELECT COUNT(*) AS n FROM records WHERE deleted_at IS NULL").first<{ n: number }>();
     if ((countRow?.n ?? 0) >= MAX_RECORDS) throw badRequest(`记录数量已达上限（${MAX_RECORDS}）`);
     await requirePublished(db, rec.pid);
     await requirePublishedModel(db, rec.model);
@@ -221,8 +222,8 @@ export async function addRecord(db: D1Database, raw: any, user: { uid: number; u
 }
 
 export async function updateRecord(db: D1Database, rid: string, raw: any): Promise<AddRecordResult> {
-    const row = await db.prepare("SELECT * FROM records WHERE id = ?1").bind(rid).first();
-    if (!row) throw notFound("记录不存在");
+    const row = await db.prepare("SELECT * FROM records WHERE id = ?1 AND deleted_at IS NULL").bind(rid).first();
+    if (!row) throw notFound("记录不存在（可能已在回收站）");
     const existing = mapRec(row);
     const rec = sanitizeRecord(raw, existing, existing.status);
     await requirePublished(db, rec.pid);
@@ -235,18 +236,19 @@ export async function updateRecord(db: D1Database, rid: string, raw: any): Promi
     return { rec, revision: await getRevision(db) };
 }
 
+/** 软删除：记录移入回收站（deleted_at 置时间），不物理删除 */
 export async function deleteRecord(db: D1Database, rid: string): Promise<number> {
-    const stmts: D1PreparedStatement[] = [
-        db.prepare("DELETE FROM records WHERE id = ?1").bind(rid),
+    await db.batch([
+        db.prepare("UPDATE records SET deleted_at = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL")
+            .bind(nowIso(), nowIso(), rid),
         ...bumpMetaStmts(db),
-    ];
-    await db.batch(stmts);
+    ]);
     return getRevision(db);
 }
 
 export async function setStatus(db: D1Database, rid: string, status: string, reviewerUid: number): Promise<Rec> {
     if (!(STATUSES as readonly string[]).includes(status)) throw badRequest("状态不合法");
-    const row = await db.prepare("SELECT * FROM records WHERE id = ?1").bind(rid).first();
+    const row = await db.prepare("SELECT * FROM records WHERE id = ?1 AND deleted_at IS NULL").bind(rid).first();
     if (!row) throw notFound("记录不存在");
     // 批准时记录审核人 id 与时间；退回待审则清空审核信息
     const reviewer = status === "approved" ? reviewerUid : null;
@@ -260,7 +262,7 @@ export async function setStatus(db: D1Database, rid: string, status: string, rev
     return mapRec(updated);
 }
 
-/** 批量审核：approve 置为通过（记录审核人）；reject 直接删除。返回实际影响条数 */
+/** 批量审核：approve 置为通过（记录审核人）；reject 移入回收站（软删除）。返回实际影响条数 */
 export async function bulkStatus(db: D1Database, ids: string[], action: string, reviewerUid: number): Promise<number> {
     let approve: boolean;
     if (action === "approve") approve = true;
@@ -270,10 +272,11 @@ export async function bulkStatus(db: D1Database, ids: string[], action: string, 
     const stmts: D1PreparedStatement[] = [];
     for (const id of new Set(ids)) {
         if (approve) {
-            stmts.push(db.prepare("UPDATE records SET status = 'approved', reviewer_id = ?1, reviewed_at = ?2, updated_at = ?3 WHERE id = ?4 AND status != 'approved'")
+            stmts.push(db.prepare("UPDATE records SET status = 'approved', reviewer_id = ?1, reviewed_at = ?2, updated_at = ?3 WHERE id = ?4 AND status != 'approved' AND deleted_at IS NULL")
                 .bind(reviewerUid, nowIso(), nowIso(), id));
         } else {
-            stmts.push(db.prepare("DELETE FROM records WHERE id = ?1").bind(id));
+            stmts.push(db.prepare("UPDATE records SET deleted_at = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL")
+                .bind(nowIso(), nowIso(), id));
         }
     }
     let affected = 0;
@@ -412,7 +415,7 @@ export interface HiddenGroup { key: string; kind: "problem" | "model"; name: str
 
 export async function listHiddenGroups(db: D1Database): Promise<{ problems: HiddenGroup[]; models: HiddenGroup[]; total: number }> {
     const [recs, probs, mods] = await Promise.all([
-        db.prepare("SELECT pid, title, model, date, author FROM records WHERE status = 'approved'").all<any>(),
+        db.prepare("SELECT pid, title, model, date, author FROM records WHERE status = 'approved' AND deleted_at IS NULL").all<any>(),
         db.prepare("SELECT pid FROM problems").all<{ pid: string }>(),
         db.prepare("SELECT name FROM models").all<{ name: string }>(),
     ]);
@@ -482,12 +485,14 @@ export async function importBundle(db: D1Database, raw: any, mode: string): Prom
             db.prepare("INSERT OR IGNORE INTO meta(key, value) VALUES ('updatedAt', '')"),
             db.prepare("UPDATE meta SET value = ?1 WHERE key = 'updatedAt'").bind(nowIso())]);
     } else {
-        // merge：只按 id 合并记录；目录不动（已收录的继续收录，未收录的历史数据依然隐藏）
+        // merge：按 id 合并记录；命中回收站记录视为“找回”（清除 deleted_at）。
+        // 目录不动（已收录的继续收录，未收录的历史数据依然隐藏）
         const stmts: D1PreparedStatement[] = [];
         for (const rec of incomingRecords) {
-            const row = await db.prepare("SELECT updated_at FROM records WHERE id = ?1").bind(rec.id).first<{ updated_at: string }>();
-            if (!row || (rec.updatedAt ?? "") > (row.updated_at ?? "")) {
-                stmts.push(row ? updateRecStmt(db, rec) : insertRecStmt(db, rec));
+            const row = await db.prepare("SELECT updated_at, deleted_at FROM records WHERE id = ?1").bind(rec.id).first<{ updated_at: string; deleted_at: string | null }>();
+            const incoming = { ...rec, deletedAt: null }; // 合并写入一律视为“恢复/正常”，不进回收站
+            if (!row || row.deleted_at !== null || (incoming.updatedAt ?? "") > (row.updated_at ?? "")) {
+                stmts.push(row ? updateRecStmt(db, incoming) : insertRecStmt(db, incoming));
             }
         }
         for (let i = 0; i < stmts.length; i += 90) {
@@ -507,7 +512,7 @@ export async function exportBundle(db: D1Database): Promise<Snapshot & { models:
 /** 全部隐藏（approved 但题目或模型未收录）记录的明细，收录管理页“查看隐藏记录”用 */
 export async function listHiddenRecords(db: D1Database): Promise<Rec[]> {
     const [recs, probs, mods] = await Promise.all([
-        db.prepare("SELECT * FROM records WHERE status = 'approved' ORDER BY date DESC, created_at DESC").all<any>(),
+        db.prepare("SELECT * FROM records WHERE status = 'approved' AND deleted_at IS NULL ORDER BY date DESC, created_at DESC").all<any>(),
         db.prepare("SELECT pid FROM problems").all<{ pid: string }>(),
         db.prepare("SELECT name FROM models").all<{ name: string }>(),
     ]);
@@ -518,16 +523,70 @@ export async function listHiddenRecords(db: D1Database): Promise<Rec[]> {
         .filter((r) => !isRecordVisible(r, probSet, modelSet));
 }
 
-/** 按模型彻底删除 approved 隐藏记录（收录管理页“删除隐藏”用）；返回删除数 */
+/** 按模型把 approved 隐藏记录移入回收站（收录管理页“删除记录”用）；返回移入条数 */
 export async function purgeRecordsByModel(db: D1Database, model: string): Promise<number> {
     const res = await db.batch([
-        db.prepare("DELETE FROM records WHERE model = ?1 AND status = 'approved'").bind(model),
+        db.prepare("UPDATE records SET deleted_at = ?1, updated_at = ?2 WHERE model = ?3 AND status = 'approved' AND deleted_at IS NULL")
+            .bind(nowIso(), nowIso(), model),
         ...bumpMetaStmts(db),
     ]);
     return res[0].meta?.changes ?? 0;
 }
 
-/** 一键清空收录目录（problems + models + records），从头重新收录（仅站长，需二次确认） */
+// ---------------------------------------------------------------- 回收站（软删除记录）
+
+/** 回收站列表（deleted_at 非空），含删除时间；按删除时间倒序 */
+export async function listTrash(db: D1Database): Promise<Rec[]> {
+    const recs = await db
+        .prepare("SELECT * FROM records WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, id")
+        .all<any>();
+    return (recs.results || []).map(mapRec);
+}
+
+/** 恢复回收站记录：清除 deleted_at（状态保留原样；恢复后是否可见由收录制判定） */
+export async function restoreTrash(db: D1Database, ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    let affected = 0;
+    for (let i = 0; i < ids.length; i += 90) {
+        const chunk = ids.slice(i, i + 90);
+        const placeholders = chunk.map(() => "?").join(",");
+        const res = await db.batch([
+            db.prepare(`UPDATE records SET deleted_at = NULL, updated_at = ?1 WHERE id IN (${placeholders})`)
+                .bind(nowIso(), ...chunk),
+            ...bumpMetaStmts(db),
+        ]);
+        affected += res[0]?.meta?.changes ?? 0;
+    }
+    return affected;
+}
+
+/** 永久删除回收站记录（物理 DELETE，不可恢复） */
+export async function purgeTrash(db: D1Database, ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    let affected = 0;
+    for (let i = 0; i < ids.length; i += 90) {
+        const chunk = ids.slice(i, i + 90);
+        const placeholders = chunk.map(() => "?").join(",");
+        const res = await db.batch([
+            db.prepare(`DELETE FROM records WHERE id IN (${placeholders}) AND deleted_at IS NOT NULL`)
+                .bind(...chunk),
+            ...bumpMetaStmts(db),
+        ]);
+        affected += res[0]?.meta?.changes ?? 0;
+    }
+    return affected;
+}
+
+/** 清空回收站（永久删除全部软删除记录） */
+export async function emptyTrash(db: D1Database): Promise<number> {
+    const res = await db.batch([
+        db.prepare("DELETE FROM records WHERE deleted_at IS NOT NULL"),
+        ...bumpMetaStmts(db),
+    ]);
+    return res[0].meta?.changes ?? 0;
+}
+
+/** 一键清空收录目录（problems + models + records，含回收站），从头重新收录（仅站长，需二次确认） */
 export async function resetCatalog(db: D1Database): Promise<void> {
     await db.batch([
         db.prepare("DELETE FROM records"),
