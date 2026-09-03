@@ -31,7 +31,7 @@ const TABS = [
 ]
 
 export default function HomePage() {
-  const { data, loaded, offline, isContributor, isAdmin, nicknameOf, toggleTheme, widthMode, setWidthMode, refreshData } = useApp()
+  const { data, loaded, offline, isContributor, isAdmin, nicknameOf, toggleTheme, widthMode, setWidthMode, refreshData, retryNow } = useApp()
   const providerCell = (r) => providerLabel(r, nicknameOf)
   const url = useUrlState()
   const [view, setViewRaw] = useState(() => {
@@ -109,8 +109,11 @@ export default function HomePage() {
         </div>
 
         {offline && loaded && (
-          <div className="notice">
-            <div className="n-body">⚠ 服务器暂时无法连接，以下为最近缓存的只读数据。</div>
+          <div className="notice" role="alert">
+            <div className="n-body">⚠ 服务器暂时无法连接，以下为最近缓存的只读数据。将每 18 秒自动重试连接。</div>
+            <div className="n-actions">
+              <button className="btn small primary" onClick={() => retryNow()}>立即重试</button>
+            </div>
           </div>
         )}
 

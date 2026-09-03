@@ -59,6 +59,7 @@ const {
 } = await import('../src/aggregate.js')
 const { makeVendorOf, vendorColorMap, levelSwatchStyle } = await import('../src/palette.js')
 const { rollEvents, rollSnapshot, rankTeams, nextAcIndex, nextDayIndex } = await import('../src/rollboard.js')
+const { createRefreshCoordinator } = await import('../src/refreshCoordinator.js')
 
 const React = (await import('react')).default
 const { renderToString } = await import('react-dom/server')
@@ -71,13 +72,17 @@ const RecordFormModal = (await import('../src/components/RecordFormModal.jsx')).
 const DeleteRecordButton = (await import('../src/components/DeleteRecordButton.jsx')).default
 
 const results = []
+const jobs = []
+/** 支持同步与异步断言；同步断言仍在调用时立即执行，保持顺序确定 */
 const check = (name, fn) => {
-  try {
-    fn()
-    results.push(['PASS', name])
-  } catch (e) {
-    results.push(['FAIL', `${name} → ${e.message}`])
-  }
+  jobs.push((async () => {
+    try {
+      await fn()
+      results.push(['PASS', name])
+    } catch (e) {
+      results.push(['FAIL', `${name} → ${e.message}`])
+    }
+  })())
 }
 
 const records = snapshot.records.filter((r) => r.status === 'approved')
@@ -450,7 +455,7 @@ const ctxValue = (role) => ({
   focusModels: new Set(), toasts: [], offline: false, loaded: true,
   vendorOf: makeVendorOf(snapshot.models || []),
   nicknameOf: (n) => n, nameByUid: () => '',
-  toast() {}, refreshAll() {}, refreshData() {}, refreshModels() {}, refreshNicknames() {}, refreshSession() {},
+  toast() {}, refreshAll() {}, syncData() {}, refreshData() {}, refreshModels() {}, refreshNicknames() {}, refreshSession() {},
   toggleTheme() {}, setThemeMode() {}, setWidthMode() {}, setBarMinSamples() {}, setRadarSize() {},
   toggleFocusModel() {}, focusOnly() {},
 })
@@ -534,7 +539,73 @@ check('表单里题目/目录字段不可被手改绕过（提交值以目录为
   assert.ok(/categories:\s*\[\.\.\.\(p\?\.categories \|\| \[\]\)\]/.test(src) || src.includes('p?.categories || []'), '切换题目应重置类别，避免残留上一题')
 })
 
+/* ---------- 3.8 刷新协调器（挂载一次拉全 / 变更后必补拉） ---------- */
+const delay = (ms) => new Promise((r) => setTimeout(r, ms))
+
+check('sync：并发只跑一轮（StrictMode 双挂载不会重复打接口）', async () => {
+  let n = 0
+  const c = createRefreshCoordinator(async () => { n += 1; await delay(20); return true })
+  const [a, b] = await Promise.all([c.sync(), c.sync()])
+  assert.equal(n, 1, `并发 sync 打了 ${n} 轮，应为 1 轮`)
+  assert.ok(a && b, '两个调用者都应拿到刷新结果')
+})
+
+check('refresh：变更撞上进行中的刷新时一定补拉一轮（老实现会直接丢弃）', async () => {
+  const at = []
+  let release
+  const gate = new Promise((r) => { release = r })
+  const c = createRefreshCoordinator(async () => {
+    at.push(Date.now())
+    if (at.length === 1) await gate // 第一轮卡在飞行中
+    return true
+  })
+  const first = c.refresh()
+  await delay(5)
+  const second = c.refresh() // 模拟 DELETE/审核 完成后调用：此刻第一轮还没落地
+  release()
+  await Promise.all([first, second])
+  assert.equal(at.length, 2, '变更后的刷新被丢弃 → 界面会停在变更前的数据')
+  assert.ok(at[1] >= at[0], '补拉必须在第一轮之后，才能拿到变更后的数据')
+})
+
+check('refresh：并发 5 个调用最多两轮，不会滚雪球', async () => {
+  let n = 0
+  const c = createRefreshCoordinator(async () => { n += 1; await delay(10); return true })
+  await Promise.all(Array.from({ length: 5 }, () => c.refresh()))
+  assert.ok(n >= 1 && n <= 2, `轮数失控：${n}（应 ≤2）`)
+})
+
+check('任务抛错不会把协调器卡死', async () => {
+  let n = 0
+  let boom = true
+  const c = createRefreshCoordinator(async () => { n += 1; if (boom) throw new Error('boom'); return true })
+  await assert.rejects(() => c.refresh())
+  boom = false
+  assert.equal(await c.refresh(), true, '出错后应能继续刷新')
+  assert.equal(n, 2)
+})
+
+check('setTask：任务体可热替换，替换后跑的是新任务', async () => {
+  const seen = []
+  const c = createRefreshCoordinator(async () => { seen.push('v1'); return true })
+  await c.sync()
+  c.setTask(async () => { seen.push('v2'); return true })
+  await c.refresh()
+  assert.deepEqual(seen, ['v1', 'v2'])
+})
+
+check('挂载 effect 用 sync、变更后用 refreshAll（接线正确）', () => {
+  const st = srcOf('state.jsx')
+  assert.ok(/useEffect\(\(\) => \{\s*syncData\(\)/.test(st), '挂载 effect 应走 syncData（搭车，不重复请求）')
+  assert.ok(st.includes('createRefreshCoordinator(runFullRefresh)'), '必须经协调器包装全量刷新')
+  assert.ok(st.includes('coordinator.setTask(runFullRefresh)'), '任务体需在 effect 里热更新（渲染期不碰 ref）')
+  assert.ok(/setInterval\(\(\) => \{\s*syncData\(\)/.test(st), '离线自动重试应走 syncData')
+  assert.ok(!/if \(refreshingRef\.current\) return true/.test(st), '旧的「直接丢弃并发刷新」写法必须移除')
+  assert.ok(srcOf('components/DeleteRecordButton.jsx').includes('await refreshAll()'), '删除后必须等刷新落地')
+})
+
 /* ---------- 4. 汇报 ---------- */
+await Promise.all(jobs)
 const fails = results.filter((r) => r[0] === 'FAIL')
 for (const [k, name] of results) console.log(`${k === 'PASS' ? '✓' : k === 'SKIP' ? '-' : '✗'} ${name}`)
 console.log(`\n${results.length - fails.length}/${results.length} 通过，样本：${records.length} 条记录 / ${Object.keys(snapshot.problems).length} 题 / ${seriesList(records).length} 个模型`)

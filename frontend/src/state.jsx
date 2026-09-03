@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api/client'
 import { makeVendorOf } from './palette'
+import { createRefreshCoordinator } from './refreshCoordinator'
 
 const LS_CACHE = 'radar.cache.v3'
 const LS_THEME = 'radar.theme'
@@ -103,9 +104,9 @@ export function AppProvider({ children }) {
     try {
       const s = await api('/api/session')
       setSession(s)
-      setOffline(false)
+      return true
     } catch {
-      setOffline(true)
+      return false
     }
   }, [])
 
@@ -114,11 +115,9 @@ export function AppProvider({ children }) {
       const d = await api('/api/data')
       setData(d)
       saveCache(d)
-      setOffline(false)
+      return true
     } catch {
-      setOffline(true) // 断网时保留缓存数据只读展示
-    } finally {
-      setLoaded(true)
+      return false // 断网/失败：保留现有数据（或缓存）只读展示，交由上层判定离线
     }
   }, [])
 
@@ -157,9 +156,53 @@ export function AppProvider({ children }) {
     return entry ? (entry.nickname || null) : null
   }, [nicknames])
 
-  const refreshAll = useCallback(async () => {
-    await Promise.all([refreshSession(), refreshData(), refreshModels(), refreshNicknames()])
+  /**
+   * 一次全量拉取：session + data 并行，成功后再补 models + contributors。
+   * 以「/api/data 成功」为在线判据（session 失败只影响登录态显示，不判离线）。
+   */
+  const runFullRefresh = useCallback(async () => {
+    const [, dataOk] = await Promise.all([refreshSession(), refreshData()])
+    setLoaded(true)
+    if (dataOk) {
+      setOffline(false)
+      await Promise.all([
+        refreshModels().catch(() => {}),
+        refreshNicknames().catch(() => {}),
+      ])
+      return true
+    }
+    setOffline(true)
+    return false
   }, [refreshSession, refreshData, refreshModels, refreshNicknames])
+
+  // 协调器只建一次；任务体用 setTask 在 effect 里更新（渲染期不碰 ref）
+  const [coordinator] = useState(() => createRefreshCoordinator(runFullRefresh))
+  useEffect(() => { coordinator.setTask(runFullRefresh) }, [coordinator, runFullRefresh])
+
+  /** 数据变更后的刷新（提交/编辑/删除/审核/发布/导入…）：一定拉到「变更之后」的状态 */
+  const refreshAll = useCallback(() => coordinator.refresh(), [coordinator])
+  /** 挂载与离线自动重试：已有刷新在飞就搭同一班车，不会白打一遍接口 */
+  const syncData = useCallback(() => coordinator.sync(), [coordinator])
+
+  /** 手动重试（横幅按钮/快捷键）：清掉 offline 状态强制立即刷新一次 */
+  const retryNow = useCallback(async () => {
+    setOffline(false)
+    await refreshAll()
+  }, [refreshAll])
+
+  // 首次挂载即全量刷新（StrictMode 双调用也只会打一轮）
+  useEffect(() => {
+    syncData()
+  }, [syncData])
+
+  // 离线自动重试：每 18s 尝试一次；成功后 offline 变 false → 本 effect 自动清理定时器
+  useEffect(() => {
+    if (!offline) return undefined
+    const timer = setInterval(() => {
+      syncData()
+    }, 18000)
+    return () => clearInterval(timer)
+  }, [offline, syncData])
 
   /* ---------------- 主题（三态 + 跟随系统） ---------------- */
   const theme = themeMode === 'system' ? (systemDark ? 'dark' : 'light') : themeMode
@@ -259,16 +302,18 @@ export function AppProvider({ children }) {
     toasts,
     toast,
     refreshAll,
+    syncData,
     refreshSession,
     refreshData,
     refreshModels,
     refreshNicknames,
+    retryNow,
     isOwner: session.role === 'owner',
     isAdmin: session.role === 'admin' || session.role === 'owner',
     isContributor: session.role === 'contributor' || session.role === 'admin' || session.role === 'owner',
   }), [session, data, models, nicknames, nicknameOf, nameByUid, offline, loaded, theme, themeMode, toggleTheme,
     widthMode, barMinSamples, radarSize, vendorOf, focusModels, toggleFocusModel, focusOnly, toasts, toast,
-    refreshAll, refreshSession, refreshData, refreshModels, refreshNicknames])
+    refreshAll, syncData, refreshSession, refreshData, refreshModels, refreshNicknames, retryNow])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }
