@@ -54,7 +54,7 @@ globalThis.performance = globalThis.performance || { now: () => Date.now() }
 
 /* ---------- 2. 逻辑口径断言 ---------- */
 const {
-  bestThinkingCell, filterByModels, recordTs, fmtDateTime, fmtClock,
+  bestThinkingCell, filterByModels, recordTs, recordLine, fmtDateTime, fmtClock,
   seriesColorMap, seriesKey, seriesList, matrixCell, roundsAvg, THINKING_LEVELS, isApproved,
 } = await import('../src/aggregate.js')
 const { makeVendorOf, vendorColorMap, levelSwatchStyle } = await import('../src/palette.js')
@@ -63,9 +63,12 @@ const { rollEvents, rollSnapshot, rankTeams, nextAcIndex, nextDayIndex } = await
 const React = (await import('react')).default
 const { renderToString } = await import('react-dom/server')
 const { MemoryRouter } = await import('react-router-dom')
-const { AppProvider } = await import('../src/state.jsx')
+const { AppProvider, AppContext } = await import('../src/state.jsx')
 const App = (await import('../src/App.jsx')).default
 const ProblemDrawer = (await import('../src/components/ProblemDrawer.jsx')).default
+const RecordsTable = (await import('../src/views/RecordsTable.jsx')).default
+const RecordFormModal = (await import('../src/components/RecordFormModal.jsx')).default
+const DeleteRecordButton = (await import('../src/components/DeleteRecordButton.jsx')).default
 
 const results = []
 const check = (name, fn) => {
@@ -431,6 +434,104 @@ check('主题三态：跟随系统 + 监听系统切换', () => {
   assert.ok(stateText.includes("prefers-color-scheme: dark"), '未读取系统偏好')
   assert.ok(/addEventListener\('change'/.test(stateText), '系统主题切换时不会跟随')
   assert.ok(stateText.includes('toggleTheme'), '缺主题循环入口')
+})
+
+/* ---------- 3.6 删除记录（管理员 / 站长）---------- */
+// 用受控的 context 值渲染，才能真的走到「管理员视角」这条分支
+const ctxValue = (role) => ({
+  data: snapshot,
+  models: snapshot.models || [],
+  nicknames: {},
+  session: { loggedIn: role !== 'guest', username: 'selftest', role: role === 'guest' ? '' : role, admin: role !== 'guest' },
+  isAdmin: role === 'admin' || role === 'owner',
+  isOwner: role === 'owner',
+  isContributor: role !== 'guest',
+  theme: 'dark', themeMode: 'dark', widthMode: 'full', barMinSamples: 5, radarSize: 0,
+  focusModels: new Set(), toasts: [], offline: false, loaded: true,
+  vendorOf: makeVendorOf(snapshot.models || []),
+  nicknameOf: (n) => n, nameByUid: () => '',
+  toast() {}, refreshAll() {}, refreshData() {}, refreshModels() {}, refreshNicknames() {}, refreshSession() {},
+  toggleTheme() {}, setThemeMode() {}, setWidthMode() {}, setBarMinSamples() {}, setRadarSize() {},
+  toggleFocusModel() {}, focusOnly() {},
+})
+const wrap = (node, role = 'guest') => renderToString(
+  React.createElement(MemoryRouter, null,
+    React.createElement(AppContext.Provider, { value: ctxValue(role) }, node)))
+
+check('删除入口默认隐藏：游客 / 贡献者拿不到按钮', () => {
+  assert.equal(wrap(React.createElement(DeleteRecordButton, { record: records[0] })), '', '游客不应看到删除入口')
+  assert.equal(wrap(React.createElement(DeleteRecordButton, { record: records[0] }), 'contributor'), '', '贡献者不应看到删除入口')
+  const adminHtml = wrap(React.createElement(DeleteRecordButton, { record: records[0] }), 'admin')
+  assert.match(adminHtml, /删除/, '管理员应看到删除按钮')
+  assert.match(wrap(React.createElement(DeleteRecordButton, { record: records[0] }), 'owner'), /删除/, '站长应看到删除按钮')
+})
+
+check('明细表：管理员出现勾选列与逐行删除，游客没有', () => {
+  const asAdmin = wrap(React.createElement(RecordsTable, { isAdmin: true }), 'admin')
+  assert.ok(asAdmin.includes('has-check'), '管理员表格缺勾选列标记')
+  assert.ok(/aria-label="全选本页"/.test(asAdmin), '缺整页全选')
+  assert.ok(/移入回收站/.test(asAdmin), '缺逐行删除入口')
+  assert.ok(/编辑/.test(asAdmin), '原有编辑入口丢失')
+  const asOwner = wrap(React.createElement(RecordsTable, { isAdmin: true }), 'owner')
+  assert.ok(/移入回收站/.test(asOwner), '站长视角缺删除入口')
+  const asGuest = wrap(React.createElement(RecordsTable, { isAdmin: false }))
+  assert.ok(!asGuest.includes('has-check'), '游客不该有勾选列')
+  assert.ok(!/移入回收站/.test(asGuest), '游客不该有删除入口')
+  const asContrib = wrap(React.createElement(RecordsTable, { isAdmin: false }), 'contributor')
+  assert.ok(!/移入回收站/.test(asContrib), '贡献者不该有删除入口')
+})
+
+check('删除确认文案含关键信息（模型·题号·等级·日期）', () => {
+  const r = records[0]
+  const line = recordLine(r)
+  assert.ok(line.includes(r.model) && line.includes(r.pid), `确认文案缺定位信息：${line}`)
+  assert.match(line, /\d{4}-\d{2}-\d{2}/, '确认文案缺日期')
+  const src = srcOf('components/DeleteRecordButton.jsx')
+  assert.ok(src.includes('回收站'), '删除文案必须说明是软删除可恢复')
+  assert.ok(src.includes("method: 'DELETE'"), '必须走既有 DELETE /api/records/{id}')
+  const tableSrc = srcOf('views/RecordsTable.jsx')
+  assert.ok(tableSrc.includes("action: 'reject'"), '批量删除必须复用既有 bulk 接口')
+  assert.ok(!/fetch\(|axios/.test(src + tableSrc), '不应绕过统一 api 客户端')
+})
+
+check('抽屉：管理员才看得到逐条删除', () => {
+  const pid = Object.keys(snapshot.problems)[0]
+  const drawer = (role) => wrap(React.createElement(ProblemDrawer, { pid, onClose() {} }), role)
+  assert.ok(/移入回收站/.test(drawer('admin')), '管理员抽屉里缺删除入口')
+  assert.ok(/移入回收站/.test(drawer('owner')), '站长抽屉里缺删除入口')
+  const guestHtml = drawer('guest')
+  assert.ok(guestHtml.includes('推荐提示词'), '抽屉主体没渲染出来')
+  assert.ok(!/移入回收站/.test(guestHtml), '游客视角出现了管理员删除入口')
+  assert.ok(!/移入回收站/.test(drawer('contributor')), '贡献者视角出现了管理员删除入口')
+})
+
+/* ---------- 3.7 提交表单：题名/难度由题目目录定死 ---------- */
+check('矩阵点「+ 提交测评」打开时，题名与难度就已带入（回归：曾需手动切一次题目）', () => {
+  const pid = Object.keys(snapshot.problems).find((p) => snapshot.problems[p].title && Number(snapshot.problems[p].difficulty) > 0)
+  assert.ok(pid, '样本里没有带题名+难度的题目')
+  const prob = snapshot.problems[pid]
+  const html = wrap(React.createElement(RecordFormModal, { lockPid: pid, onClose() {} }), 'contributor')
+  assert.ok(html.includes(prob.title), `题名没自动带入（${prob.title}）`)
+  assert.ok(html.includes(`value="${prob.difficulty}" selected`), `难度没按目录选中（应为 ${prob.difficulty}）`)
+  assert.ok(html.includes('已按你点击的格子锁定题目'), '从格子进入时题目下拉未锁定/未提示')
+})
+
+check('题名与难度对提交者只读，且提示写明不可修改', () => {
+  const pid = Object.keys(snapshot.problems).find((p) => Number(snapshot.problems[p].difficulty) > 0)
+  const html = wrap(React.createElement(RecordFormModal, { lockPid: pid, onClose() {} }), 'contributor')
+  assert.equal((html.match(/不可修改/g) || []).length, 2, '题名与难度应各有一条「不可修改」提示')
+  assert.ok(/<input[^>]*disabled[^>]*readonly/i.test(html), '题名输入框必须 disabled + readonly')
+  assert.ok(/<select[^>]*disabled/.test(html), '难度选择框必须 disabled')
+  assert.ok(html.includes('题目目录带入'), '缺少「来自题目目录」的说明')
+})
+
+check('表单里题目/目录字段不可被手改绕过（提交值以目录为准）', () => {
+  const src = srcOf('components/RecordFormModal.jsx')
+  assert.ok(src.includes('selectedProblem.title'), 'payload 必须回读目录题名')
+  assert.ok(src.includes('Number(selectedProblem.difficulty)'), 'payload 必须回读目录难度')
+  assert.ok(!/title:\s*form\.title,/.test(src), 'payload 不应再把可手改的 form.title 直接发给后端')
+  assert.ok(src.includes('applyProblem'), '切换题目需整体重取目录字段')
+  assert.ok(/categories:\s*\[\.\.\.\(p\?\.categories \|\| \[\]\)\]/.test(src) || src.includes('p?.categories || []'), '切换题目应重置类别，避免残留上一题')
 })
 
 /* ---------- 4. 汇报 ---------- */

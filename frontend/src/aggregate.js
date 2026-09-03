@@ -349,6 +349,11 @@ export function normalizeSub(raw) {
 /** 首次录入的历史数据（无提供者/审核人 ID）统一署名 */
 export const LEGACY_PRODUCER = '全民制作人'
 
+/** 记录的一行定位摘要：删除/批量删除的二次确认里用，保证各处口径一致 */
+export function recordLine(r) {
+  return `${seriesKey(r)} · ${r.pid}${r.title ? ` ${r.title}` : ''} · ${THINKING_LABELS[r.thinking] || r.thinking} · ${r.date}`
+}
+
 /** 提供者显示：有 ID 走昵称解析（昵称 #ID）；无 ID（历史录入）统一署名全民制作人 */
 export function providerLabel(r, nicknameOf) {
   return r.authorId ? `${nicknameOf(r.author)} #${r.authorId}` : LEGACY_PRODUCER

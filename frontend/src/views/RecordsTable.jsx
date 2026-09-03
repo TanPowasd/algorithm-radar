@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../state'
+import { api } from '../api/client'
+import DeleteRecordButton from '../components/DeleteRecordButton'
 import {
-  applyFilters, difficultyName, fmtClock, fmtDateTime, lastSub, recordTs, subBadgeClass, seriesKey,
+  applyFilters, difficultyName, fmtClock, fmtDateTime, lastSub, recordLine, recordTs, subBadgeClass, seriesKey,
   seriesList, THINKING_LABELS, isPending, providerLabel, reviewerLabel, filterByModels,
 } from '../aggregate'
 import { useUrlState } from '../hooks/useUrlState'
@@ -12,7 +14,7 @@ const FILTER_KEYS = ['keyword', 'series', 'difficulty', 'category', 'result', 't
 function diffClass(d) { return `d-${d ?? 0}` }
 
 export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
-  const { data, nicknameOf, nameByUid, focusModels } = useApp()
+  const { data, nicknameOf, nameByUid, focusModels, toast, refreshAll } = useApp()
   const url = useUrlState('rec')
   const [filters, setFilters] = useState(() => {
     const init = { keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '' }
@@ -58,6 +60,52 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
   const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
   const safePage = Math.min(page, pages - 1)
   const pageRows = sorted.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE)
+
+  /* ---------- 管理员/站长：勾选批量删除（走既有 bulk 接口，reject = 软删除进回收站） ---------- */
+  const [selected, setSelected] = useState(() => new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  // 记录被删掉/换数据后，自动把已消失的 id 从选择里剔掉（切筛选不会误清选择）
+  const knownIds = useMemo(() => new Set((data.records || []).map((r) => r.id)), [data.records])
+  const selIds = useMemo(() => new Set([...selected].filter((id) => knownIds.has(id))), [selected, knownIds])
+  const selectedRecords = useMemo(
+    () => (data.records || []).filter((r) => selIds.has(r.id)), [data.records, selIds])
+  const allPageSelected = pageRows.length > 0 && pageRows.every((r) => selIds.has(r.id))
+
+  const toggleRow = (id) => setSelected((s) => {
+    const n = new Set(s)
+    if (n.has(id)) n.delete(id)
+    else n.add(id)
+    return n
+  })
+  const togglePage = () => setSelected((s) => {
+    const n = new Set(s)
+    if (allPageSelected) pageRows.forEach((r) => n.delete(r.id))
+    else pageRows.forEach((r) => n.add(r.id))
+    return n
+  })
+
+  const bulkDelete = async () => {
+    if (!selectedRecords.length) return
+    const preview = selectedRecords.slice(0, 6).map((r) => `· ${recordLine(r)}`).join('\n')
+    const ok = window.confirm(
+      `把选中的 ${selectedRecords.length} 条测评记录移入回收站？\n\n${preview}${selectedRecords.length > 6 ? `\n… 等共 ${selectedRecords.length} 条` : ''}\n\n`
+      + '删除 = 软删除进回收站，统计/矩阵/榜单/滚榜立即不再计入；\n可在「审核台 → 回收站」恢复，或在那里永久清除。')
+    if (!ok) return
+    setBulkBusy(true)
+    try {
+      const res = await api('/api/records/bulk', {
+        method: 'POST',
+        body: { ids: selectedRecords.map((r) => r.id), action: 'reject' },
+      })
+      setSelected(new Set())
+      await refreshAll()
+      toast(`已移入回收站 ${res.affected} 条`)
+    } catch (e) {
+      toast(e.message || '批量删除失败', 'err')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
 
   const seriesOpts = seriesList(approved)
   useEffect(() => {
@@ -147,10 +195,26 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
           <option value="fail">未通过</option>
         </select>
       </div>
+      {isAdmin && selIds.size > 0 && (
+        <div className="bulk-bar" role="toolbar" aria-label="批量操作">
+          <span>已选 <b>{selIds.size}</b> 条</span>
+          <button className="btn small danger" onClick={bulkDelete} disabled={bulkBusy}>
+            {bulkBusy ? '删除中…' : '删除所选（移入回收站）'}
+          </button>
+          <button className="btn small ghost" onClick={() => setSelected(new Set())} disabled={bulkBusy}>取消选择</button>
+          <span className="chain">软删除可在审核台回收站恢复</span>
+        </div>
+      )}
       <div className="table-scroll" id="records-wrap">
-        <table className="data">
+        <table className={`data${isAdmin ? ' has-check' : ''}`}>
           <thead>
             <tr>
+              {isAdmin && (
+                <th className="row-check">
+                  <input type="checkbox" checked={allPageSelected} onChange={togglePage}
+                    title={`全选/取消本页 ${pageRows.length} 条`} aria-label="全选本页" />
+                </th>
+              )}
               {th('model', '模型')}
               {th('pid', '题目')}
               {th('difficulty', '难度')}
@@ -169,7 +233,15 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
           </thead>
           <tbody>
             {pageRows.map((r) => (
-              <tr key={r.id}>
+              <tr key={r.id} className={selIds.has(r.id) ? 'picked' : ''}>
+                {isAdmin && (
+                  <td className="row-check">
+                    <input
+                      type="checkbox" checked={selIds.has(r.id)} onChange={() => toggleRow(r.id)}
+                      aria-label={`选择 ${seriesKey(r)} ${r.pid}`}
+                    />
+                  </td>
+                )}
                 <td className="sticky-col">
                   {seriesKey(r)}{r.variant ? <span className="chain">（{r.variant}）</span> : null}
                 </td>
@@ -209,13 +281,14 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
                 {isAdmin && (
                   <td className="actions">
                     <button className="btn small ghost" onClick={() => onEdit(r)}>编辑</button>
+                    <DeleteRecordButton record={r} />
                     {r.status === 'pending' && <span className="status-tag pending">待审</span>}
                   </td>
                 )}
               </tr>
             ))}
             {!pageRows.length && (
-              <tr><td colSpan={isAdmin ? 14 : 13}><div className="empty">没有符合筛选条件的记录</div></td></tr>
+              <tr><td colSpan={isAdmin ? 15 : 13}><div className="empty">没有符合筛选条件的记录</div></td></tr>
             )}
           </tbody>
         </table>

@@ -1,12 +1,13 @@
 import { useMemo } from 'react'
 import { useApp } from '../state'
 import CopyButton from './CopyButton'
+import DeleteRecordButton from './DeleteRecordButton'
 import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLabel, reviewerLabel, fmtClock, fmtDateTime } from '../aggregate'
 import { THINKING_LABELS } from '../aggregate'
 
 /** 题目详情抽屉：题目信息 + 推荐提示词（一键复制）+ 该题全部记录 + 三个统计 */
 export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitClick }) {
-  const { data, toast, nicknameOf, nameByUid } = useApp()
+  const { data, toast, nicknameOf, nameByUid, isAdmin } = useApp()
   const problem = data.problems?.[pid]
   const recs = useMemo(() =>
     (data.records || []).filter((r) => r.pid === pid && r.status !== 'pending')
@@ -70,6 +71,7 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
                     {r.date} {fmtClock(r.createdAt)} · 提供 {providerLabel(r, nicknameOf)}
                     {reviewerLabel(r, nameByUid) ? ` · 审核 ${reviewerLabel(r, nameByUid)}` : ''}
                   </span>
+                  {isAdmin && <DeleteRecordButton record={r} />}
                 </div>
                 {(r.submissions || []).map((s, i) => (
                   <div key={i} className="chain">

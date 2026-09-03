@@ -28,18 +28,25 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
     return list
   }, [data.problems])
 
+  /** 题目目录 = 题名/难度/类别的唯一事实来源；目录里没有时才允许回退/手填 */
+  const catalogOf = (pid) => (pid ? data.problems?.[pid] || null : null)
+  const hasCatalogDiff = (p) => p && p.difficulty !== null && p.difficulty !== undefined && Number(p.difficulty) > 0
+
   const [form, setForm] = useState(() => {
     const r = editRecord
+    const pid = r?.pid || lockPid || ''
+    const p = catalogOf(pid) // ← 从矩阵格子「+ 提交测评」进来时也要立刻带出题名与难度
     return {
       model: r?.model || '',
       variant: r?.variant || '',
       thinking: r?.thinking || DEFAULT_THINKING,
       agent: r?.agent || '',
       tokenSource: r?.tokenSource || '',
-      pid: r?.pid || lockPid || '',
-      title: r?.title || '',
-      difficulty: r?.difficulty === null || r?.difficulty === undefined ? '' : String(r.difficulty),
-      categories: r?.categories || [],
+      pid,
+      title: p?.title ?? r?.title ?? '',
+      difficulty: hasCatalogDiff(p) ? String(p.difficulty)
+        : (r?.difficulty === null || r?.difficulty === undefined ? '' : String(r.difficulty)),
+      categories: r?.categories?.length ? r.categories : (p?.categories || []),
       submissions: r?.submissions?.map((s) => ({ ...s })) || [{ score: '', result: 'AC', note: '' }],
       minutes: r?.minutes ?? '',
       memory: r?.memory ?? '',
@@ -53,15 +60,18 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }))
 
+  const selectedProblem = catalogOf(form.pid)
+  const diffLocked = hasCatalogDiff(selectedProblem)
+
+  /** 换题目 = 题名/难度/类别整体以题目目录为准重新带入（不再残留上一题的值） */
   const applyProblem = (pid) => {
-    const p = data.problems?.[pid]
+    const p = catalogOf(pid)
     setForm((f) => ({
       ...f,
       pid,
-      title: p?.title || f.title,
-      difficulty: p?.difficulty === null || p?.difficulty === undefined
-        ? f.difficulty : String(p.difficulty),
-      categories: f.categories.length ? f.categories : (p?.categories || []),
+      title: p ? (p.title || '') : f.title,
+      difficulty: hasCatalogDiff(p) ? String(p.difficulty) : (p ? '' : f.difficulty),
+      categories: p ? [...(p.categories || [])] : f.categories,
     }))
   }
 
@@ -102,7 +112,14 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
     if (!form.model.trim()) return setError('请选择已收录的 AI 模型')
     if (!modelInCatalog) return setError(`模型「${form.model.trim()}」尚未收录：请先让管理员在「AI 模型管理」中添加`)
     if (!form.pid) return setError('请选择已发布的题目')
-    if (form.difficulty === '' || form.difficulty === null) return setError('请选择难度')
+    // 题名与难度以题目目录为准：目录里有就直接用（提交者改不了），确实没有才用手动补的值
+    const finalTitle = selectedProblem ? (selectedProblem.title || form.title) : form.title
+    const finalDifficulty = hasCatalogDiff(selectedProblem)
+      ? Number(selectedProblem.difficulty)
+      : Number(form.difficulty)
+    if (!finalDifficulty) {
+      return setError(`题目 ${form.pid} 在目录里没有难度信息：请联系管理员在「题目管理 → 编辑」补全`)
+    }
     if (!form.submissions.length) return setError('至少需要一次提交记录')
     setBusy(true)
     try {
@@ -113,8 +130,8 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
         agent: form.agent,
         tokenSource: form.tokenSource,
         pid: form.pid,
-        title: form.title,
-        difficulty: Number(form.difficulty),
+        title: finalTitle,
+        difficulty: finalDifficulty,
         categories: form.categories,
         submissions: form.submissions.map(normalizeSub),
         minutes: form.minutes === '' ? null : Number(form.minutes),
@@ -191,17 +208,38 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
               <option value="">选择题目…</option>
               {problemOptions.map((p) => <option key={p.pid} value={p.pid}>{p.pid} · {p.title}</option>)}
             </select>
+            {lockPid && !isEdit && <span className="chain">已按你点击的格子锁定题目，如需换题请关闭后重新进入</span>}
           </Field>
           <Field label="题名">
-            <input value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="选题目后自动带入" />
+            <input value={form.title} onChange={(e) => set({ title: e.target.value })}
+              disabled={!!selectedProblem} readOnly={!!selectedProblem}
+              className={selectedProblem ? 'locked' : undefined}
+              placeholder="选题目后自动带入" />
+            {selectedProblem
+              ? <span className="chain">🔒 题目目录带入，不可修改</span>
+              : <span className="chain">选择题目后自动带入</span>}
           </Field>
           <Field label="难度 *">
-            <select value={form.difficulty} onChange={(e) => set({ difficulty: e.target.value })}>
+            <select value={form.difficulty} onChange={(e) => set({ difficulty: e.target.value })}
+              disabled={diffLocked} className={diffLocked ? 'locked' : undefined}>
               <option value="">选择难度…</option>
               {REC_DIFF_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
+            {diffLocked
+              ? <span className="chain">🔒 题目目录带入，不可修改</span>
+              : <span className="chain">{selectedProblem ? '该题目录里还没有难度，请手动选择（并提醒管理员补全题目信息）' : '选择题目后自动带入'}</span>}
           </Field>
         </div>
+
+        {isEdit && selectedProblem && (
+          (editRecord?.title && editRecord.title !== (selectedProblem.title || ''))
+          || (hasCatalogDiff(selectedProblem) && Number(editRecord?.difficulty) !== Number(selectedProblem.difficulty))
+        ) && (
+          <div className="callout" style={{ marginBottom: 'var(--sp-3)' }}>
+            这条记录存的题名/难度与题目目录不一致（目录：{selectedProblem.pid} {selectedProblem.title} · 难度 {selectedProblem.difficulty}）。
+            已按<strong>目录为准</strong>锁定，保存后会以目录值写回；要改题目信息请到「题目管理 → 编辑」。
+          </div>
+        )}
 
         {form.pid && data.problems?.[form.pid]?.prompt && (
           <div className="callout prompt-box" style={{ paddingRight: 12 }}>

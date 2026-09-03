@@ -10,6 +10,7 @@ const LS_BARN = 'radar.bar.minSamples'
 const LS_RADAR = 'radar.radarSize'
 
 const AppContext = createContext(null)
+export { AppContext }
 
 function loadCache() {
   try {
