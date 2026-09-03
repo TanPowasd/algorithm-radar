@@ -272,6 +272,18 @@ table.data td.num { font-variant-numeric: tabular-nums; }
 table.matrix { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: var(--fs-sm); }
 table.matrix th, table.matrix td { padding: 7px 10px; border-bottom: 1px solid var(--border-soft); }
 table.matrix thead th { position: sticky; top: 0; background: var(--surface-2); z-index: 3; color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; }
+/* 排名徽章（列 = 模型名次，行 = 题目名次） */
+.mrank {
+  display: inline-block; min-width: 18px; margin-right: 6px; padding: 1px 4px;
+  border-radius: 4px; background: var(--surface-3); color: var(--text-2);
+  font-size: 10px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums;
+  vertical-align: 1px;
+}
+.mrank.top1 { background: var(--yellow); color: #1a1300; }
+.mrank.top2 { background: #c9ced8; color: #20242c; }
+.mrank.top3 { background: color-mix(in srgb, var(--orange) 55%, transparent); color: #fff; }
+table.matrix .row-head .mrank { margin-left: 0; }
+table.matrix .row-head .r-title { display: inline; }
 table.matrix .row-head {
   position: sticky; left: 0; z-index: 2; background: var(--surface);
   text-align: left; font-weight: 600; max-width: 260px; overflow: hidden; text-overflow: ellipsis;
