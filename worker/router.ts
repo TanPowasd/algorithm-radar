@@ -113,6 +113,26 @@ async function loginResponse(ctx: RouteCtx, user: AuthUser): Promise<Json> {
     };
 }
 
+/** 发布/编辑前尝试用洛谷抓取补全缺失的标题/难度（失败不阻塞：可手动填） */
+async function maybeFetchLuogu(pid: string, info: Record<string, unknown>) {
+    const needTitle = !info.title || !String(info.title).trim();
+    const needDifficulty = info.difficulty === undefined || info.difficulty === null;
+    if (!needTitle && !needDifficulty) return;
+    try {
+        const fetched = await fetchLuoguProblem(pid);
+        if (needTitle) info.title = fetched.title;
+        if (needDifficulty && fetched.difficulty !== null) info.difficulty = fetched.difficulty;
+        if ((!Array.isArray(info.tags) || info.tags.length === 0) && fetched.tags.length) info.tags = fetched.tags;
+        if ((!Array.isArray(info.categories) || info.categories.length === 0) && fetched.categories.length) {
+            info.categories = fetched.categories;
+        }
+        if (!info.fetchedAt) info.fetchedAt = fetched.fetchedAt;
+    } catch (e) {
+        // 抓取失败不阻塞发布：管理员可手动补全，但要在日志里可见
+        console.warn("[problem] 洛谷自动补全失败：", e instanceof Error ? e.message : e);
+    }
+}
+
 // ---------------------------------------------------------------- 路由表
 
 const routes: Route[] = [
@@ -262,24 +282,16 @@ const routes: Route[] = [
         requireRole(ctx, "admin");
         const pid = str(ctx.body?.pid);
         const info = ctx.body?.problem && typeof ctx.body.problem === "object" ? { ...ctx.body.problem } : {};
-        const needTitle = !info.title || !String(info.title).trim();
-        const needDifficulty = info.difficulty === undefined || info.difficulty === null;
-        if (needTitle || needDifficulty) {
-            try {
-                const fetched = await fetchLuoguProblem(pid);
-                if (needTitle) info.title = fetched.title;
-                if (needDifficulty && fetched.difficulty !== null) info.difficulty = fetched.difficulty;
-                if ((!Array.isArray(info.tags) || info.tags.length === 0) && fetched.tags.length) info.tags = fetched.tags;
-                if ((!Array.isArray(info.categories) || info.categories.length === 0) && fetched.categories.length) {
-                    info.categories = fetched.categories;
-                }
-                if (!info.fetchedAt) info.fetchedAt = fetched.fetchedAt;
-            } catch (e) {
-                // 抓取失败不阻塞发布：管理员可手动补全，但要在日志里可见
-                console.warn("[problem] 洛谷自动补全失败：", e instanceof Error ? e.message : e);
-            }
-        }
+        await maybeFetchLuogu(pid, info);
         const problem = await store.putProblem(ctx.env.DB, pid, info);
+        return { ok: true, problem, revision: await currentRevision(ctx.env.DB) };
+    } },
+
+    /** 编辑题目（题号不变，全量覆盖字段） */
+    { method: "PUT", path: "/api/problems/:pid", role: "admin", handler: async (ctx) => {
+        requireRole(ctx, "admin");
+        const info = ctx.body?.problem && typeof ctx.body.problem === "object" ? { ...ctx.body.problem } : {};
+        const problem = await store.updateProblem(ctx.env.DB, ctx.params.pid, info);
         return { ok: true, problem, revision: await currentRevision(ctx.env.DB) };
     } },
 

@@ -252,6 +252,7 @@ export default function AdminPage() {
   const providerCell = (r) => providerLabel(r, nicknameOf)
   const [authOpen, setAuthOpen] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
+  const [editProblem, setEditProblem] = useState(null) // 编辑中的题目对象（null=发布新题）
   const [filter, setFilter] = useState('')
   const [hidden, setHidden] = useState(null) // {problems:[],models:[],total} 未收录分组
   const [collectPid, setCollectPid] = useState('') // 预填发布弹窗的题号
@@ -367,7 +368,15 @@ export default function AdminPage() {
 
   /** 一键收录：发布弹窗预填（题目） / 直接 POST models（模型） */
   const collectProblem = (pid) => {
+    setEditProblem(null) // 发布模式
     setCollectPid(pid)
+    setPublishOpen(true)
+  }
+
+  /** 编辑题目：打开弹窗并载入题目对象（编辑模式，题号锁定） */
+  const startEditProblem = (p) => {
+    setCollectPid('')
+    setEditProblem(p)
     setPublishOpen(true)
   }
 
@@ -449,7 +458,7 @@ export default function AdminPage() {
 
   return (
     <>
-      <Topbar onOpenPublish={() => setPublishOpen(true)} />
+      <Topbar onOpenPublish={() => { setEditProblem(null); setCollectPid(''); setPublishOpen(true) }} />
       <main className="layout">
         <div className="page-head">
           <h2>审核台</h2>
@@ -509,7 +518,7 @@ export default function AdminPage() {
           <div className="card-head">
             <h2>题目管理</h2>
             <div className="card-tools">
-              <button className="btn small primary" onClick={() => setPublishOpen(true)}>+ 发布新题</button>
+              <button className="btn small primary" onClick={() => { setEditProblem(null); setCollectPid(''); setPublishOpen(true) }}>+ 发布新题</button>
             </div>
           </div>
           <div className="table-scroll" id="problems-wrap">
@@ -533,7 +542,8 @@ export default function AdminPage() {
                         : <span className="chain" title="再次发布该题号并填写提示词即可补充">未配置</span>}
                     </td>
                     <td className="num">{recordCountByPid.get(p.pid) || 0}</td>
-                    <td>
+                    <td className="actions">
+                      <button className="btn small ghost" onClick={() => startEditProblem(p)}>编辑</button>
                       <button className="btn small danger" onClick={() => deleteProblem(p)}>
                         移除
                       </button>
@@ -659,7 +669,8 @@ export default function AdminPage() {
       {publishOpen && (
         <PublishModal
           initialPid={collectPid}
-          onClose={() => { setPublishOpen(false); setCollectPid('') }}
+          editProblem={editProblem}
+          onClose={() => { setPublishOpen(false); setCollectPid(''); setEditProblem(null) }}
           onPublished={() => { reloadHidden(); refreshAll() }}
         />
       )}

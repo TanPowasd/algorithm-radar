@@ -323,6 +323,29 @@ export async function deleteProblem(db: D1Database, pid: string): Promise<number
     return getRevision(db);
 }
 
+/** 编辑题目：全量覆盖式（区别于发布 upsert——编辑允许清空 tags/prompt）。
+ *  题号不可改；categories 由发布/抓取维护，编辑不改动。 */
+export async function updateProblem(db: D1Database, pid: string, info: any): Promise<ProblemEntry> {
+    const key = String(pid ?? "").trim().toUpperCase();
+    const prev = await findProblem(db, key);
+    if (!prev) throw notFound(`题目 ${key} 不存在（可能已被移除）`);
+    const clean = sanitizeProblem(key, info);
+    if (!clean) throw badRequest("题目信息格式不正确");
+    if (!clean.title) throw badRequest("题名不能为空");
+    const merged: ProblemEntry = {
+        pid: clean.pid,
+        title: clean.title,
+        difficulty: clean.difficulty ?? prev.difficulty,
+        tags: clean.tags, // 编辑全量覆盖（可清空）
+        categories: prev.categories,
+        manual: clean.manual || Boolean(prev.manual),
+        prompt: clean.prompt, // 编辑全量覆盖（留空即清空推荐提示词）
+        fetchedAt: clean.fetchedAt || prev.fetchedAt,
+    };
+    await db.batch([saveProblemStmt(db, merged), ...bumpMetaStmts(db)]);
+    return merged;
+}
+
 // ---------------------------------------------------------------- AI 模型目录（收录制下即“已收录模型”）
 
 export interface ModelView { id: number; name: string; vendor: string; note: string; createdAt: string }
