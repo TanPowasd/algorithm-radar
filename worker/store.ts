@@ -351,8 +351,12 @@ export async function createModel(db: D1Database, name: string, vendor: string, 
     const dup = await db.prepare("SELECT id FROM models WHERE name = ?1").bind(name).first();
     if (dup) throw badRequest(`模型 ${name} 已存在`);
     // 只登记目录：库中同名历史记录（如有）即刻满足“模型已收录”，无需改记录
-    await db.prepare("INSERT INTO models(name, vendor, note, created_at) VALUES (?1, ?2, ?3, ?4)")
-        .bind(name, vendor, note, new Date().toISOString()).run();
+    // 收录改变可见记录集 → 推进 revision/updatedAt
+    await db.batch([
+        db.prepare("INSERT INTO models(name, vendor, note, created_at) VALUES (?1, ?2, ?3, ?4)")
+            .bind(name, vendor, note, new Date().toISOString()),
+        ...bumpMetaStmts(db),
+    ]);
     const row = await db.prepare("SELECT id, name, vendor, note, created_at FROM models WHERE name = ?1").bind(name).first<any>();
     return { id: row.id, name: row.name, vendor: row.vendor ?? "", note: row.note ?? "", createdAt: row.created_at };
 }
@@ -370,22 +374,31 @@ export async function updateModel(db: D1Database, id: number, name: string, vend
     if (name !== prev.name) {
         const dup = await db.prepare("SELECT id FROM models WHERE name = ?1").bind(name).first();
         if (dup) throw badRequest(`模型 ${name} 已存在`);
-        // 改名 = 换一个“收录名”，历史记录跟着改；同名历史记录并入（写入后由收录判断继续可见）
+        // 改名 = 换一个“收录名”，历史记录跟着改（数据跟随新名，可见性不受影响）
         await db.batch([
             db.prepare("UPDATE models SET name = ?1, vendor = ?2, note = ?3 WHERE id = ?4").bind(name, vendor, note, id),
             renameRecordsModel(db, prev.name, name),
+            ...bumpMetaStmts(db),
         ]);
         return (await findModelById(db, id))!;
     }
-    await db.prepare("UPDATE models SET name = ?1, vendor = ?2, note = ?3 WHERE id = ?4").bind(name, vendor, note, id).run();
+    // 仅改厂商/备注：可见记录集不变，仍推进 updatedAt（展示层“最近更新”语义）
+    await db.batch([
+        db.prepare("UPDATE models SET name = ?1, vendor = ?2, note = ?3 WHERE id = ?4").bind(name, vendor, note, id),
+        ...bumpMetaStmts(db),
+    ]);
     return (await findModelById(db, id))!;
 }
 
 export async function deleteModel(db: D1Database, id: number): Promise<void> {
     const prev = await findModelById(db, id);
     if (!prev) throw notFound("模型不存在");
-    await db.prepare("DELETE FROM models WHERE id = ?1").bind(id).run();
-    // 注意：不删 records —— 仅目录移除后，相关记录回到“隐藏（模型未收录）”，数据保留
+    // 不删 records —— 仅目录移除后，相关记录回到“隐藏（模型未收录）”，数据保留。
+    // 移除改变可见记录集 → 推进 revision/updatedAt
+    await db.batch([
+        db.prepare("DELETE FROM models WHERE id = ?1").bind(id),
+        ...bumpMetaStmts(db),
+    ]);
 }
 
 /** 重写一条历史记录（收录题目/改名模型时保持“已收录”且带最新 author/审计字段） */

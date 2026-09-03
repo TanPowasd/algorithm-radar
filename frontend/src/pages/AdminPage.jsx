@@ -58,15 +58,34 @@ function MissingModelCard({ missing, onCollected }) {
 function ModelManager({ onChanged }) {
   const { models, data, toast, refreshAll } = useApp()
   const [form, setForm] = useState({ name: '', vendor: '', note: '' })
+  const [editing, setEditing] = useState(null) // 正在编辑的模型 id（null=新增模式）
   const [busy, setBusy] = useState(false)
 
-  const add = async (e) => {
+  const startEdit = (m) => {
+    setEditing(m.id)
+    setForm({ name: m.name, vendor: m.vendor || '', note: m.note || '' })
+  }
+
+  const cancelEdit = () => {
+    setEditing(null)
+    setForm({ name: '', vendor: '', note: '' })
+  }
+
+  const submit = async (e) => {
     e.preventDefault()
     setBusy(true)
     try {
-      await api('/api/models', { method: 'POST', body: form })
-      toast(`模型 ${form.name} 已添加`)
-      setForm({ name: '', vendor: '', note: '' })
+      if (editing) {
+        // 改名会同步重写历史记录：数据跟随新名（deepseek → deepsleep 时原记录全部跟随）
+        const isRename = form.name.trim() !== (models.find((m) => m.id === editing)?.name || '')
+        await api(`/api/models/${editing}`, { method: 'PUT', body: form })
+        toast(isRename ? `模型已改为「${form.name.trim()}」，相关记录同步更新` : '模型信息已更新')
+        cancelEdit()
+      } else {
+        await api('/api/models', { method: 'POST', body: form })
+        toast(`模型 ${form.name} 已添加`)
+        cancelEdit()
+      }
       await refreshAll()
       onChanged && onChanged()
     } catch (err) {
@@ -91,11 +110,13 @@ function ModelManager({ onChanged }) {
     }
   }
 
+  const editingLabel = editing ? (models.find((m) => m.id === editing)?.name || '') : ''
+
   return (
     <div className="card" id="models-card">
       <div className="card-head">
         <h2>AI 模型管理</h2>
-        <span className="hint">已收录 = 可提交 + 历史同名记录可见；删除只移出目录，记录隐藏不删除</span>
+        <span className="hint">可改名（历史记录同步跟随新名）· 可编辑厂商/备注 · 删除只移出目录不删记录</span>
       </div>
       <div className="table-scroll">
         <table className="data">
@@ -108,7 +129,8 @@ function ModelManager({ onChanged }) {
                 <td style={{ fontWeight: 600 }}>{m.name}</td>
                 <td>{m.vendor || <span className="chain">—</span>}</td>
                 <td>{m.note || <span className="chain">—</span>}</td>
-                <td>
+                <td className="actions">
+                  <button className="btn small ghost" onClick={() => startEdit(m)}>编辑</button>
                   <button className="btn small danger" onClick={() => remove(m)}>删除</button>
                 </td>
               </tr>
@@ -117,14 +139,26 @@ function ModelManager({ onChanged }) {
           </tbody>
         </table>
       </div>
-      <form onSubmit={add} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr auto', gap: 10, marginTop: 12 }}>
-        <input className="field" style={{ margin: 0 }} placeholder="模型名 *" value={form.name}
+      <form onSubmit={submit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr auto', gap: 10, marginTop: 12 }}>
+        <input className="field" style={{ margin: 0 }} placeholder={editing ? `改名（当前：${editingLabel}）` : '模型名 *'} value={form.name}
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
         <input className="field" style={{ margin: 0 }} placeholder="厂商" value={form.vendor}
           onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))} />
         <input className="field" style={{ margin: 0 }} placeholder="备注" value={form.note}
           onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
-        <button className="btn primary" type="submit" disabled={busy}>+ 添加模型</button>
+        {editing ? (
+          <>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn primary" type="submit" disabled={busy || !form.name.trim()}>{busy ? '保存中…' : '保存修改'}</button>
+              <button className="btn ghost" type="button" onClick={cancelEdit} disabled={busy}>取消</button>
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <span className="chain">改名后「{editingLabel}」名下的全部测评记录将同步改为新名，榜单/统计不受影响。</span>
+            </div>
+          </>
+        ) : (
+          <button className="btn primary" type="submit" disabled={busy || !form.name.trim()}>+ 添加模型</button>
+        )}
       </form>
     </div>
   )
