@@ -585,6 +585,16 @@ tr.sum-row td.sticky-col { background: var(--surface-2); }
 .think-tag.lv-medium, .think-tag.lv-low { color: var(--text-2); border-left: 2px solid var(--muted); }
 .think-tag.lv-off { color: var(--muted); border-left: 2px solid var(--border); }
 .pid-link { font-family: var(--font-body); font-size: var(--fs-xs); color: var(--accent); letter-spacing: 0.04em; }
+/* 题号外链（点击跳洛谷题目页）——a 标签版本，纯展示的 .pid-link 保持原样 */
+a.pid-link { display: inline-flex; align-items: baseline; gap: 3px; cursor: pointer; text-decoration: none; }
+a.pid-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+a.pid-link .ext { font-size: 0.82em; opacity: 0.5; text-decoration: none; }
+a.pid-link:hover .ext { opacity: 1; }
+/* 明细表：题号跳洛谷后，打开本站详情的入口改挂到题名上 */
+.pid-detail { cursor: pointer; }
+.pid-detail:hover { color: var(--accent); }
+/* 抽屉标题里的题号跟随标题字号，不被 .pid-link 的小字号压掉 */
+.d-title h3 a.d-pid { font-size: inherit; letter-spacing: inherit; font-family: var(--font-head); }
 .sub-badge { display: inline-block; border-radius: var(--r-sm); padding: 1px 7px; font-size: var(--fs-xs); font-weight: 600; margin-right: 4px; }
 .sub-badge.b-100 { background: color-mix(in srgb, var(--purple) 22%, transparent); color: var(--purple); }
 .sub-badge.b-hi { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); }

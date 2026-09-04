@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useApp } from '../state'
 import CopyButton from './CopyButton'
 import DeleteRecordButton from './DeleteRecordButton'
+import PidLink from './PidLink'
 import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLabel, reviewerLabel, fmtClock, fmtDateTime } from '../aggregate'
 import { THINKING_LABELS } from '../aggregate'
 
@@ -30,7 +31,7 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
       <aside className="drawer" role="dialog" aria-label="题目详情">
         <div className="drawer-head">
           <div className="d-title">
-            <h3>{pid} · {problem?.title || '题目详情'}</h3>
+            <h3><PidLink pid={pid} className="d-pid" /> · {problem?.title || '题目详情'}</h3>
             <div className="meta">
               <span className={`diff-tag d-${problem?.difficulty ?? 0}`}>{difficultyName(problem?.difficulty)}</span>
               {(problem?.categories || []).map((c) => <span key={c} className="cat-tag">{c}</span>)}

@@ -20,6 +20,16 @@ export const CATEGORY_ORDER = ['动态规划', '字符串', '图论', '搜索', 
 export const SERIES_COLORS = ['#4d9dff', '#34c778', '#a78bfa', '#f59e4b', '#f2555a', '#22c3d6', '#fbbf24', '#ec6ff1', '#8fd14f', '#7f8ea8']
 export const PID_RE = /^[A-Z]{1,3}_?[A-Z0-9_]{2,20}$/
 
+/**
+ * 洛谷题目页地址。题号不合洛谷格式时返回 null —— 不拼死链，调用方降级为纯文本。
+ * 洛谷题号一律大写，故先 toUpperCase 再校验。
+ */
+export const LUOGU_ORIGIN = 'https://www.luogu.com.cn'
+export function luoguUrl(pid) {
+  const key = String(pid ?? '').trim().toUpperCase()
+  return PID_RE.test(key) ? `${LUOGU_ORIGIN}/problem/${key}` : null
+}
+
 export const seriesKey = (r) => r.model
 export const isApproved = (r) => r.status !== 'pending'
 export const isPending = (r) => r.status === 'pending'

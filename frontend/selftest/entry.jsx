@@ -54,7 +54,7 @@ globalThis.performance = globalThis.performance || { now: () => Date.now() }
 
 /* ---------- 2. 逻辑口径断言 ---------- */
 const {
-  bestThinkingCell, filterByModels, recordTs, recordLine, fmtDateTime, fmtClock,
+  bestThinkingCell, filterByModels, recordTs, recordLine, fmtDateTime, fmtClock, luoguUrl,
   seriesColorMap, seriesKey, seriesList, matrixCell, roundsAvg, THINKING_LEVELS, isApproved,
 } = await import('../src/aggregate.js')
 const { makeVendorOf, vendorColorMap, levelSwatchStyle } = await import('../src/palette.js')
@@ -327,6 +327,32 @@ check('渲染 /（矩阵默认视图）', () => {
   // 厂商色条 + 等级标注
   assert.ok(/class="vbar"/.test(html), '列头缺厂商色条')
   assert.ok(/class="lv">/.test(html), '最佳等级口径缺等级标注')
+})
+
+check('题号可跳转洛谷（外链口径 + 安全属性）', () => {
+  // 地址拼装：只认洛谷官方 host，题号统一大写，非法题号不拼死链
+  assert.equal(luoguUrl('p1001'), 'https://www.luogu.com.cn/problem/P1001', '题号应统一大写')
+  assert.equal(luoguUrl('  CF10A  '), 'https://www.luogu.com.cn/problem/CF10A', '应容忍首尾空格')
+  assert.equal(luoguUrl(''), null, '空题号不应拼出链接')
+  assert.equal(luoguUrl('不是题号'), null, '非法题号不应拼出链接')
+  assert.equal(luoguUrl('../../evil'), null, '非洛谷题号不应拼出链接')
+
+  const grab = (h) => [...h.matchAll(/<a class="pid-link" href="([^"]+)"/g)].map((m) => m[1])
+  for (const [view, html] of [['矩阵', renderAt('/?v=matrix')], ['滚榜', renderAt('/?v=roll')]]) {
+    const links = grab(html)
+    assert.ok(links.length > 0, `${view}视图的题号没有渲染成外链`)
+    for (const href of links) {
+      assert.ok(
+        /^https:\/\/www\.luogu\.com\.cn\/problem\/[A-Z0-9_]+$/.test(href),
+        `${view}视图出现不合法外链：${href}`,
+      )
+    }
+    assert.ok(html.includes('target="_blank"'), `${view}视图外链缺 target=_blank（会顶掉本站页面）`)
+    assert.ok(html.includes('rel="noopener noreferrer"'), `${view}视图外链缺 rel=noopener`)
+  }
+  // 明细表常驻首页，题号跳洛谷后打开本站详情的入口改挂到题名上
+  const homeHtml = renderAt('/?v=matrix')
+  assert.ok(/class="chain pid-detail"/.test(homeHtml), '明细表题名缺打开本站详情的入口')
 })
 
 check('渲染 /?v=radar（雷达：尺寸滑杆 + 全屏）', () => {

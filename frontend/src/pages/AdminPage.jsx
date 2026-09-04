@@ -7,6 +7,7 @@ import PublishModal from '../components/PublishModal'
 import { api } from '../api/client'
 import { difficultyName, seriesKey, isPending, isApproved, providerLabel, fmtClock, fmtDateTime } from '../aggregate'
 import CopyButton from '../components/CopyButton'
+import PidLink from '../components/PidLink'
 
 /**
  * 回收站：软删除的记录（deleted_at 非空）统一在这里管理。
@@ -119,7 +120,7 @@ function TrashManager({ onChanged }) {
               <tr key={r.id}>
                 <td><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
                 <td style={{ fontWeight: 600 }}>{r.model}</td>
-                <td>{r.pid}<span className="chain"> {r.title}</span></td>
+                <td><PidLink pid={r.pid} /><span className="chain"> {r.title}</span></td>
                 <td>
                   <div className="tcell" title={`测评日期 ${r.date} · 录入 ${fmtDateTime(r.createdAt)}`}>
                     <span className="t-date">{r.date}</span>
@@ -500,7 +501,7 @@ export default function AdminPage() {
                 {shownPending.map((r) => (
                   <tr key={r.id}>
                     <td style={{ fontWeight: 600 }}>{seriesKey(r)}{r.variant ? <div className="chain">{r.variant}</div> : null}</td>
-                    <td>{r.pid}<div className="chain">{r.title}</div></td>
+                    <td><PidLink pid={r.pid} /><div className="chain">{r.title}</div></td>
                     <td>{r.thinking}</td>
                     <td>{r.agent || '—'} / {r.tokenSource || '—'}</td>
                     <td>{(r.submissions || []).map((s, i) => <span key={i} className="chain">{i + 1}:{s.result} {s.score ?? ''} </span>)}</td>
@@ -541,7 +542,7 @@ export default function AdminPage() {
               <tbody>
                 {problems.map((p) => (
                   <tr key={p.pid}>
-                    <td className="pid-link">{p.pid}</td>
+                    <td><PidLink pid={p.pid} /></td>
                     <td>{p.title}</td>
                     <td><span className={`diff-tag d-${p.difficulty ?? 0}`}>{difficultyName(p.difficulty)}</span></td>
                     <td style={{ maxWidth: 280, whiteSpace: 'normal' }}>
@@ -598,7 +599,7 @@ export default function AdminPage() {
                       <tbody>
                         {hidden.problems.map((g) => (
                           <tr key={g.key} title={g.sample}>
-                            <td className="pid-link">{g.name}</td>
+                            <td><PidLink pid={g.name} /></td>
                             <td className="num">{g.count}</td>
                             <td><button className="btn small" onClick={() => collectProblem(g.name)}>发布该题</button></td>
                           </tr>
@@ -655,7 +656,7 @@ export default function AdminPage() {
                       {hiddenDetail.map((r) => (
                         <tr key={r.id}>
                           <td style={{ fontWeight: 600 }}>{r.model}</td>
-                          <td>{r.pid}<span className="chain"> {r.title}</span></td>
+                          <td><PidLink pid={r.pid} /><span className="chain"> {r.title}</span></td>
                           <td>
                       <div className="tcell" title={`测评日期 ${r.date} · 录入 ${fmtDateTime(r.createdAt)}`}>
                         <span className="t-date">{r.date}</span>

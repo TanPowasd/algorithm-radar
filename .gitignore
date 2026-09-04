@@ -25,6 +25,8 @@ wrangler.log
 
 # 本地工具元数据（非项目文件）
 .mimosa/
+.workbuddy/
+opencode.jsonc
 
 # 系统/编辑器
 Thumbs.db

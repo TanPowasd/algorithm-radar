@@ -17,6 +17,7 @@ import ProblemDrawer from '../components/ProblemDrawer'
 import PublishModal from '../components/PublishModal'
 import AuthModal from '../components/AuthModal'
 import ImportModal from '../components/ImportModal'
+import PidLink from '../components/PidLink'
 import { isApproved, isPending, lastSub, providerLabel, seriesList, filterByModels } from '../aggregate'
 import { useUrlState } from '../hooks/useUrlState'
 import { useHotkeys } from '../hooks/useHotkeys'
@@ -154,7 +155,7 @@ export default function HomePage() {
                   {pending.slice(0, 8).map((r) => (
                     <tr key={r.id}>
                       <td>{r.model}</td>
-                      <td>{r.pid} {r.title && <span className="chain">{r.title}</span>}</td>
+                      <td><PidLink pid={r.pid} /> {r.title && <span className="chain">{r.title}</span>}</td>
                       <td>{r.thinking}</td>
                       <td>{lastSub(r)?.result ?? '—'}</td>
                       <td>{providerCell(r)}</td>

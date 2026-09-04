@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
 import DeleteRecordButton from '../components/DeleteRecordButton'
+import PidLink from '../components/PidLink'
 import {
   applyFilters, difficultyName, fmtClock, fmtDateTime, lastSub, recordLine, recordTs, subBadgeClass, seriesKey,
   seriesList, THINKING_LABELS, isPending, providerLabel, reviewerLabel, filterByModels,
@@ -246,10 +247,13 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
                   {seriesKey(r)}{r.variant ? <span className="chain">（{r.variant}）</span> : null}
                 </td>
                 <td>
-                  <a className="pid-link" data-detail={r.pid} onClick={(e) => { e.preventDefault(); onOpenDetail && onOpenDetail(r.pid, seriesKey(r)) }} href={`#${r.pid}`}>
-                    {r.pid}
-                  </a>
-                  <div className="chain">{r.title}</div>
+                  <PidLink pid={r.pid} />
+                  <div
+                    className="chain pid-detail"
+                    data-detail={r.pid}
+                    onClick={() => onOpenDetail && onOpenDetail(r.pid, seriesKey(r))}
+                    title={`${r.pid} ${r.title || ''} · 点击查看本站详情`}
+                  >{r.title}</div>
                 </td>
                 <td><span className={`diff-tag ${diffClass(r.difficulty)}`}>{difficultyName(r.difficulty)}</span></td>
                 <td><span className={`think-tag lv-${r.thinking}`}>{THINKING_LABELS[r.thinking] || r.thinking}</span></td>

@@ -4,6 +4,7 @@ import {
   bestThinkingCell, difficultyName, isApproved, isPassed, matrixCell, metricScore, scoreTierClass,
   seriesColorMap, seriesKey, seriesList, filterByModels, THINKING_LABELS,
 } from '../aggregate'
+import PidLink from '../components/PidLink'
 import { useUrlState } from '../hooks/useUrlState'
 
 /**
@@ -211,7 +212,9 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
                   title={`${p.pid} ${p.title || ''} · 点击看详情`}
                 >
                   <RankBadge rank={pi + 1} />
-                  <span className="r-title">{p.pid} · {p.title || '（未命名）'}</span>
+                  <span className="r-title">
+                    <PidLink pid={p.pid} onClick={(e) => e.stopPropagation()} /> · {p.title || '（未命名）'}
+                  </span>
                   <span className="chain">　{difficultyName(p.difficulty)}</span>
                 </th>
                 {series.map((s, si) => {

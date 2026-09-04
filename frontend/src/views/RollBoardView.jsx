@@ -4,6 +4,7 @@ import {
   filterByModels, isApproved, seriesColorMap, THINKING_LABELS,
 } from '../aggregate'
 import { cursorLabel, nextAcIndex, nextDayIndex, rollEvents, rollSnapshot } from '../rollboard'
+import PidLink from '../components/PidLink'
 import { hexRgba, levelSwatchStyle } from '../palette'
 import { useHotkeys } from '../hooks/useHotkeys'
 
@@ -140,8 +141,13 @@ export default function RollBoardView({ onOpenDetail }) {
                   {snap.pids.map((pid) => {
                     const solvedBy = snap.teams.filter((t) => t.cells.get(pid)?.passed).length
                     return (
-                      <th key={pid} className={`rc-pid ${solvedBy ? 'solved' : ''}`} title={`${pid} · ${solvedBy} 队解出`}>
-                        {pid.replace(/^(P|B|CF|U|AT)/, '')}
+                      <th key={pid} className={`rc-pid ${solvedBy ? 'solved' : ''}`}>
+                        <PidLink
+                          pid={pid}
+                          label={pid.replace(/^(P|B|CF|U|AT)/, '')}
+                          icon={false}
+                          title={`${pid} · ${solvedBy} 队解出 · 点击在洛谷打开`}
+                        />
                       </th>
                     )
                   })}
