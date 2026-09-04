@@ -173,20 +173,24 @@ async function findProblem(db: D1Database, pid: string): Promise<ProblemEntry | 
     return row ? mapProblem(row) : null;
 }
 
-/** 保存记录时把题目信息并入已发布条目（不新建条目：题目目录由管理员发布维护） */
-function mergedProblemFromRecord(prev: ProblemEntry, rec: Rec, raw: any): ProblemEntry {
+/** 保存记录时把题目信息并入已发布条目（不新建条目：题目目录由管理员发布维护）。
+ *  P1 安全修复（渗透报告 medium-1）：只有管理员提交/编辑记录时才允许把记录里的
+ *  title/difficulty 写回目录（收录/改错场景）；贡献者提交一律以目录权威值为准，
+ *  记录为 pending 也不得污染目录（调用点在非管理员路径下不执行 saveProblem）。
+ *  推荐提示词永远不被记录保存改动（由管理员发布/编辑端点维护）。 */
+async function mergeProblemFromRecord(prev: ProblemEntry | null, rec: Rec, raw: any): Promise<ProblemEntry> {
     const src = raw && typeof raw === "object" ? raw.problem : null;
     const srcTags = src && typeof src === "object" ? src.tags : undefined;
     return {
         pid: rec.pid,
-        title: rec.title || prev.title,
-        difficulty: rec.difficulty ?? prev.difficulty,
-        tags: Array.isArray(srcTags) && srcTags.length ? nameList(srcTags, MAX_TAGS, MAX_CATEGORY, "标签") : prev.tags,
-        categories: rec.categories.length ? rec.categories : prev.categories,
-        manual: true,
+        title: rec.title || prev?.title || "",
+        difficulty: rec.difficulty ?? prev?.difficulty ?? null,
+        tags: Array.isArray(srcTags) && srcTags.length ? nameList(srcTags, MAX_TAGS, MAX_CATEGORY, "标签") : (prev?.tags ?? []),
+        categories: rec.categories.length ? rec.categories : (prev?.categories ?? []),
+        manual: Boolean(prev?.manual),
         // 保存记录不改动推荐提示词
-        prompt: prev.prompt,
-        fetchedAt: prev.fetchedAt || (src && typeof src === "object" ? String(src.fetchedAt ?? "") : ""),
+        prompt: prev?.prompt || "",
+        fetchedAt: prev?.fetchedAt || (src && typeof src === "object" ? String(src.fetchedAt ?? "") : ""),
     };
 }
 
@@ -214,14 +218,20 @@ export async function addRecord(db: D1Database, raw: any, user: { uid: number; u
     await requirePublished(db, rec.pid);
     await requirePublishedModel(db, rec.model);
     const prev = await findProblem(db, rec.pid);
+    // 越权修复（medium-1）：只有管理员可把记录里的题目信息写回目录（收录/改错场景）；
+    // 贡献者提交时 problems 表必须有该题（requirePublished 已强制），故 prev 必存在，
+    // merged 一律以目录权威值为准，且不执行 saveProblem（避免 pending 记录污染目录）。
     const stmts: D1PreparedStatement[] = [insertRecStmt(db, rec)];
-    if (prev) stmts.push(saveProblemStmt(db, mergedProblemFromRecord(prev, rec, raw)));
+    if (user.isAdminLike) {
+        const merged = await mergeProblemFromRecord(prev, rec, raw);
+        if (prev) stmts.push(saveProblemStmt(db, merged));
+    }
     stmts.push(...bumpMetaStmts(db));
     await db.batch(stmts);
     return { rec, revision: await getRevision(db) };
 }
 
-export async function updateRecord(db: D1Database, rid: string, raw: any): Promise<AddRecordResult> {
+export async function updateRecord(db: D1Database, rid: string, raw: any, isAdminLike = false): Promise<AddRecordResult> {
     const row = await db.prepare("SELECT * FROM records WHERE id = ?1 AND deleted_at IS NULL").bind(rid).first();
     if (!row) throw notFound("记录不存在（可能已在回收站）");
     const existing = mapRec(row);
@@ -230,7 +240,10 @@ export async function updateRecord(db: D1Database, rid: string, raw: any): Promi
     await requirePublishedModel(db, rec.model);
     const prev = await findProblem(db, rec.pid);
     const stmts: D1PreparedStatement[] = [updateRecStmt(db, rec)];
-    if (prev) stmts.push(saveProblemStmt(db, mergedProblemFromRecord(prev, rec, raw)));
+    if (prev && isAdminLike) {
+        const merged = await mergeProblemFromRecord(prev, rec, raw);
+        stmts.push(saveProblemStmt(db, merged));
+    }
     stmts.push(...bumpMetaStmts(db));
     await db.batch(stmts);
     return { rec, revision: await getRevision(db) };
@@ -625,7 +638,9 @@ export async function resetCatalog(db: D1Database): Promise<void> {
 
 function csvCell(value: unknown): string {
     const s = value === null || value === undefined ? "" : String(value);
-    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    // CSV 公式注入防护（渗透报告 low-2）：= + - @ \t \r 开头一律前缀单引号（Excel/WPS 视为文本）
+    const cell = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+    return /[",\n\r]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell;
 }
 
 export function buildCsv(records: Rec[]): string {

@@ -5,7 +5,7 @@
  * 登录又有 6 次/10 分钟限流，安全性与平台约束的平衡点。
  */
 import type { UserRow } from "./util";
-import { ApiError, badRequest, forbidden, notFound, unauthorized } from "./util";
+import { ApiError, badRequest, forbidden, notFound, tooMany, unauthorized } from "./util";
 
 export interface AuthUser {
     uid: number;
@@ -28,6 +28,10 @@ export const CSRF_HEADER = "X-CSRF-Token";
 const SESSION_TTL = 43200;       // 12h
 const RENEW_AFTER = 3600;        // 签发 1h 后续签
 const USERNAME_RE = /^[\w\u4e00-\u9fff-]{2,24}$/;
+// 账号级登录失败锁定（渗透报告 medium-2 的跨 isolate 部分）：连续 5 次失败锁定 15 分钟。
+// D1 计数可被并发请求竞态突破 1~2 次（尽力而为），并发高频爆破仍需 CF Rate Limiting / DO。
+const MAX_LOGIN_FAILS = 5;
+const LOGIN_LOCK_MINUTES = 15;
 
 const enc = new TextEncoder();
 
@@ -195,13 +199,14 @@ export function cookieValue(req: Request, name: string): string | null {
     return null;
 }
 
-export function sessionCookie(token: string, clear = false): string {
-    const attrs = `Path=/; HttpOnly; SameSite=Strict; Max-Age=${clear ? 0 : SESSION_TTL}`;
+export function sessionCookie(token: string, clear = false, secure = true): string {
+    // Secure 仅在生产 HTTPS 下发；本地 http://127.0.0.1 开发环境不携带（否则 curl/浏览器拒绝存储）
+    const attrs = `Path=/; HttpOnly${secure ? "; Secure" : ""}; SameSite=Strict; Max-Age=${clear ? 0 : SESSION_TTL}`;
     return `${SESSION_COOKIE}=${token}; ${attrs}`;
 }
 
-export function csrfCookie(token: string): string {
-    return `${CSRF_COOKIE}=${token}; Path=/; SameSite=Strict; Max-Age=${SESSION_TTL}`;
+export function csrfCookie(token: string, secure = true): string {
+    return `${CSRF_COOKIE}=${token}; Path=/${secure ? "; Secure" : ""}; SameSite=Strict; Max-Age=${SESSION_TTL}`;
 }
 
 export function newCsrfToken(): string {
@@ -268,27 +273,62 @@ export async function registerUser(db: D1Database, userId: string, nickname: str
         .bind(userId, nick, await hashPassword(password), new Date().toISOString()).run();
 }
 
-/** 站长初始化（仅用户表为空 + 本地回环或 SETUP_TOKEN 匹配时调用） */
+/** 站长初始化（仅用户表为空 + 本地回环或 SETUP_TOKEN 匹配时调用）。
+ *  TOCTOU 修复（渗透报告 low-3）：单条 INSERT…SELECT WHERE NOT EXISTS 原子完成
+ *  「查空 + 插入」；并发请求在 SQLite 中串行执行，只有第一个能写入（即使 username 不同），
+ *  后续请求 changes=0 → 409，杜绝并发创建多个 owner。 */
 export async function setupOwner(db: D1Database, userId: string, password: string, nickname?: string): Promise<UserRow> {
     validateUsernamePassword(userId, password);
     const nick = nickname ? validateNickname(nickname) : userId;
-    if (await countUsers(db) > 0) {
+    const res = await db.prepare(
+        "INSERT INTO users(username, nickname, password_hash, role, status, created_at) " +
+        "SELECT ?1, ?2, ?3, 'owner', 'active', ?4 WHERE NOT EXISTS (SELECT 1 FROM users)")
+        .bind(userId, nick, await hashPassword(password), new Date().toISOString()).run();
+    if (!res.meta?.changes) {
         throw new ApiError(409, "站长账号已初始化，请直接登录");
     }
-    await db.prepare(
-        "INSERT INTO users(username, nickname, password_hash, role, status, created_at) VALUES (?1, ?2, ?3, 'owner', 'active', ?4)")
-        .bind(userId, nick, await hashPassword(password), new Date().toISOString()).run();
     const user = await findByUsername(db, userId);
     if (!user) throw new Error("setup failed");
     return user;
 }
 
 export async function authenticate(db: D1Database, userId: string, password: string): Promise<AuthUser> {
+    // 登录前先查账号级锁定状态（按 username COLLATE NOCASE，与查询口径一致）
+    const lockRow = await db.prepare(
+        "SELECT fail_count, locked_until FROM login_guard WHERE username = ?1 COLLATE NOCASE")
+        .bind(userId).first<{ fail_count: number; locked_until: string | null }>();
+    const now = Date.now();
+    if (lockRow && lockRow.locked_until && Date.parse(lockRow.locked_until) > now) {
+        throw tooMany("失败次数过多，账号已临时锁定，请 15 分钟后再试");
+    }
     const user = await findByUsername(db, userId);
     if (!user) throw unauthorized("用户 ID 或口令错误");
-    if (!(await verifyPassword(password, user.password_hash))) throw unauthorized("用户 ID 或口令错误");
+    if (!(await verifyPassword(password, user.password_hash))) {
+        // 口令错误：累计失败次数，达到阈值锁定（跨 isolate 持久化）
+        const fails = (lockRow?.fail_count ?? 0) + 1;
+        if (fails >= MAX_LOGIN_FAILS) {
+            await db.prepare(
+                "INSERT INTO login_guard(username, fail_count, locked_until, updated_at) VALUES (?1, ?2, ?3, ?4) " +
+                "ON CONFLICT(username) DO UPDATE SET fail_count = ?2, locked_until = ?3, updated_at = ?4")
+                .bind(user.username, fails, new Date(now + LOGIN_LOCK_MINUTES * 60_000).toISOString(), new Date().toISOString()).run();
+        } else if (lockRow && lockRow.locked_until && Date.parse(lockRow.locked_until) <= now) {
+            // 锁定期已过：重置计数并从 1 重新累计（否则窗口内只剩 MAX-1 次机会）
+            await db.prepare(
+                "INSERT INTO login_guard(username, fail_count, locked_until, updated_at) VALUES (?1, ?2, NULL, ?3) " +
+                "ON CONFLICT(username) DO UPDATE SET fail_count = ?2, locked_until = NULL, updated_at = ?3")
+                .bind(user.username, 1, new Date().toISOString()).run();
+        } else {
+            await db.prepare(
+                "INSERT INTO login_guard(username, fail_count, locked_until, updated_at) VALUES (?1, ?2, NULL, ?3) " +
+                "ON CONFLICT(username) DO UPDATE SET fail_count = ?2, locked_until = NULL, updated_at = ?3")
+                .bind(user.username, fails, new Date().toISOString()).run();
+        }
+        throw unauthorized("用户 ID 或口令错误");
+    }
     if (user.status === "pending") throw unauthorized("账号待站长审核，请稍后再试");
     if (user.status === "rejected") throw unauthorized("注册申请已被拒绝");
+    // 登录成功：清除失败计数与锁定
+    await db.prepare("DELETE FROM login_guard WHERE username = ?1").bind(user.username).run();
     return { uid: user.id, username: user.username, nickname: user.nickname ?? "", role: user.role };
 }
 

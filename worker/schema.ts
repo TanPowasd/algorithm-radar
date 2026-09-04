@@ -62,9 +62,17 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 )`,
+    // v3.7：登录失败防护（账号级锁定计数，跨 isolate 持久化；渗透报告 medium-2）
+    `CREATE TABLE IF NOT EXISTS login_guard (
+    username     TEXT PRIMARY KEY COLLATE NOCASE,
+    fail_count   INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT,
+    updated_at   TEXT
+)`,
     `CREATE INDEX IF NOT EXISTS idx_records_pid    ON records(pid)`,
     `CREATE INDEX IF NOT EXISTS idx_records_status ON records(status)`,
     `CREATE INDEX IF NOT EXISTS idx_records_model  ON records(model)`,
+    `CREATE INDEX IF NOT EXISTS idx_login_guard_until ON login_guard(locked_until)`,
     // revision 单调递增（乐观并发）；data_version 对齐旧 data.json 的版本号
     `INSERT OR IGNORE INTO meta(key, value) VALUES ('revision', '0')`,
     `INSERT OR IGNORE INTO meta(key, value) VALUES ('data_version', '3')`,

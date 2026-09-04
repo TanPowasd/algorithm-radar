@@ -30,6 +30,8 @@ interface RouteCtx {
     cookies: string[];
     /** 当前 CSRF 令牌（已有 Cookie 或本次新签发） */
     csrf: string;
+    /** 是否为 HTTPS（决定 Cookie 是否带 Secure；本地 http://127.0.0.1 开发环境不带） */
+    secure: boolean;
 }
 
 type Json = Record<string, unknown> | Array<unknown>;
@@ -70,6 +72,12 @@ function isLocalHost(url: URL): boolean {
     return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
 }
 
+/** 恒定时间比较 SETUP_TOKEN（报告 medium-4）：未配置时恒为 false，避免 `===` 时序侧信道 */
+function tokenMatches(secret: string | undefined, provided: unknown): boolean {
+    if (!secret) return false;
+    return constantTimeEqual(secret, str(provided));
+}
+
 function requireRole(ctx: RouteCtx, role: string): AuthUser {
     if (!ctx.user) throw unauthorized("请先登录");
     if (!isAtLeast(ctx.user, role)) {
@@ -106,7 +114,7 @@ async function currentRevision(db: D1Database): Promise<number> {
 }
 
 async function loginResponse(ctx: RouteCtx, user: AuthUser): Promise<Json> {
-    ctx.cookies.push(sessionCookie(await createToken(ctx.env.DB, user)));
+    ctx.cookies.push(sessionCookie(await createToken(ctx.env.DB, user), false, ctx.secure));
     return {
         ok: true, admin: isAtLeast(user, "admin"), role: user.role,
         username: user.username, nickname: user.nickname ?? "",
@@ -147,26 +155,33 @@ const routes: Route[] = [
         const userCount = await countUsers(ctx.env.DB);
         // 会话签发超过阈值时自动续签（重发 Cookie）
         if (ctx.session && Date.now() / 1000 - ctx.session.iat > renewAfter()) {
-            ctx.cookies.push(sessionCookie(await createToken(ctx.env.DB, ctx.session.user)));
+            ctx.cookies.push(sessionCookie(await createToken(ctx.env.DB, ctx.session.user), false, ctx.secure));
         }
+        // canSetup 面向「唯一初始化场景」：不泄露 SETUP_TOKEN 是否已配置（渗透报告 medium-4）
         return {
             loggedIn: !!ctx.user,
             username: ctx.user?.username ?? "",
             nickname: ctx.user?.nickname ?? "",
             role: ctx.user?.role ?? "",
             admin: isAtLeast(ctx.user, "admin"),
-            canSetup: userCount === 0 && (isLocalHost(ctx.url) || !!ctx.env.SETUP_TOKEN),
+            canSetup: userCount === 0,
             configured: userCount > 0,
             csrfToken: ctx.csrf,
         };
     } },
 
     { method: "POST", path: "/api/setup", role: null, handler: async (ctx) => {
+        // 初始化端点同样限速（渗透报告 medium-4）：进程内尽力而为 + 成功后不可重入；
+        // 限速放在 DB 检查之前，避免初始化窗口内无谓的 D1 读放大
+        if (!tryAcquire("setup:" + clientIp(ctx.req), 5, 600_000)) {
+            throw tooMany("初始化尝试过于频繁，请 10 分钟后再试");
+        }
         if (await countUsers(ctx.env.DB) > 0) {
             throw new ApiError(409, "站长账号已初始化，请直接登录");
         }
         const localOk = isLocalHost(ctx.url);
-        const tokenOk = !!ctx.env.SETUP_TOKEN && ctx.body?.setupToken === ctx.env.SETUP_TOKEN;
+        // 恒定时间比较 SETUP_TOKEN（渗透报告 medium-4；普通 === 存在时序侧信道）
+        const tokenOk = tokenMatches(ctx.env.SETUP_TOKEN, ctx.body?.setupToken);
         if (!localOk && !tokenOk) {
             throw forbidden("公网初始化需要 SETUP_TOKEN（wrangler pages secret put SETUP_TOKEN）");
         }
@@ -183,7 +198,7 @@ const routes: Route[] = [
     } },
 
     { method: "POST", path: "/api/logout", role: null, handler: (ctx) => {
-        ctx.cookies.push(sessionCookie("", true));
+        ctx.cookies.push(sessionCookie("", true, ctx.secure));
         return { ok: true };
     } },
 
@@ -195,7 +210,7 @@ const routes: Route[] = [
             throw tooMany("操作过于频繁，请 10 分钟后再试");
         }
         await changePassword(ctx.env.DB, user.uid, str(ctx.body?.oldPassword), str(ctx.body?.newPassword));
-        ctx.cookies.push(sessionCookie(await createToken(ctx.env.DB, user)));
+        ctx.cookies.push(sessionCookie(await createToken(ctx.env.DB, user), false, ctx.secure));
         return { ok: true, message: "密码已修改，其他设备已退出登录" };
     } },
 
@@ -229,7 +244,8 @@ const routes: Route[] = [
     { method: "PUT", path: "/api/records/:id", role: "admin", handler: async (ctx) => {
         requireRole(ctx, "admin");
         const raw = ctx.body?.record && typeof ctx.body.record === "object" ? ctx.body.record : ctx.body;
-        const { rec, revision } = await store.updateRecord(ctx.env.DB, ctx.params.id, raw);
+        // 管理员编辑记录时可把题目信息回写目录（改错场景）；贡献者无此端点
+        const { rec, revision } = await store.updateRecord(ctx.env.DB, ctx.params.id, raw, true);
         return { ok: true, record: rec, revision };
     } },
 
@@ -520,12 +536,13 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
         }
         const csrf = csrfCookieValue ?? newCsrfToken();
         const cookies: string[] = [];
-        if (!csrfCookieValue) cookies.push(csrfCookie(csrf));
+        const secure = url.protocol === "https:";
+        if (!csrfCookieValue) cookies.push(csrfCookie(csrf, secure));
 
         const session = await verifyToken(env.DB, cookieValue(req, SESSION_COOKIE));
         const ctx: RouteCtx = {
             req, url, env, params: {}, user: session?.user ?? null, session,
-            body: undefined, cookies, csrf,
+            body: undefined, cookies, csrf, secure,
         };
 
         const matched = routes
