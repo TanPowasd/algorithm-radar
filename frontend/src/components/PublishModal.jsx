@@ -1,14 +1,8 @@
 import { useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
-import { PID_RE, DIFFICULTY_NAMES } from '../aggregate'
+import { PID_RE, DIFFICULTY_NAMES, PROMPT_TEMPLATE } from '../aggregate'
 import CopyButton from './CopyButton'
-
-/** 统一测试口径模板：纯前端文案，管理员可在此基础上再改 */
-const PROMPT_TEMPLATE = (pid) => `请独立完成这道洛谷题${pid ? `（${pid}）` : ''}。要求：
-1）只输出一段完整、可直接提交的 C++17 代码（用 \`\`\`cpp 代码块包裹），不要解释、不要伪码、不要多份实现；
-2）自己构造边界样例并在脑内逐条验证后再给最终版本；
-3）不使用任何在线评测反馈，一次性给出终版。`
 
 /** 难度选项：value = 实际难度值字符串（'' 为选择占位）。直接由共享难度表生成，杜绝档位错位。 */
 const DIFF_OPTIONS = [

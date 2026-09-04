@@ -41,7 +41,8 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
         {isAdmin && <Link className="btn small ghost" to="/admin">审核台</Link>}
         {isOwner && <Link className="btn small ghost" to="/users">用户管理</Link>}
         <Link className="btn small ghost" to="/contributors">贡献榜</Link>
-        {(location.pathname === '/admin' || location.pathname === '/users' || location.pathname === '/contributors') && (
+        <Link className="btn small ghost" to="/prompts">推荐提示词</Link>
+        {(location.pathname === '/admin' || location.pathname === '/users' || location.pathname === '/contributors' || location.pathname === '/prompts') && (
           <Link className="btn small ghost" to="/">返回总览</Link>
         )}
         <button className="btn small ghost" onClick={() => download('/api/export/public?format=csv')} title="游客可下载（仅已审核数据）">导出 CSV</button>

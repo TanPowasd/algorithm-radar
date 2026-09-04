@@ -30,6 +30,19 @@ export function luoguUrl(pid) {
   return PID_RE.test(key) ? `${LUOGU_ORIGIN}/problem/${key}` : null
 }
 
+/**
+ * 统一测试口径模板：纯前端文案。
+ * 某题没配推荐提示词时的兜底（替它带上题号）；管理员发布题目时可在此基础上再改。
+ * 发布弹窗与公开的「推荐提示词」页共用这一份，避免两处文案走偏。
+ */
+export const PROMPT_TEMPLATE = (pid) => `请独立完成这道洛谷题${pid ? `（${pid}）` : ''}。要求：
+1）只输出一段完整、可直接提交的 C++17 代码（用 \`\`\`cpp 代码块包裹），不要解释、不要伪码、不要多份实现；
+2）自己构造边界样例并在脑内逐条验证后再给最终版本；
+3）不使用任何在线评测反馈，一次性给出终版。`
+
+/** 题目实际使用的提示词：配过就用配的，没配就退到统一模板（带题号） */
+export const promptOf = (p) => (p?.prompt ? p.prompt : PROMPT_TEMPLATE(p?.pid || ''))
+
 export const seriesKey = (r) => r.model
 export const isApproved = (r) => r.status !== 'pending'
 export const isPending = (r) => r.status === 'pending'
