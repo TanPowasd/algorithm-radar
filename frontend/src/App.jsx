@@ -5,13 +5,14 @@ import UsersPage from './pages/UsersPage'
 import RegisterPage from './pages/RegisterPage'
 import ContributorsPage from './pages/ContributorsPage'
 import PromptsPage from './pages/PromptsPage'
+import ErrorBoundary from './components/ErrorBoundary'
 import ToastHost from './components/ToastHost'
 import BackTop from './components/BackTop'
 import ShortcutHelp from './components/ShortcutHelp'
 
 export default function App() {
   return (
-    <>
+    <ErrorBoundary>
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/admin" element={<AdminPage />} />
@@ -24,6 +25,6 @@ export default function App() {
       <ToastHost />
       <BackTop />
       <ShortcutHelp />
-    </>
+    </ErrorBoundary>
   )
 }

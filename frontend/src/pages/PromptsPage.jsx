@@ -60,15 +60,15 @@ export default function PromptsPage() {
 
   // 计算当前聚焦题目的详细信息
   const activeProblem = useMemo(() => {
-    const targetPid = selectedPid.trim().toUpperCase()
+    const targetPid = String(selectedPid || '').trim().toUpperCase() || (problemList[0]?.pid || 'P1001')
     const found = data.problems?.[targetPid]
     if (found) {
       return {
         pid: found.pid,
         title: found.title || '（未命名）',
         difficulty: found.difficulty,
-        tags: found.tags || [],
-        isCustom: Boolean(found.prompt && found.prompt.trim()),
+        tags: Array.isArray(found.tags) ? found.tags : [],
+        isCustom: Boolean(found.prompt && String(found.prompt).trim()),
         prompt: promptOf(found),
         isExisting: true,
       }
@@ -83,7 +83,7 @@ export default function PromptsPage() {
       prompt: PROMPT_TEMPLATE(targetPid),
       isExisting: false,
     }
-  }, [selectedPid, data.problems])
+  }, [selectedPid, data.problems, problemList])
 
   const handleSelectPid = (pid) => {
     setSelectedPid(pid)
@@ -234,7 +234,7 @@ export default function PromptsPage() {
                 style={{ padding: '4px 8px', fontSize: 'var(--fs-sm)' }}
               >
                 <option value="all">全部难度</option>
-                {DIFFICULTY_NAMES.map((name, idx) => (
+                {Object.entries(DIFFICULTY_NAMES).map(([idx, name]) => (
                   <option key={idx} value={String(idx)}>{name}</option>
                 ))}
               </select>
