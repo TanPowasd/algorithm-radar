@@ -4,6 +4,7 @@ import Topbar from '../components/Topbar'
 import Notice from '../components/Notice'
 import StatsBar from '../components/StatsBar'
 import ModelFilter from '../components/ModelFilter'
+import ContributorFilter from '../components/ContributorFilter'
 import ViewTabs from '../components/ViewTabs'
 import MatrixView from '../views/MatrixView'
 import RadarView from '../views/RadarView'
@@ -18,7 +19,7 @@ import PublishModal from '../components/PublishModal'
 import AuthModal from '../components/AuthModal'
 import ImportModal from '../components/ImportModal'
 import PidLink from '../components/PidLink'
-import { isApproved, isPending, lastSub, providerLabel, seriesList, filterByModels } from '../aggregate'
+import { isApproved, isPending, lastSub, providerLabel, seriesList, filterByModels, filterByContributor } from '../aggregate'
 import { useUrlState } from '../hooks/useUrlState'
 import { useHotkeys } from '../hooks/useHotkeys'
 
@@ -32,7 +33,7 @@ const TABS = [
 ]
 
 export default function HomePage() {
-  const { data, loaded, offline, isContributor, isAdmin, nicknameOf, toggleTheme, widthMode, setWidthMode, refreshData, retryNow } = useApp()
+  const { data, loaded, offline, isContributor, isAdmin, nicknameOf, toggleTheme, widthMode, setWidthMode, refreshData, retryNow, focusModels, focusContributor } = useApp()
   const providerCell = (r) => providerLabel(r, nicknameOf)
   const url = useUrlState()
   const [view, setViewRaw] = useState(() => {
@@ -52,9 +53,10 @@ export default function HomePage() {
 
   const pending = (data.records || []).filter(isPending)
   const hud = useMemo(() => {
-    const approved = filterByModels((data.records || []).filter(isApproved))
+    const approved = filterByContributor(
+      filterByModels((data.records || []).filter(isApproved), focusModels), focusContributor)
     return { samples: approved.length, models: seriesList(approved).length, view }
-  }, [data.records, view])
+  }, [data.records, view, focusModels, focusContributor])
 
   const openDetail = (pid, model) => setDrawer({ pid, model: model || null })
 
@@ -93,6 +95,7 @@ export default function HomePage() {
       <main className="layout">
         <Notice />
         <StatsBar />
+        <ContributorFilter />
         <ModelFilter />
 
         <div className="card">

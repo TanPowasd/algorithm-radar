@@ -56,6 +56,19 @@ export const answered = (r) => (r.submissions && r.submissions.length > 0)
 export const filterByModels = (records, focus) =>
   (!focus || focus.size === 0) ? records : records.filter((r) => focus.has(seriesKey(r)))
 
+/**
+ * 按「贡献者视角」过滤记录：focusContributor 为
+ *  - null/undefined → 不过滤（全部贡献者）
+ *  - 数字 uid → 只看 authorId === uid 的记录（该账号名下）
+ *  - 'legacy' → 只看无 authorId 的记录（历史导入，名册上的「全民制作人」）
+ * 与 filterByModels 叠加使用：先模型后贡献者（顺序不影响结果，都是与运算）。
+ */
+export function filterByContributor(records, focusContributor) {
+  if (focusContributor === null || focusContributor === undefined) return records
+  if (focusContributor === 'legacy') return records.filter((r) => !r.authorId)
+  return records.filter((r) => r.authorId === focusContributor)
+}
+
 export const roundScores = (r) =>
   (r.submissions || []).map((s) => s.score).filter((s) => s !== null && s !== undefined)
 

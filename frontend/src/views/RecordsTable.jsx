@@ -5,7 +5,7 @@ import DeleteRecordButton from '../components/DeleteRecordButton'
 import PidLink from '../components/PidLink'
 import {
   applyFilters, difficultyName, fmtClock, fmtDateTime, lastSub, recordLine, recordTs, subBadgeClass, seriesKey,
-  seriesList, THINKING_LABELS, isPending, providerLabel, reviewerLabel, filterByModels,
+  seriesList, THINKING_LABELS, isPending, providerLabel, reviewerLabel, filterByModels, filterByContributor,
 } from '../aggregate'
 import { useUrlState } from '../hooks/useUrlState'
 
@@ -15,7 +15,7 @@ const FILTER_KEYS = ['keyword', 'series', 'difficulty', 'category', 'result', 't
 function diffClass(d) { return `d-${d ?? 0}` }
 
 export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
-  const { data, session, nicknameOf, nameByUid, focusModels, toast, refreshAll } = useApp()
+  const { data, session, nicknameOf, nameByUid, focusModels, focusContributor, toast, refreshAll } = useApp()
   const url = useUrlState('rec')
   const [filters, setFilters] = useState(() => {
     const init = { keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '', onlyMine: false }
@@ -89,10 +89,13 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
   )
 
   const visibleSource = useMemo(() => {
-    // 包含所有通过记录 + 当前登录者自己的待审记录
+    // 所有通过记录（受贡献者视角 + 模型聚焦约束）+ 当前登录者自己的待审记录（不受贡献者筛选影响，保持可改）
     const list = (data.records || []).filter((r) => !isPending(r) || isMyRecord(r))
-    return filterByModels(list, focusModels)
-  }, [data.records, focusModels, session])
+    return [
+      ...filterByContributor(filterByModels(list.filter((r) => !isPending(r)), focusModels), focusContributor),
+      ...list.filter(isPending),
+    ]
+  }, [data.records, focusModels, focusContributor, session])
 
   const filtered = useMemo(() => {
     let list = visibleSource

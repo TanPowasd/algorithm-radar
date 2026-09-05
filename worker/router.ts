@@ -201,11 +201,14 @@ const routes: Route[] = [
         if (await countUsers(ctx.env.DB) > 0) {
             throw new ApiError(409, "站长账号已初始化，请直接登录");
         }
-        const localOk = isLocalHost(ctx.url);
+        const localOk = isLocalHost(ctx.url)
+            // wrangler dev 挂了自定义域路由后 req.url 会呈现为域名（如 http://k4u.top），
+            // 本地判定只能退而求其次：生产上 Cloudflare 恒定注入 CF-Connecting-IP，缺失即本地 dev
+            || clientIp(ctx.req) === "local";
         // 恒定时间比较 SETUP_TOKEN（渗透报告 medium-4；普通 === 存在时序侧信道）
         const tokenOk = tokenMatches(ctx.env.SETUP_TOKEN, ctx.body?.setupToken);
         if (!localOk && !tokenOk) {
-            throw forbidden("公网初始化需要 SETUP_TOKEN（wrangler pages secret put SETUP_TOKEN）");
+            throw forbidden("公网初始化需要 SETUP_TOKEN（wrangler secret put SETUP_TOKEN）");
         }
         const user = await setupOwner(ctx.env.DB, str(ctx.body?.username), str(ctx.body?.password), str(ctx.body?.nickname) || undefined);
         return loginResponse(ctx, { uid: user.id, username: user.username, nickname: user.nickname ?? "", role: user.role });

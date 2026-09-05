@@ -4,7 +4,7 @@ import { makeChart, themeColors } from '../components/charts'
 import SeriesLegend from '../components/SeriesLegend'
 import {
   axisStats, CATEGORY_ORDER, difficultyName, isApproved, seriesColorMap, seriesKey, seriesList,
-  filterByModels,
+  filterByModels, filterByContributor,
 } from '../aggregate'
 import { useUrlState } from '../hooks/useUrlState'
 
@@ -21,7 +21,7 @@ const DIMS = [
 const DIFF_LEVELS = [0, 1, 2, 3, 4, 5, 6, 7]
 
 export default function RadarView() {
-  const { data, theme, focusModels, vendorOf, radarSize, setRadarSize } = useApp()
+  const { data, theme, focusModels, focusContributor, vendorOf, radarSize, setRadarSize } = useApp()
   const url = useUrlState('rd')
   const [metric, setMetric] = useState(() => (METRICS.some((m) => m.key === url.get('metric', '')) ? url.get('metric') : 'final'))
   const [dim, setDim] = useState(() => (DIMS.some((m) => m.key === url.get('dim', '')) ? url.get('dim') : 'category'))
@@ -33,8 +33,8 @@ export default function RadarView() {
   const boxRef = useRef(null)
   const [boxW, setBoxW] = useState(0)
 
-  const approved = useMemo(() => filterByModels(
-    (data.records || []).filter(isApproved), focusModels), [data.records, focusModels])
+  const approved = useMemo(() => filterByContributor(filterByModels(
+    (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
   const series = useMemo(() => seriesList(approved), [approved])
   const colorMap = useMemo(
     () => seriesColorMap(approved, { vendorOf, dark: theme !== 'light' }),

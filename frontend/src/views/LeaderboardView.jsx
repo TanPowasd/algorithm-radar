@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useApp } from '../state'
-import { isApproved, leaderboard, seriesColorMap, seriesKey, filterByModels, THINKING_LABELS, fmtDateTime } from '../aggregate'
+import { isApproved, leaderboard, seriesColorMap, seriesKey, filterByModels, filterByContributor, THINKING_LABELS, fmtDateTime } from '../aggregate'
 import { levelSwatchStyle } from '../palette'
 import { useUrlState } from '../hooks/useUrlState'
 
@@ -13,13 +13,13 @@ const METRICS = [
 ]
 
 export default function LeaderboardView({ onOpenDetail }) {
-  const { data, focusModels, vendorOf, theme } = useApp()
+  const { data, focusModels, focusContributor, vendorOf, theme } = useApp()
   const url = useUrlState('lb')
   const [metric, setMetric] = useState(() => (METRICS.some((m) => m.key === url.get('metric', '')) ? url.get('metric') : 'ac'))
   const [expanded, setExpanded] = useState(null)
 
-  const approved = useMemo(() => filterByModels(
-    (data.records || []).filter(isApproved), focusModels), [data.records, focusModels])
+  const approved = useMemo(() => filterByContributor(filterByModels(
+    (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
   const colorMap = useMemo(
     () => seriesColorMap(approved, { vendorOf, dark: theme !== 'light' }),
     [approved, vendorOf, theme])

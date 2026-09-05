@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '../state'
 import { makeChart, themeColors } from '../components/charts'
 import {
-  isApproved, roundsAvg, seriesKey, seriesList, THINKING_LEVELS, THINKING_LABELS, filterByModels,
+  isApproved, roundsAvg, seriesKey, seriesList, THINKING_LEVELS, THINKING_LABELS, filterByModels, filterByContributor,
 } from '../aggregate'
 import { fillLevelBar, hexRgba, levelSwatchStyle, vendorColorMap } from '../palette'
 import { useUrlState } from '../hooks/useUrlState'
@@ -83,7 +83,7 @@ const barTopLabel = {
 }
 
 export default function BarView() {
-  const { data, theme, focusModels, vendorOf, barMinSamples, setBarMinSamples } = useApp()
+  const { data, theme, focusModels, focusContributor, vendorOf, barMinSamples, setBarMinSamples } = useApp()
   const url = useUrlState('br')
   const [excluded, setExcluded] = useState(loadExcluded)
   const canvasRef = useRef(null)
@@ -102,8 +102,8 @@ export default function BarView() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  const approved = useMemo(() => filterByModels(
-    (data.records || []).filter(isApproved), focusModels), [data.records, focusModels])
+  const approved = useMemo(() => filterByContributor(filterByModels(
+    (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
 
   const seriesColors = useMemo(
     () => vendorColorMap(seriesList(approved), vendorOf, theme !== 'light'),

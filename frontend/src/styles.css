@@ -1093,4 +1093,18 @@ table.data.has-check td.sticky-col, table.data.has-check th.sticky-col { left: 3
   align-items: center;
   margin-left: auto;
 }
+.filter-compact-bar .fc-select {
+  appearance: none;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  max-width: 240px;
+  cursor: pointer;
+}
+.filter-compact-bar .fc-select:hover { border-color: var(--accent); }
+.filter-compact-bar strong { color: var(--accent); }
 

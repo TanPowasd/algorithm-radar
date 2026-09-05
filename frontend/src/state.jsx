@@ -6,6 +6,7 @@ import { createRefreshCoordinator } from './refreshCoordinator'
 const LS_CACHE = 'radar.cache.v3'
 const LS_THEME = 'radar.theme'
 const LS_FOCUS = 'radar.focusModels'
+const LS_CONTRIBUTOR = 'radar.focusContributor'
 const LS_WIDTH = 'radar.widthMode'
 const LS_BARN = 'radar.bar.minSamples'
 const LS_RADAR = 'radar.radarSize'
@@ -89,6 +90,17 @@ export function AppProvider({ children }) {
       return Array.isArray(arr) && arr.length ? new Set(arr) : new Set()
     } catch {
       return new Set()
+    }
+  })
+  // 全局「贡献者视角」：null = 全部；数字 uid = 某贡献者；'legacy' = 全民制作人（历史导入）
+  const [focusContributor, setFocusContributor] = useState(() => {
+    try {
+      const v = localStorage.getItem(LS_CONTRIBUTOR)
+      if (v === 'legacy') return 'legacy'
+      if (v !== null && v !== '' && Number.isFinite(Number(v))) return Number(v)
+      return null
+    } catch {
+      return null
     }
   })
   const [toasts, setToasts] = useState([])
@@ -273,6 +285,12 @@ export function AppProvider({ children }) {
     writeLS(LS_FOCUS, JSON.stringify([...focusModels]))
   }, [focusModels])
 
+  useEffect(() => {
+    try {
+      writeLS(LS_CONTRIBUTOR, focusContributor === null ? '' : String(focusContributor))
+    } catch { /* 忽略 */ }
+  }, [focusContributor])
+
   /* ---------------- 厂商解析（配色用） ---------------- */
   const vendorOf = useMemo(() => makeVendorOf(models), [models])
 
@@ -299,6 +317,8 @@ export function AppProvider({ children }) {
     focusModels,
     toggleFocusModel,
     focusOnly,
+    focusContributor,
+    setFocusContributor,
     toasts,
     toast,
     refreshAll,
@@ -312,7 +332,8 @@ export function AppProvider({ children }) {
     isAdmin: session.role === 'admin' || session.role === 'owner',
     isContributor: session.role === 'contributor' || session.role === 'admin' || session.role === 'owner',
   }), [session, data, models, nicknames, nicknameOf, nameByUid, offline, loaded, theme, themeMode, toggleTheme,
-    widthMode, barMinSamples, radarSize, vendorOf, focusModels, toggleFocusModel, focusOnly, toasts, toast,
+    widthMode, barMinSamples, radarSize, vendorOf, focusModels, toggleFocusModel, focusOnly,
+    focusContributor, setFocusContributor, toasts, toast,
     refreshAll, syncData, refreshSession, refreshData, refreshModels, refreshNicknames, retryNow])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

@@ -1,12 +1,13 @@
 import { useMemo } from 'react'
 import { useApp } from '../state'
-import { isApproved, isPassed, seriesKey, filterByModels } from '../aggregate'
+import { isApproved, isPassed, seriesKey, filterByModels, filterByContributor } from '../aggregate'
 
 export default function StatsBar() {
-  const { data, focusModels } = useApp()
-  const focused = focusModels && focusModels.size > 0
+  const { data, focusModels, focusContributor } = useApp()
+  const focused = (focusModels && focusModels.size > 0) || focusContributor !== null
   const stats = useMemo(() => {
-    const recs = filterByModels((data.records || []).filter(isApproved), focusModels)
+    const recs = filterByContributor(
+      filterByModels((data.records || []).filter(isApproved), focusModels), focusContributor)
     const ac = recs.filter(isPassed).length
     const contributors = new Set(recs.map((r) => r.author).filter(Boolean)).size
     return {
@@ -16,7 +17,7 @@ export default function StatsBar() {
       acRate: recs.length ? ((ac / recs.length) * 100).toFixed(1) : '0.0',
       contributors,
     }
-  }, [data, focusModels])
+  }, [data, focusModels, focusContributor])
 
   const items = [
     { label: focused ? '当前记录' : '测评记录', value: stats.total, tone: 'tone-accent' },

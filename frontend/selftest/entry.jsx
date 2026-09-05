@@ -580,6 +580,69 @@ check('渲染 /?v=insight（三张洞察表）', () => {
   assert.ok(html.includes('模型均分极差'), '区分度表缺极差列')
 })
 
+/* ---------- 贡献者视角（v3.10）：全站筛选器 ---------- */
+const { filterByContributor } = await import('../src/aggregate.js')
+
+check('贡献者视角口径：filterByContributor（uid / legacy / null）', () => {
+  const recs = [
+    { id: 'a', model: 'A', pid: 'P1', status: 'approved', authorId: 7 },
+    { id: 'b', model: 'A', pid: 'P2', status: 'approved', authorId: 9 },
+    { id: 'c', model: 'B', pid: 'P1', status: 'approved' }, // 历史导入：无 authorId
+  ]
+  assert.equal(filterByContributor(recs, null).length, 3, 'null = 不过滤')
+  assert.deepEqual(filterByContributor(recs, 7).map((r) => r.id), ['a'], 'uid=7 只看 authorId 7')
+  assert.deepEqual(filterByContributor(recs, 'legacy').map((r) => r.id), ['c'], 'legacy 只看无 authorId 的记录')
+  assert.equal(filterByContributor(recs, 999).length, 0, '不存在的 uid → 空集（名册删除后自然失效）')
+})
+
+check('贡献者视角：全站接入契约（所有视图与统计都必须走同一过滤器）', () => {
+  const files = [
+    'views/MatrixView.jsx', 'views/RadarView.jsx', 'views/BarView.jsx', 'views/LeaderboardView.jsx',
+    'views/RollBoardView.jsx', 'views/InsightView.jsx', 'views/RecordsTable.jsx',
+    'components/StatsBar.jsx', 'pages/HomePage.jsx',
+  ]
+  for (const f of files) {
+    const src = readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8')
+    assert.ok(src.includes('filterByContributor'), `${f} 未接入贡献者视角过滤`)
+  }
+})
+
+check('贡献者视角：名册页与筛选控件接线（静态源码契约）', () => {
+  const page = readFileSync(new URL('../src/pages/ContributorsPage.jsx', import.meta.url), 'utf8')
+  assert.ok(page.includes('setFocusContributor'), '名册页应能设置贡献者视角')
+  assert.ok(page.includes('全站查看'), '名册页缺「全站查看」入口')
+  assert.ok(page.includes("'legacy'"), '名册页应支持全民制作人视角')
+  const filter = readFileSync(new URL('../src/components/ContributorFilter.jsx', import.meta.url), 'utf8')
+  assert.ok(filter.includes('fc-select') && filter.includes('查看全部'), '筛选控件缺选择器与退出入口')
+  const state = readFileSync(new URL('../src/state.jsx', import.meta.url), 'utf8')
+  assert.ok(state.includes('radar.focusContributor'), '状态未持久化到 localStorage')
+})
+
+check('贡献者视角：选中后 StatsBar 统计同步收缩（真实渲染）', () => {
+  const approved = (snapshot.records || []).filter((r) => r.status !== 'pending')
+  const withUid = approved.find((r) => r.authorId !== null && r.authorId !== undefined)
+  const assertCount = (expected) => {
+    const html = renderAt('/')
+    assert.ok(
+      new RegExp(`class="s-value">${expected}<`).test(html),
+      `StatsBar 记录数应为 ${expected}，实际渲染中找不到`,
+    )
+  }
+  try {
+    if (withUid) {
+      const uid = withUid.authorId
+      const expected = approved.filter((r) => r.authorId === uid).length
+      store.set('radar.focusContributor', String(uid))
+      assertCount(expected)
+    }
+    const legacyExpected = approved.filter((r) => r.authorId === null || r.authorId === undefined).length
+    store.set('radar.focusContributor', 'legacy')
+    assertCount(legacyExpected)
+  } finally {
+    store.delete('radar.focusContributor') // 还原为全部，避免影响后续渲染断言
+  }
+})
+
 /* ---------- 3.5 日夜主题与全宽版心的落地检查（静态读源码/样式） ---------- */
 const srcOf = (rel) => readFileSync(new URL(`../src/${rel}`, import.meta.url), 'utf8')
 const cssText = srcOf('styles.css')

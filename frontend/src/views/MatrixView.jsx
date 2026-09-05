@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { useApp } from '../state'
 import {
   bestThinkingCell, difficultyName, isApproved, isPassed, matrixCell, metricScore, scoreTierClass,
-  seriesColorMap, seriesKey, seriesList, filterByModels, THINKING_LABELS,
+  seriesColorMap, seriesKey, seriesList, filterByModels, filterByContributor, THINKING_LABELS,
 } from '../aggregate'
 import PidLink from '../components/PidLink'
 import { useUrlState } from '../hooks/useUrlState'
@@ -25,7 +25,7 @@ function RankBadge({ rank }) {
 }
 
 export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
-  const { data, focusModels, theme, vendorOf } = useApp()
+  const { data, focusModels, focusContributor, theme, vendorOf } = useApp()
   const url = useUrlState('mx')
   const [modeLocal, setModeLocal] = useState(() => {
     const fromUrl = url.get('mode', '')
@@ -39,8 +39,8 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
     url.set('mode', m)
   }, [url])
 
-  const approved = useMemo(() => filterByModels(
-    (data.records || []).filter(isApproved), focusModels), [data.records, focusModels])
+  const approved = useMemo(() => filterByContributor(filterByModels(
+    (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
 
   const colorMap = useMemo(
     () => seriesColorMap(approved, { vendorOf, dark: theme !== 'light' }),

@@ -6,6 +6,14 @@ name = "ai-vs-luogu"
 main = "worker/index.ts"
 compatibility_date = "2026-09-01"
 
+# 备用访问地址（主域为 k4u.top；不显式开启时绑了自定义域 wrangler 会关掉 workers.dev）
+workers_dev = true
+
+# 自定义域（2026-09-05 从旧 Pages 项目迁入；wrangler deploy 自动接管 DNS 与证书）
+routes = [
+  { pattern = "k4u.top", custom_domain = true }
+]
+
 # 静态资产：命中 frontend/dist 直接返回（带 _headers/_redirects 语义）；
 # 未命中交给 Worker——/api/* 走 API，其余由 ASSETS 兜底（SPA 回退到 index.html）
 [assets]

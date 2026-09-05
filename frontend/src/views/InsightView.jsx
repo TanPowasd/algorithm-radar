@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useApp } from '../state'
-import { filterByModels, isApproved, modelStability, problemDiscrimination, THINKING_LABELS, thinkingYield } from '../aggregate'
+import { filterByModels, filterByContributor, isApproved, modelStability, problemDiscrimination, THINKING_LABELS, thinkingYield } from '../aggregate'
 import PidLink from '../components/PidLink'
 import { levelSwatchStyle } from '../palette'
 
@@ -9,10 +9,10 @@ const score = (x) => (x === null || x === undefined ? '—' : x.toFixed(1))
 
 /** 「洞察」视图：模型稳定性 / 题目区分度 / 思考等级收益（同榜口径：已审核 + 模型筛选） */
 export default function InsightView() {
-  const { data, focusModels } = useApp()
+  const { data, focusModels, focusContributor } = useApp()
   const approved = useMemo(
-    () => filterByModels((data.records || []).filter(isApproved), focusModels),
-    [data.records, focusModels],
+    () => filterByContributor(filterByModels((data.records || []).filter(isApproved), focusModels), focusContributor),
+    [data.records, focusModels, focusContributor],
   )
   const stability = useMemo(
     () => modelStability(approved).sort((a, b) => (b.avgBest ?? -1) - (a.avgBest ?? -1) || b.ac - a.ac),

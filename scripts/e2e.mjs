@@ -141,7 +141,8 @@ try {
   const user = (name, pass) => ({ username: name, password: pass })
 
   // 1. 初始化站长 + 五个注册账号（alice=管理员候选，bob=删号样本，carl/eve=贡献者，dave=待审，frank=管理员删号样本）
-  ok('初始化站长', (await call(owner, 'POST', '/api/setup', { username: 'boss', password: 'ownerpass123', nickname: 'Owner' })).data?.ok)
+  const setupRes = await call(owner, 'POST', '/api/setup', { username: 'boss', password: 'ownerpass123', nickname: 'Owner' })
+  ok('初始化站长', setupRes.data?.ok, `HTTP ${setupRes.status} ${JSON.stringify(setupRes.data)}`)
   for (const u of ['alice', 'bob', 'carl', 'dave', 'eve', 'frank']) {
     const res = await call(tmp, 'POST', '/api/auth/register', { username: u, nickname: u.toUpperCase(), password: `${u}pass12345` })
     ok(`注册 ${u}`, res.data?.ok, `HTTP ${res.status} ${JSON.stringify(res.data)}`)

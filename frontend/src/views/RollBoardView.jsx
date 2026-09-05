@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { useApp } from '../state'
 import {
-  filterByModels, isApproved, seriesColorMap, THINKING_LABELS,
+  filterByModels, filterByContributor, isApproved, seriesColorMap, THINKING_LABELS,
 } from '../aggregate'
 import { cursorLabel, nextAcIndex, nextDayIndex, rollEvents, rollSnapshot } from '../rollboard'
 import PidLink from '../components/PidLink'
@@ -17,9 +17,9 @@ const ROW_H = 34 // 侧栏名次行动画用
  * 名次行用 transform 位移做滚榜动画。
  */
 export default function RollBoardView({ onOpenDetail }) {
-  const { data, focusModels, vendorOf, theme } = useApp()
-  const approved = useMemo(() => filterByModels(
-    (data.records || []).filter(isApproved), focusModels), [data.records, focusModels])
+  const { data, focusModels, focusContributor, vendorOf, theme } = useApp()
+  const approved = useMemo(() => filterByContributor(filterByModels(
+    (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
   const events = useMemo(() => rollEvents(approved), [approved])
   const colorMap = useMemo(
     () => seriesColorMap(approved, { vendorOf, dark: theme !== 'light' }),
