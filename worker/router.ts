@@ -241,12 +241,21 @@ const routes: Route[] = [
         };
     } },
 
-    { method: "PUT", path: "/api/records/:id", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+    { method: "PUT", path: "/api/records/:id", role: "contributor", handler: async (ctx) => {
+        const user = requireRole(ctx, "contributor");
         const raw = ctx.body?.record && typeof ctx.body.record === "object" ? ctx.body.record : ctx.body;
-        // 管理员编辑记录时可把题目信息回写目录（改错场景）；贡献者无此端点
-        const { rec, revision } = await store.updateRecord(ctx.env.DB, ctx.params.id, raw, true);
-        return { ok: true, record: rec, revision };
+        const isAdminLike = isAtLeast(user, "admin");
+        const { rec, revision } = await store.updateRecord(ctx.env.DB, ctx.params.id, raw, {
+            uid: user.uid,
+            username: user.username,
+            isAdminLike,
+        });
+        return {
+            ok: true,
+            record: rec,
+            revision,
+            message: rec.status === "approved" ? "已更新并计入统计" : "已更新，需管理员重新审核后生效",
+        };
     } },
 
     { method: "DELETE", path: "/api/records/:id", role: "admin", handler: async (ctx) => {

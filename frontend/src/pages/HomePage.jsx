@@ -168,6 +168,42 @@ export default function HomePage() {
           </div>
         )}
 
+        {!isAdmin && pending.length > 0 && (
+          <div className="card" id="my-pending-card">
+            <div className="card-head">
+              <h2>我提交的待审核记录</h2>
+              <span className="hint">{pending.length} 条等待审核</span>
+              <span className="chain">修改后将重新进入待审，需管理员审核通过后计入统计</span>
+            </div>
+            <div className="table-scroll">
+              <table className="data review-table">
+                <thead>
+                  <tr><th>模型</th><th>题目</th><th>思考</th><th>末轮</th><th>提交日期</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                  {pending.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.model}</td>
+                      <td><PidLink pid={r.pid} /> {r.title && <span className="chain">{r.title}</span>}</td>
+                      <td>{r.thinking}</td>
+                      <td>{lastSub(r)?.result ?? '—'}</td>
+                      <td>{r.date}</td>
+                      <td className="actions">
+                        <button
+                          className="btn small ghost"
+                          onClick={() => setRecordModal({ edit: r, lockPid: null })}
+                        >
+                          修改
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         <footer className="foot">
           AI vs 洛谷 · 数据仅供参考 · 游客可自由浏览与下载数据
           {' '}·{' '}
@@ -181,6 +217,10 @@ export default function HomePage() {
           highlightModel={drawer.model}
           onClose={() => setDrawer(null)}
           onSubmitClick={isContributor ? () => openSubmitFor(drawer.pid) : undefined}
+          onEditRecord={(r) => {
+            setDrawer(null)
+            setRecordModal({ edit: r, lockPid: null })
+          }}
         />
       )}
       {recordModal && (

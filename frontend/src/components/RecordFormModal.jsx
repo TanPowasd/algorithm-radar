@@ -19,7 +19,7 @@ function Field({ label, children }) {
 }
 
 export default function RecordFormModal({ editRecord, lockPid, onClose }) {
-  const { data, models, toast, refreshAll } = useApp()
+  const { data, models, toast, refreshAll, isAdmin } = useApp()
   const isEdit = !!editRecord
 
   const problemOptions = useMemo(() => {
@@ -140,8 +140,8 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
         note: form.note,
       }
       if (isEdit) {
-        await api(`/api/records/${editRecord.id}`, { method: 'PUT', body: { record: payload } })
-        toast('已更新测评记录')
+        const res = await api(`/api/records/${editRecord.id}`, { method: 'PUT', body: { record: payload } })
+        toast(res.message || '已更新测评记录')
       } else {
         const res = await api('/api/records', { method: 'POST', body: { record: payload } })
         toast(res.message || '已保存')
@@ -162,6 +162,12 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
           <h3>{isEdit ? `编辑测评 · ${editRecord.id}` : '提交测评记录'}</h3>
           <button type="button" className="icon-btn close" onClick={onClose}>✕</button>
         </div>
+
+        {isEdit && !isAdmin && (
+          <div className="callout" style={{ marginBottom: 'var(--sp-3)', borderColor: 'color-mix(in srgb, var(--accent) 40%, transparent)' }}>
+            <strong>提示：</strong>您正在修改自己提交的评测记录。保存后该记录将<strong>重新进入待审核状态</strong>，需管理员再次审核通过后计入统计。
+          </div>
+        )}
 
         <div className="grid3">
           <Field label="AI 模型（已收录）*">

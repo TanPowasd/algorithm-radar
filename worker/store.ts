@@ -11,7 +11,7 @@ import {
     MAX_CATEGORIES, MAX_CATEGORY, MAX_MODEL, MAX_NOTE, MAX_PROBLEMS, MAX_RECORDS,
     MAX_SUBMISSIONS, MAX_TAGS, MAX_TITLE, MAX_VARIANT, MAX_AGENT, MAX_TOKEN_SOURCE,
     STATUSES, nowIso, sanitizeProblem, sanitizeRecord, badRequest, notFound, text,
-    nameList, intOrNull,
+    nameList, intOrNull, forbidden,
 } from "./util";
 
 export interface Snapshot {
@@ -231,11 +231,47 @@ export async function addRecord(db: D1Database, raw: any, user: { uid: number; u
     return { rec, revision: await getRevision(db) };
 }
 
-export async function updateRecord(db: D1Database, rid: string, raw: any, isAdminLike = false): Promise<AddRecordResult> {
+export interface UpdateUserCtx {
+    uid: number;
+    username: string;
+    isAdminLike: boolean;
+}
+
+export async function updateRecord(
+    db: D1Database,
+    rid: string,
+    raw: any,
+    userOrAdminLike: UpdateUserCtx | boolean = false,
+): Promise<AddRecordResult> {
+    const isAdminLike = typeof userOrAdminLike === "object" ? userOrAdminLike.isAdminLike : Boolean(userOrAdminLike);
     const row = await db.prepare("SELECT * FROM records WHERE id = ?1 AND deleted_at IS NULL").bind(rid).first();
     if (!row) throw notFound("记录不存在（可能已在回收站）");
     const existing = mapRec(row);
-    const rec = sanitizeRecord(raw, existing, existing.status);
+
+    // 鉴权校验：非管理员只能修改自己提交的记录
+    if (!isAdminLike) {
+        if (typeof userOrAdminLike !== "object") {
+            throw forbidden("权限不足，无法修改此记录");
+        }
+        const isOwner = (existing.authorId !== null && existing.authorId === userOrAdminLike.uid)
+            || (Boolean(existing.author) && existing.author === userOrAdminLike.username);
+        if (!isOwner) {
+            throw forbidden("只能修改自己提交的记录");
+        }
+    }
+
+    // 贡献者修改后强制退回 pending，重新等待管理员审核；管理员修改保持原审核状态
+    const targetStatus = isAdminLike ? existing.status : "pending";
+    const rec = sanitizeRecord(raw, existing, targetStatus);
+    if (!isAdminLike) {
+        rec.status = "pending";
+        rec.reviewerId = null;
+        rec.reviewedAt = null;
+    }
+    rec.author = existing.author;
+    rec.authorId = existing.authorId;
+    rec.updatedAt = nowIso();
+
     await requirePublished(db, rec.pid);
     await requirePublishedModel(db, rec.model);
     const prev = await findProblem(db, rec.pid);

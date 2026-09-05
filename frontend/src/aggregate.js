@@ -299,7 +299,7 @@ export function matrixCell(records, series, pid) {
 export function applyFilters(records, f) {
   const kw = (f.keyword || '').trim().toLowerCase()
   return records.filter((r) => {
-    if (isPending(r)) return false
+    if (isPending(r) && !f.includePending) return false
     if (f.series && seriesKey(r) !== f.series) return false
     if (f.difficulty !== '' && f.difficulty !== null && f.difficulty !== undefined && String(r.difficulty) !== String(f.difficulty)) return false
     if (f.category && !(r.categories || []).includes(f.category)) return false

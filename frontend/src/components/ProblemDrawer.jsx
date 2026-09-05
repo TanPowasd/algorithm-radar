@@ -7,12 +7,21 @@ import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLa
 import { THINKING_LABELS } from '../aggregate'
 
 /** 题目详情抽屉：题目信息 + 推荐提示词（一键复制）+ 该题全部记录 + 三个统计 */
-export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitClick }) {
-  const { data, toast, nicknameOf, nameByUid, isAdmin } = useApp()
+export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitClick, onEditRecord }) {
+  const { data, toast, nicknameOf, nameByUid, isAdmin, session } = useApp()
   const problem = data.problems?.[pid]
+  const isMyRecord = (r) => Boolean(
+    session.loggedIn && (
+      (session.username && r.author === session.username) ||
+      (session.uid && r.authorId === session.uid)
+    )
+  )
   const recs = useMemo(() =>
-    (data.records || []).filter((r) => r.pid === pid && r.status !== 'pending')
-      .sort((a, b) => b.date.localeCompare(a.date)), [data.records, pid])
+    (data.records || []).filter((r) => {
+      if (r.pid !== pid) return false
+      if (r.status !== 'pending') return true
+      return isMyRecord(r)
+    }).sort((a, b) => b.date.localeCompare(a.date)), [data.records, pid, session])
 
   const stats = useMemo(() => {
     if (!recs.length) return null
@@ -60,6 +69,8 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
           {!recs.length && <div className="empty">该题还没有测评记录</div>}
           {recs.map((r) => {
             const last = lastSub(r)
+            const isMy = isMyRecord(r)
+            const canEdit = isAdmin || isMy
             return (
               <div key={r.id} className={`drawer-rec ${highlightModel && seriesKey(r) === highlightModel ? 'hl' : ''}`}>
                 <div className="dr-head">
@@ -68,10 +79,21 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
                   <span className={`sub-badge ${last ? subBadgeClass(last.score) : 'b-na'}`}>
                     {last ? `${last.result} ${last.score ?? ''}` : '无提交'}
                   </span>
+                  {r.status === 'pending' && <span className="status-tag pending">待审</span>}
                   <span className="meta" title={`录入 ${fmtDateTime(r.createdAt)} · 更新 ${fmtDateTime(r.updatedAt)}`}>
                     {r.date} {fmtClock(r.createdAt)} · 提供 {providerLabel(r, nicknameOf)}
                     {reviewerLabel(r, nameByUid) ? ` · 审核 ${reviewerLabel(r, nameByUid)}` : ''}
                   </span>
+                  {onEditRecord && canEdit && (
+                    <button
+                      className="btn small ghost"
+                      onClick={() => onEditRecord(r)}
+                      title={isMy && !isAdmin ? '修改我提交的记录（保存后需再次审核）' : '编辑记录'}
+                      style={{ padding: '2px 8px', fontSize: 'var(--fs-xs)' }}
+                    >
+                      编辑
+                    </button>
+                  )}
                   {isAdmin && <DeleteRecordButton record={r} />}
                 </div>
                 {(r.submissions || []).map((s, i) => (

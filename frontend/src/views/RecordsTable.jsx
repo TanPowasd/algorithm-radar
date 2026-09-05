@@ -10,18 +10,22 @@ import {
 import { useUrlState } from '../hooks/useUrlState'
 
 const PAGE_SIZE = 50
-const FILTER_KEYS = ['keyword', 'series', 'difficulty', 'category', 'result', 'thinking']
+const FILTER_KEYS = ['keyword', 'series', 'difficulty', 'category', 'result', 'thinking', 'onlyMine']
 
 function diffClass(d) { return `d-${d ?? 0}` }
 
 export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
-  const { data, nicknameOf, nameByUid, focusModels, toast, refreshAll } = useApp()
+  const { data, session, nicknameOf, nameByUid, focusModels, toast, refreshAll } = useApp()
   const url = useUrlState('rec')
   const [filters, setFilters] = useState(() => {
-    const init = { keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '' }
+    const init = { keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '', onlyMine: false }
     for (const k of FILTER_KEYS) {
       const v = url.get(k, '')
-      if (v) init[k] = v
+      if (k === 'onlyMine') {
+        if (v === '1' || v === 'true') init.onlyMine = true
+      } else if (v) {
+        init[k] = v
+      }
     }
     return init
   })
@@ -32,9 +36,31 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
   })
   const [page, setPage] = useState(() => Number(url.get('page', '')) || 0)
 
-  const approved = useMemo(() => filterByModels(
-    (data.records || []).filter((r) => !isPending(r)), focusModels), [data.records, focusModels])
-  const filtered = useMemo(() => applyFilters(approved, filters), [approved, filters])
+  const isMyRecord = (r) => Boolean(
+    session.loggedIn && (
+      (session.username && r.author === session.username) ||
+      (session.uid && r.authorId === session.uid)
+    )
+  )
+
+  const visibleSource = useMemo(() => {
+    // 包含所有通过记录 + 当前登录者自己的待审记录
+    const list = (data.records || []).filter((r) => !isPending(r) || isMyRecord(r))
+    return filterByModels(list, focusModels)
+  }, [data.records, focusModels, session])
+
+  const filtered = useMemo(() => {
+    let list = visibleSource
+    if (filters.onlyMine) {
+      list = list.filter(isMyRecord)
+    }
+    return applyFilters(list, { ...filters, includePending: true })
+  }, [visibleSource, filters, session])
+
+  const myTotalCount = useMemo(() => {
+    if (!session.loggedIn) return 0
+    return (data.records || []).filter(isMyRecord).length
+  }, [data.records, session])
 
   const sorted = useMemo(() => {
     const list = [...filtered]
@@ -108,7 +134,7 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
     }
   }
 
-  const seriesOpts = seriesList(approved)
+  const seriesOpts = seriesList(visibleSource)
   useEffect(() => {
     if (filters.series && !seriesOpts.includes(filters.series)) {
       setFilters((f) => ({ ...f, series: '' }))
@@ -117,15 +143,19 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
 
   const categoryOpts = useMemo(() => {
     const set = new Set()
-    approved.forEach((r) => (r.categories || []).forEach((c) => set.add(c)))
+    visibleSource.forEach((r) => (r.categories || []).forEach((c) => set.add(c)))
     return [...set].sort()
-  }, [approved])
+  }, [visibleSource])
 
   /** 筛选/排序/翻页写进 URL（?rec:keyword=…），刷新与分享都保持现场 */
   const setF = (patch) => {
     setFilters((f) => ({ ...f, ...patch }))
     setPage(0)
-    url.setMany({ ...patch, page: '' })
+    const urlPatch = { ...patch, page: '' }
+    if ('onlyMine' in patch) {
+      urlPatch.onlyMine = patch.onlyMine ? '1' : ''
+    }
+    url.setMany(urlPatch)
   }
   const setSortBoth = (next) => {
     setSort(next)
@@ -136,10 +166,10 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
     url.set('page', p === 0 ? '' : p)
   }
   const clearAll = () => {
-    const blank = { keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '' }
+    const blank = { keyword: '', series: '', difficulty: '', category: '', result: '', thinking: '', onlyMine: false }
     setFilters(blank)
     setPage(0)
-    url.setMany({ ...blank, page: '' })
+    url.setMany({ ...blank, onlyMine: '', page: '' })
   }
 
   const th = (key, label) => (
@@ -152,7 +182,7 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
     </th>
   )
 
-  const hasFilter = !!(filters.keyword || filters.series || filters.difficulty !== '' || filters.category || filters.result || filters.thinking)
+  const hasFilter = !!(filters.keyword || filters.series || filters.difficulty !== '' || filters.category || filters.result || filters.thinking || filters.onlyMine)
 
   return (
     <div className="card" id="records-card">
@@ -195,6 +225,33 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
           <option value="final">最终 AC</option>
           <option value="fail">未通过</option>
         </select>
+        {session.loggedIn && (
+          <label
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              cursor: 'pointer',
+              userSelect: 'none',
+              fontSize: 'var(--fs-sm)',
+              padding: '4px 10px',
+              borderRadius: 'var(--r-sm)',
+              background: filters.onlyMine ? 'var(--accent-soft)' : 'var(--surface-2)',
+              border: '1px solid',
+              borderColor: filters.onlyMine ? 'var(--accent)' : 'var(--border-soft)',
+              color: filters.onlyMine ? 'var(--accent)' : 'var(--text-2)',
+            }}
+            title="仅查看当前登录账号提交的评测记录（含已通过与待审核）"
+          >
+            <input
+              type="checkbox"
+              checked={filters.onlyMine}
+              onChange={(e) => setF({ onlyMine: e.target.checked })}
+              style={{ margin: 0 }}
+            />
+            <span>仅看我的提交{myTotalCount > 0 ? ` (${myTotalCount})` : ''}</span>
+          </label>
+        )}
       </div>
       {isAdmin && selIds.size > 0 && (
         <div className="bulk-bar" role="toolbar" aria-label="批量操作">
@@ -229,70 +286,89 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
               {th('author', '提供者')}
               {th('reviewerId', '审核人')}
               {th('note', '备注')}
-              {isAdmin && <th>操作</th>}
+              {(isAdmin || session.loggedIn) && <th>操作</th>}
             </tr>
           </thead>
           <tbody>
-            {pageRows.map((r) => (
-              <tr key={r.id} className={selIds.has(r.id) ? 'picked' : ''}>
-                {isAdmin && (
-                  <td className="row-check">
-                    <input
-                      type="checkbox" checked={selIds.has(r.id)} onChange={() => toggleRow(r.id)}
-                      aria-label={`选择 ${seriesKey(r)} ${r.pid}`}
-                    />
+            {pageRows.map((r) => {
+              const myRec = isMyRecord(r)
+              const canEdit = isAdmin || myRec
+              return (
+                <tr key={r.id} className={`${selIds.has(r.id) ? 'picked' : ''} ${r.status === 'pending' ? 'row-pending' : ''}`}>
+                  {isAdmin && (
+                    <td className="row-check">
+                      <input
+                        type="checkbox" checked={selIds.has(r.id)} onChange={() => toggleRow(r.id)}
+                        aria-label={`选择 ${seriesKey(r)} ${r.pid}`}
+                      />
+                    </td>
+                  )}
+                  <td className="sticky-col">
+                    {seriesKey(r)}{r.variant ? <span className="chain">（{r.variant}）</span> : null}
                   </td>
-                )}
-                <td className="sticky-col">
-                  {seriesKey(r)}{r.variant ? <span className="chain">（{r.variant}）</span> : null}
-                </td>
-                <td>
-                  <PidLink pid={r.pid} />
-                  <div
-                    className="chain pid-detail"
-                    data-detail={r.pid}
-                    onClick={() => onOpenDetail && onOpenDetail(r.pid, seriesKey(r))}
-                    title={`${r.pid} ${r.title || ''} · 点击查看本站详情`}
-                  >{r.title}</div>
-                </td>
-                <td><span className={`diff-tag ${diffClass(r.difficulty)}`}>{difficultyName(r.difficulty)}</span></td>
-                <td><span className={`think-tag lv-${r.thinking}`}>{THINKING_LABELS[r.thinking] || r.thinking}</span></td>
-                <td>{r.agent || <span className="chain">—</span>}</td>
-                <td>{r.tokenSource || <span className="chain">—</span>}</td>
-                <td>
-                  {(r.submissions || []).map((s, i) => (
-                    <span key={i} className={`sub-badge ${subBadgeClass(s.score)}`} title={`第${i + 1}轮 ${s.result} ${s.score ?? '无分'} ${s.note || ''}`}>
-                      {s.score ?? s.result}
-                    </span>
-                  ))}
-                </td>
-                <td className="num">{r.minutes ?? '—'}</td>
-                <td className="num">{r.memory ?? '—'}</td>
-                <td title={`测评日期 ${r.date}\n录入时间 ${fmtDateTime(r.createdAt)}\n更新时间 ${fmtDateTime(r.updatedAt)}`}>
-                  <div className="tcell">
-                    <span className="t-date">{r.date}</span>
-                    <span className="t-time">{fmtClock(r.createdAt) || '—:—'}</span>
-                  </div>
-                </td>
-                <td title={r.authorId ? `提供者 ID #${r.authorId}` : '网站首次录入的历史数据'}>
-                  {providerLabel(r, nicknameOf)}
-                </td>
-                <td title={r.reviewerId ? `审核人 ID #${r.reviewerId}` : (r.status === 'approved' ? '网站首次录入的历史数据' : '尚未审核')}>
-                  {reviewerLabel(r, nameByUid) || <span className="chain">待审核</span>}
-                  <div className="chain">{r.reviewedAt ? fmtDateTime(r.reviewedAt) : ''}</div>
-                </td>
-                <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.note}>{r.note || '—'}</td>
-                {isAdmin && (
-                  <td className="actions">
-                    <button className="btn small ghost" onClick={() => onEdit(r)}>编辑</button>
-                    <DeleteRecordButton record={r} />
-                    {r.status === 'pending' && <span className="status-tag pending">待审</span>}
+                  <td>
+                    <PidLink pid={r.pid} />
+                    <div
+                      className="chain pid-detail"
+                      data-detail={r.pid}
+                      onClick={() => onOpenDetail && onOpenDetail(r.pid, seriesKey(r))}
+                      title={`${r.pid} ${r.title || ''} · 点击查看本站详情`}
+                    >{r.title}</div>
                   </td>
-                )}
-              </tr>
-            ))}
+                  <td><span className={`diff-tag ${diffClass(r.difficulty)}`}>{difficultyName(r.difficulty)}</span></td>
+                  <td><span className={`think-tag lv-${r.thinking}`}>{THINKING_LABELS[r.thinking] || r.thinking}</span></td>
+                  <td>{r.agent || <span className="chain">—</span>}</td>
+                  <td>{r.tokenSource || <span className="chain">—</span>}</td>
+                  <td>
+                    {(r.submissions || []).map((s, i) => (
+                      <span key={i} className={`sub-badge ${subBadgeClass(s.score)}`} title={`第${i + 1}轮 ${s.result} ${s.score ?? '无分'} ${s.note || ''}`}>
+                        {s.score ?? s.result}
+                      </span>
+                    ))}
+                  </td>
+                  <td className="num">{r.minutes ?? '—'}</td>
+                  <td className="num">{r.memory ?? '—'}</td>
+                  <td title={`测评日期 ${r.date}\n录入时间 ${fmtDateTime(r.createdAt)}\n更新时间 ${fmtDateTime(r.updatedAt)}`}>
+                    <div className="tcell">
+                      <span className="t-date">{r.date}</span>
+                      <span className="t-time">{fmtClock(r.createdAt) || '—:—'}</span>
+                    </div>
+                  </td>
+                  <td title={r.authorId ? `提供者 ID #${r.authorId}` : '网站首次录入的历史数据'}>
+                    {providerLabel(r, nicknameOf)}
+                  </td>
+                  <td title={r.reviewerId ? `审核人 ID #${r.reviewerId}` : (r.status === 'approved' ? '网站首次录入的历史数据' : '尚未审核')}>
+                    {reviewerLabel(r, nameByUid) || <span className="chain">待审核</span>}
+                    <div className="chain">{r.reviewedAt ? fmtDateTime(r.reviewedAt) : ''}</div>
+                  </td>
+                  <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.note}>{r.note || '—'}</td>
+                  {(isAdmin || session.loggedIn) && (
+                    <td className="actions">
+                      {canEdit && (
+                        <button
+                          className="btn small ghost"
+                          onClick={() => onEdit(r)}
+                          title={myRec && !isAdmin ? '修改我提交的记录（保存后将重新进入待审核状态）' : '编辑记录'}
+                        >
+                          编辑
+                        </button>
+                      )}
+                      {isAdmin && <DeleteRecordButton record={r} />}
+                      {r.status === 'pending' && (
+                        <span
+                          className="status-tag pending"
+                          title={myRec ? '您提交或修改的记录，正等待管理员审核' : '待管理员审核'}
+                        >
+                          待审
+                        </span>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              )
+            })}
             {!pageRows.length && (
-              <tr><td colSpan={isAdmin ? 15 : 13}><div className="empty">没有符合筛选条件的记录</div></td></tr>
+              <tr><td colSpan={(isAdmin || session.loggedIn) ? (isAdmin ? 15 : 14) : 13}><div className="empty">没有符合筛选条件的记录</div></td></tr>
             )}
           </tbody>
         </table>
