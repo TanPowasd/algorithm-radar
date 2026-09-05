@@ -4,9 +4,9 @@
  */
 import {
     approveUser, AuthUser, authenticate, changePassword, countUsers, createToken, csrfCookie,
-    CSRF_COOKIE, CSRF_HEADER, constantTimeEqual, cookieValue, deleteUser, isAtLeast,
+    CSRF_COOKIE, CSRF_HEADER, constantTimeEqual, cookieValue, deleteUser, findById, isAtLeast,
     listActiveContributors, listUsers, newCsrfToken, registerUser, rejectUser,
-    renewAfter, sessionCookie, SESSION_COOKIE, SessionData, setRole, setupOwner, verifyToken,
+    renewAfter, sessionCookie, SESSION_COOKIE, SessionData, setRole, setupOwner, updateNickname, verifyToken,
 } from "./auth";
 import { ApiError, DIFFICULTY_NAMES, forbidden, tooMany, unauthorized } from "./util";
 import * as store from "./store";
@@ -214,6 +214,13 @@ const routes: Route[] = [
         return { ok: true, message: "密码已修改，其他设备已退出登录" };
     } },
 
+    /** 自助改昵称（显示名即时生效：会话回查用户表取最新昵称，无需重新登录） */
+    { method: "POST", path: "/api/profile/nickname", role: "contributor", handler: async (ctx) => {
+        const user = requireRole(ctx, "contributor");
+        const nickname = await updateNickname(ctx.env.DB, user.uid, str(ctx.body?.nickname));
+        return { ok: true, nickname, message: "昵称已更新" };
+    } },
+
     { method: "POST", path: "/api/auth/register", role: null, handler: async (ctx) => {
         if (!tryAcquire("register:" + clientIp(ctx.req), 6, 3_600_000)) {
             throw tooMany("注册尝试过于频繁，请稍后再试");
@@ -259,8 +266,9 @@ const routes: Route[] = [
     } },
 
     { method: "DELETE", path: "/api/records/:id", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+        const actor = requireRole(ctx, "admin");
         const revision = await store.deleteRecord(ctx.env.DB, ctx.params.id); // 软删除 → 回收站
+        await store.logAudit(ctx.env.DB, actor, "record.delete", `记录 ${ctx.params.id} 移入回收站`);
         return { ok: true, revision };
     } },
 
@@ -278,15 +286,17 @@ const routes: Route[] = [
     } },
 
     { method: "POST", path: "/api/trash/purge", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+        const actor = requireRole(ctx, "admin");
         const ids: string[] = Array.isArray(ctx.body?.ids) ? ctx.body.ids.map(String) : [];
         const purged = await store.purgeTrash(ctx.env.DB, ids);
+        await store.logAudit(ctx.env.DB, actor, "trash.purge", `永久删除 ${purged} 条记录`);
         return { ok: true, purged, revision: await currentRevision(ctx.env.DB) };
     } },
 
     { method: "POST", path: "/api/trash/empty", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+        const actor = requireRole(ctx, "admin");
         const purged = await store.emptyTrash(ctx.env.DB);
+        await store.logAudit(ctx.env.DB, actor, "trash.empty", `清空回收站 ${purged} 条记录`);
         return { ok: true, purged, revision: await currentRevision(ctx.env.DB) };
     } },
 
@@ -300,6 +310,9 @@ const routes: Route[] = [
         const reviewer = requireRole(ctx, "admin");
         const ids: string[] = Array.isArray(ctx.body?.ids) ? ctx.body.ids.map(String) : [];
         const affected = await store.bulkStatus(ctx.env.DB, ids, str(ctx.body?.action), reviewer.uid);
+        if (str(ctx.body?.action) === "reject") {
+            await store.logAudit(ctx.env.DB, reviewer, "records.bulk", `批量移入回收站 ${affected} 条`);
+        }
         return { ok: true, affected, revision: await currentRevision(ctx.env.DB) };
     } },
 
@@ -321,8 +334,9 @@ const routes: Route[] = [
     } },
 
     { method: "DELETE", path: "/api/problems/:pid", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+        const actor = requireRole(ctx, "admin");
         const revision = await store.deleteProblem(ctx.env.DB, ctx.params.pid);
+        await store.logAudit(ctx.env.DB, actor, "problem.delete", `题目 ${ctx.params.pid}`);
         return { ok: true, revision };
     } },
 
@@ -396,8 +410,11 @@ const routes: Route[] = [
     } },
 
     { method: "DELETE", path: "/api/models/:id", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
-        await store.deleteModel(ctx.env.DB, Number(ctx.params.id));
+        const actor = requireRole(ctx, "admin");
+        const id = Number(ctx.params.id);
+        const model = (await store.listModels(ctx.env.DB)).find((m) => m.id === id);
+        await store.deleteModel(ctx.env.DB, id);
+        await store.logAudit(ctx.env.DB, actor, "model.delete", `模型 ${model?.name ?? "#" + id}`);
         return { ok: true };
     } },
 
@@ -414,26 +431,42 @@ const routes: Route[] = [
     { method: "POST", path: "/api/admin/users/:id/approve", role: "owner", handler: async (ctx) => {
         const owner = requireRole(ctx, "owner");
         await approveUser(ctx.env.DB, Number(ctx.params.id), owner.username);
+        const target = await findById(ctx.env.DB, Number(ctx.params.id));
+        await store.logAudit(ctx.env.DB, owner, "user.approve", `批准注册 ${target?.username ?? "#" + ctx.params.id}`);
         return { ok: true };
     } },
 
     { method: "POST", path: "/api/admin/users/:id/reject", role: "owner", handler: async (ctx) => {
-        requireRole(ctx, "owner");
+        const owner = requireRole(ctx, "owner");
         await rejectUser(ctx.env.DB, Number(ctx.params.id));
+        const target = await findById(ctx.env.DB, Number(ctx.params.id));
+        await store.logAudit(ctx.env.DB, owner, "user.reject", `拒绝注册 ${target?.username ?? "#" + ctx.params.id}`);
         return { ok: true };
     } },
 
     { method: "POST", path: "/api/admin/users/:id/role", role: "owner", handler: async (ctx) => {
-        requireRole(ctx, "owner");
-        await setRole(ctx.env.DB, Number(ctx.params.id), str(ctx.body?.role));
+        const owner = requireRole(ctx, "owner");
+        const target = await findById(ctx.env.DB, Number(ctx.params.id));
+        const role = str(ctx.body?.role);
+        await setRole(ctx.env.DB, Number(ctx.params.id), role);
+        await store.logAudit(ctx.env.DB, owner, "user.role",
+            `${target?.username ?? "#" + ctx.params.id} 角色 → ${role === "admin" ? "管理员" : "贡献者"}`);
         return { ok: true };
     } },
 
-    /** 删除账号（物理删除）：管理员可删已激活贡献者，站长还可删管理员；测评记录保留 */
+    /** 删除账号（物理删除）：管理员可删已激活贡献者，站长可删任意非站长账号（含待审/已拒）；测评记录保留 */
     { method: "DELETE", path: "/api/admin/users/:id", role: "admin", handler: async (ctx) => {
         const actor = requireRole(ctx, "admin");
-        await deleteUser(ctx.env.DB, Number(ctx.params.id), actor);
+        const target = await deleteUser(ctx.env.DB, Number(ctx.params.id), actor);
+        await store.logAudit(ctx.env.DB, actor, "user.delete",
+            `删除账号 ${target.username}#${target.id}（${target.role}/${target.status}）`);
         return { ok: true };
+    } },
+
+    /** 敏感操作审计（新→旧，最近 100 条）：管理员及以上只读 */
+    { method: "GET", path: "/api/admin/audit", role: "admin", handler: async (ctx) => {
+        requireRole(ctx, "admin");
+        return { entries: await store.listAudit(ctx.env.DB) };
     } },
 
     { method: "GET", path: "/api/luogu", role: "admin", handler: async (ctx) => {
@@ -477,8 +510,9 @@ const routes: Route[] = [
 
     /** 一键清空收录目录（题目 + 模型）与全部记录：清库重建，重新开始收录 */
     { method: "POST", path: "/api/catalog/reset", role: "owner", handler: async (ctx) => {
-        requireRole(ctx, "owner");
+        const owner = requireRole(ctx, "owner");
         await store.resetCatalog(ctx.env.DB);
+        await store.logAudit(ctx.env.DB, owner, "catalog.reset", "清空收录目录与全部记录");
         return { ok: true, revision: await store.getRevision(ctx.env.DB) };
     } },
 
@@ -509,10 +543,11 @@ const routes: Route[] = [
     } },
 
     { method: "POST", path: "/api/import", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+        const actor = requireRole(ctx, "admin");
         const mode = str(ctx.body?.mode) || "merge";
         const data = ctx.body?.data && typeof ctx.body.data === "object" ? ctx.body.data : ctx.body;
         const { imported } = await store.importBundle(ctx.env.DB, data, mode);
+        await store.logAudit(ctx.env.DB, actor, "import", `${mode} 模式导入 ${imported} 条记录`);
         return { ok: true, imported, revision: await currentRevision(ctx.env.DB) };
     } },
 ];

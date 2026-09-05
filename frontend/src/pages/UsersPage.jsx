@@ -8,11 +8,26 @@ import TimeCell from '../components/TimeCell'
 
 const ROLE_LABEL = { owner: '站长', admin: '管理员', contributor: '贡献者' }
 const STATUS_LABEL = { active: '已激活', pending: '待审核', rejected: '已拒绝' }
+const ACTION_LABEL = {
+  'user.delete': '删除账号',
+  'user.role': '任免角色',
+  'user.approve': '批准注册',
+  'user.reject': '拒绝注册',
+  'record.delete': '删除记录',
+  'records.bulk': '批量审核',
+  'trash.purge': '永久删除',
+  'trash.empty': '清空回收站',
+  'problem.delete': '删除题目',
+  'model.delete': '删除模型',
+  'catalog.reset': '清空目录',
+  import: '导入数据',
+}
 
 export default function UsersPage() {
   const { session, isOwner, isAdmin, toast, loaded } = useApp()
   const [authOpen, setAuthOpen] = useState(false)
   const [users, setUsers] = useState(null)
+  const [audit, setAudit] = useState(null)
 
   const load = async () => {
     try {
@@ -24,8 +39,18 @@ export default function UsersPage() {
     }
   }
 
+  const loadAudit = async () => {
+    try {
+      const res = await api('/api/admin/audit')
+      setAudit(res.entries || [])
+    } catch (e) {
+      toast(e.message, 'err')
+      setAudit([])
+    }
+  }
+
   useEffect(() => {
-    if (isAdmin) load()
+    if (isAdmin) { load(); loadAudit() }
   }, [isAdmin])
 
   const pending = useMemo(() => (users || []).filter((u) => u.status === 'pending'), [users])
@@ -41,7 +66,7 @@ export default function UsersPage() {
     try {
       await api(path, { method, body })
       toast('操作成功')
-      await load()
+      await Promise.all([load(), loadAudit()])
     } catch (e) {
       toast(e.message, 'err')
     }
@@ -58,7 +83,7 @@ export default function UsersPage() {
           <div className="card login-gate">
             <h2 style={{ marginBottom: 10 }}>用户管理</h2>
             <p style={{ color: 'var(--text-2)', fontSize: 'var(--fs-sm)' }}>
-              仅管理员及以上可访问：管理员删除贡献者账号；站长审核注册、任命/免除/删除管理员。
+              仅管理员及以上可访问：管理员删除贡献者账号；站长清理任意非站长账号、任免管理员。
             </p>
             {session.loggedIn
               ? <div className="callout">当前账号权限不足。</div>
@@ -69,6 +94,33 @@ export default function UsersPage() {
       </>
     )
   }
+
+  const auditCard = (
+    <div className="card">
+      <div className="card-head">
+        <h2>操作审计</h2>
+        <span className="hint">删除账号/记录、清空目录等敏感操作留痕（最近 100 条）</span>
+      </div>
+      <div className="table-scroll" id="audit-wrap">
+        <table className="data">
+          <thead>
+            <tr><th>时间</th><th>操作人</th><th>动作</th><th>详情</th></tr>
+          </thead>
+          <tbody>
+            {(audit || []).map((a) => (
+              <tr key={a.id}>
+                <td><TimeCell value={a.createdAt} /></td>
+                <td style={{ fontWeight: 600 }}>{a.actor || '—'}</td>
+                <td><span className="status-tag">{ACTION_LABEL[a.action] || a.action}</span></td>
+                <td style={{ color: 'var(--text-2)' }}>{a.detail || '—'}</td>
+              </tr>
+            ))}
+            {!(audit || []).length && <tr><td colSpan={4}><div className="empty">{loaded || audit ? '暂无审计记录' : '加载中…'}</div></td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
 
   if (!isOwner) {
     return (
@@ -110,6 +162,8 @@ export default function UsersPage() {
             </div>
           </div>
 
+          {auditCard}
+
           <footer className="foot"><Link to="/">← 返回总览</Link></footer>
         </main>
       </>
@@ -122,7 +176,7 @@ export default function UsersPage() {
       <main className="layout">
         <div className="page-head">
           <h2>用户管理</h2>
-          <span className="desc">审核注册 · 任命/免除/删除管理员 · 删除贡献者（仅站长）</span>
+          <span className="desc">审核注册 · 任命/免除/删除管理员 · 清理任意非站长账号（仅站长）</span>
         </div>
 
         <div className="card">
@@ -143,6 +197,7 @@ export default function UsersPage() {
                     <td className="actions">
                       <button className="btn small" onClick={() => act(`/api/admin/users/${u.id}/approve`)}>批准为贡献者</button>
                       <button className="btn small danger" onClick={() => act(`/api/admin/users/${u.id}/reject`, `拒绝 ${u.username} 的注册申请？`)}>拒绝</button>
+                      <button className="btn small danger" onClick={() => act(`/api/admin/users/${u.id}`, deleteConfirm(u), { method: 'DELETE' })}>删除</button>
                     </td>
                   </tr>
                 ))}
@@ -180,7 +235,10 @@ export default function UsersPage() {
                           <button className="btn small danger" onClick={() => act(`/api/admin/users/${u.id}`, deleteConfirm(u), { method: 'DELETE' })}>删除账号</button>
                         </>
                       )}
-                      {u.status === 'rejected' && <span className="chain">已拒绝，无法操作</span>}
+                      {u.role !== 'owner' && u.status !== 'active' && (
+                        <button className="btn small danger" onClick={() => act(`/api/admin/users/${u.id}`, deleteConfirm(u), { method: 'DELETE' })}>删除账号</button>
+                      )}
+                      {u.role === 'owner' && <span className="chain">站长账号受保护</span>}
                     </td>
                   </tr>
                 ))}
@@ -189,6 +247,8 @@ export default function UsersPage() {
             </table>
           </div>
         </div>
+
+        {auditCard}
 
         <footer className="foot"><Link to="/">← 返回总览</Link></footer>
       </main>

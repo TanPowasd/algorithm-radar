@@ -30,14 +30,17 @@
 |---|---|
 | 游客 | 浏览矩阵/雷达/柱状/趋势/榜单/滚榜六个分析视图与测评明细（仅收录制可见数据）；查看贡献者名册（按注册时间排序）；导出 CSV / JSON（仅收录且已审核数据）；**不可提交** |
 | 贡献者 | 提交测评记录（仅可选**已发布题目**与**已收录模型**，题名/难度由题目目录带入且不可改，见「题目信息单一来源」，进入待审核队列）；可见自己的待审记录 |
-| 管理员 | 审核测评（单条/批量通过、拒绝=移入回收站）；**删除任意测评记录**（含已通过记录：明细表逐条删除、勾选批量删除、题目抽屉内删除，均为软删除进回收站）；编辑记录；发布题目（收录：输题号自动抓洛谷，失败可手动补全；可配推荐提示词）；增删改 AI 模型（收录+改名）；**历史数据收录台**（未收录题目/模型的隐藏记录分组、一键收录、移入回收站）；**回收站管理**（恢复 / 永久删除 / 清空）；全量导出与导入；**删除已激活贡献者账号**（用户管理页，仅见贡献者列表） |
-| 站长 | 管理员全部权限 + 审核注册（批准为贡献者）+ 任命/免除/**删除**管理员 + **清空目录重新收录**。站长删不掉、也不能删自己 |
+| 管理员 | 审核测评（单条/批量通过、拒绝=移入回收站）；**删除任意测评记录**（含已通过记录：明细表逐条删除、勾选批量删除、题目抽屉内删除，均为软删除进回收站）；编辑记录；发布题目（收录：输题号自动抓洛谷，失败可手动补全；可配推荐提示词）；增删改 AI 模型（收录+改名）；**历史数据收录台**（未收录题目/模型的隐藏记录分组、一键收录、移入回收站）；**回收站管理**（恢复 / 永久删除 / 清空）；全量导出与导入；**删除已激活贡献者账号**（用户管理页，仅见贡献者列表）；查看操作审计 |
+| 站长 | 管理员全部权限 + 审核注册（批准为贡献者）+ 任命/免除/**删除**管理员 + **清理任意非站长账号**（含待审/已拒）+ **清空目录重新收录**。站长删不掉、也不能删自己；所有敏感操作（删账号/删记录/清空目录/导入等）自动留痕到**操作审计** |
 
 - 注册：独立页面 `/register`，填写 **用户 ID + 昵称 + 密码**；登录使用 **用户 ID + 密码**，全站显示昵称。注册后为「待审核」，站长在 `/users` 批准后才能登录。密码一律 PBKDF2-SHA256（100k 迭代）哈希存储，明文不落库。
-- **删除账号**：管理员可删除**已激活贡献者**账号，站长还可删除管理员账号（均为物理删除、不可恢复，见 `/users` 用户管理页）。
-  被删账号立即失效（会话令牌回查用户表查不到人），用户 ID 可被重新注册（视为全新账号）；
+- **删除账号**：管理员可删除**已激活贡献者**账号，站长可删除**任意非站长账号**（含管理员、待审与已拒——用于清理注册垃圾；均为物理删除、不可恢复，见 `/users` 用户管理页）。
+  被删账号立即失效（会话令牌回查用户表查不到人），用户 ID 随之释放可重新注册（视为全新账号）；
   **其已提交的测评记录保留**——`records.author` 是用户名字符串快照不依赖用户表，名册上这些记录并入「全民制作人」；
-  站长不可被删除，也不能删除自己的账号。待审核申请走「拒绝」，已拒绝账号不可删除。
+  站长不可被删除，也不能删除自己的账号；每次删账号都写入**操作审计**（谁、何时、删了谁）。
+- **改昵称**：任何登录用户经顶栏「账号设置」自助改昵称（1–24 字），显示名即时生效（会话每请求回查用户表，无需重新登录）。
+- **操作审计（v3.8）**：`audit_log` 表只追加记录敏感操作——删账号、任免角色、批准/拒绝注册、删记录（软删）、批量移回收站、永久删除/清空回收站、删题目、删模型、清空目录、导入数据；
+  管理员及以上在 `/users` 页底部只读查看最近 100 条（新→旧），动作名有中文映射，未知动作原样展示。
 - 贡献者名册：`/contributors`（公开），按**注册时间**排序（与贡献量无关），展示用户 ID/昵称/贡献数等；历史导入数据对应的 `admin`/`guest` 账号排在末尾。
 - 审计字段：每条测评记录带 `author_id`（提供者用户 ID）与 `reviewer_id`/`reviewed_at`（批准人用户 ID 与批准时间；管理员自己直接提交的记录自审自记）。**首次录入的历史数据没有这些 ID，提供者/审核人统一署名「全民制作人」**（名册中也合并为同一条目，按注册时间排在末尾）；待审核的记录审核人显示「待审核」。
 - 推荐提示词：发布题目时填写（再次发布同题号可更新；发布弹窗内置「统一模板」一键填入），
@@ -71,6 +74,7 @@
 │                        # store（D1 存取/审核/导入）、luogu（洛谷抓取+SSRF 防护）、router
 ├── db/schema.sql        # D1 表结构（幂等；Functions 首次请求自动建表）
 ├── scripts/seed.mjs     # 本地种子：初始化站长 + 导入历史数据 JSON
+├── scripts/e2e.mjs      # 端到端权限矩阵自检（隔离临时 D1 + 8799 端口，跑完即清理）：npm run e2e
 ├── tags.json            # 洛谷标签 → 算法大类映射种子（后端打包引用）
 ├── wrangler.toml        # Pages/D1 绑定配置
 └── start-website.bat    # Windows 双击启动
@@ -143,16 +147,16 @@ npx wrangler pages secret delete SETUP_TOKEN --project-name ai-vs-luogu  # 用�
 ## 六、API 一览
 
 公开：`GET /api/ping` `GET /api/session` `GET /api/data` `GET /api/models` `GET /api/contributors` `GET /api/export/public?format=csv|json`
-认证：`POST /api/setup` `POST /api/login` `POST /api/logout` `POST /api/auth/register` `POST /api/change-password`（登录用户改密；成功后其他设备全部下线）
+认证：`POST /api/setup` `POST /api/login` `POST /api/logout` `POST /api/auth/register` `POST /api/change-password`（登录用户改密；成功后其他设备全部下线） `POST /api/profile/nickname`（自助改昵称，即时生效）
 贡献者：`POST /api/records`（模型须已收录）
-管理员：`PUT/DELETE /api/records/{id}`（DELETE=软删除入回收站） `POST /api/records/{id}/status` `POST /api/records/bulk`（reject=入回收站） `POST /api/problems`（发布） `PUT /api/problems/{pid}`（编辑） `DELETE /api/problems/{pid}` `POST/PUT/DELETE /api/models*` `GET /api/luogu?pid=` `GET /api/hidden-records` `GET /api/hidden-records/detail` `POST /api/admin/purge-records`（隐藏记录入回收站） `GET /api/trash` `POST /api/trash/restore|purge|empty` `GET /api/export`（全量含 models） `POST /api/import` `DELETE /api/admin/users/{id}`（删账号：管理员删已激活贡献者，站长可删管理员）
+管理员：`PUT/DELETE /api/records/{id}`（DELETE=软删除入回收站） `POST /api/records/{id}/status` `POST /api/records/bulk`（reject=入回收站） `POST /api/problems`（发布） `PUT /api/problems/{pid}`（编辑） `DELETE /api/problems/{pid}` `POST/PUT/DELETE /api/models*` `GET /api/luogu?pid=` `GET /api/hidden-records` `GET /api/hidden-records/detail` `POST /api/admin/purge-records`（隐藏记录入回收站） `GET /api/trash` `POST /api/trash/restore|purge|empty` `GET /api/export`（全量含 models） `POST /api/import` `DELETE /api/admin/users/{id}`（删账号：管理员删已激活贡献者，站长可删任意非站长） `GET /api/admin/audit`（操作审计，最近 100 条）
 站长：`GET /api/admin/users`（管理员调用时仅返回已激活贡献者） `POST /api/admin/users/{id}/approve|reject|role` `POST /api/catalog/reset`
 
 ## 七、数据模型（records 表核心字段）
 
 `id`(16hex) · `model`(聚合主键) · `variant` · `agent` · `tokenSource` · `pid`+`title` · `thinking`(ultra>max>xhigh>high>medium>low>off) · `difficulty`(0–7) · `categories[]` · `submissions[]`(每轮 `score` 0–100 可空 / `result` AC|WA|TLE|MLE|RE|CE|未解出 / `note`) · `minutes` · `memory`(MB，可空) · `date` · `note` · `status`(approved|pending) · `author`(提供者登录 ID) + `author_id`(提供者用户 ID) + `reviewer_id`/`reviewed_at`(审核人) · `deleted_at`(软删除/回收站标记) · 时间戳。
 
-`users` 表：`username`(登录 ID)、`nickname`(显示昵称)、`password_hash`(PBKDF2，非明文)、角色/状态/审批信息。`problems` 表额外含 `prompt`（推荐提示词，≤4000 字，统一测试口径）。
+`users` 表：`username`(登录 ID)、`nickname`(显示昵称)、`password_hash`(PBKDF2，非明文)、角色/状态/审批信息。`problems` 表额外含 `prompt`（推荐提示词，≤4000 字，统一测试口径）。`audit_log` 表：`actor_id`/`actor`(操作人)、`action`(动作)、`detail`(详情，≤500 字)、`created_at`，只追加不修改。
 
 ## 八、日常开发
 
@@ -160,8 +164,9 @@ npx wrangler pages secret delete SETUP_TOKEN --project-name ai-vs-luogu  # 用�
 ./node_modules/.bin/tsc --noEmit          # worker TS 类型检查
 npm --prefix frontend run build           # 前端构建（wrangler pages dev 直接读 dist）
 npm --prefix frontend run lint            # oxlint
-npm --prefix frontend run selftest        # 口径断言 + 六视图真实渲染冒烟（Node 内跑，37 项）
+npm --prefix frontend run selftest        # 口径断言 + 六视图真实渲染冒烟（Node 内跑，48 项）
 npm --prefix frontend run check-classes   # JSX 类名 vs styles.css 契约检查（防漏样式）
+npm run e2e                               # 构建 + 权限矩阵端到端自检（隔离临时环境，46 项）
 npm --prefix frontend run selftest:fixture # 从根目录最新导出快照重裁自检样本
 ```
 

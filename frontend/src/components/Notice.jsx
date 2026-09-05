@@ -32,8 +32,7 @@ export default function Notice() {
         并如实填写 Agent 与 Token 来源（官方 API/套餐填「官方」）；游客可浏览全部榜单并下载数据。
       </div>
       <div className="n-actions">
-        <button className="btn small ghost" onClick={dismissSession}>本次关闭</button>
-        <button className="btn small ghost" onClick={dismissDay}>今天关闭</button>
+        <button className="btn small ghost" onClick={dismissDay} title="今日不再提示">知道了 ✕</button>
       </div>
     </div>
   )

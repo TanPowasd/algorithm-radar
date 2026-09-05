@@ -69,10 +69,20 @@ export const SCHEMA_STATEMENTS: string[] = [
     locked_until TEXT,
     updated_at   TEXT
 )`,
+    // v3.8：敏感操作审计（删账号/删记录/清空目录/导入等破坏性与权限操作留痕）
+    `CREATE TABLE IF NOT EXISTS audit_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_id   INTEGER,
+    actor      TEXT NOT NULL DEFAULT '',
+    action     TEXT NOT NULL,
+    detail     TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+)`,
     `CREATE INDEX IF NOT EXISTS idx_records_pid    ON records(pid)`,
     `CREATE INDEX IF NOT EXISTS idx_records_status ON records(status)`,
     `CREATE INDEX IF NOT EXISTS idx_records_model  ON records(model)`,
     `CREATE INDEX IF NOT EXISTS idx_login_guard_until ON login_guard(locked_until)`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(id)`,
     // revision 单调递增（乐观并发）；data_version 对齐旧 data.json 的版本号
     `INSERT OR IGNORE INTO meta(key, value) VALUES ('revision', '0')`,
     `INSERT OR IGNORE INTO meta(key, value) VALUES ('data_version', '3')`,

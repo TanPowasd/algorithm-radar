@@ -430,6 +430,74 @@ check('渲染后台/注册/贡献者页（全站统一不崩）', () => {
   }
 })
 
+/* ---------- 用户管理页的角色门控（v3.8：管理员可删贡献者、站长可清任意非站长账号） ---------- */
+const UsersPage = (await import('../src/pages/UsersPage.jsx')).default
+const usersCtxBase = {
+  session: { loggedIn: false, username: '', nickname: '', role: '', admin: false, canSetup: false, configured: true },
+  data: snapshot, models: snapshot.models || [], nicknames: {},
+  nicknameOf: (u) => u, nameByUid: () => null,
+  offline: false, loaded: true, theme: 'dark', themeMode: 'dark', setThemeMode() {}, toggleTheme() {},
+  widthMode: 'full', setWidthMode() {}, barMinSamples: 5, setBarMinSamples() {}, radarSize: 0, setRadarSize() {},
+  vendorOf: makeVendorOf(snapshot.models || []), focusModels: new Set(), toggleFocusModel() {}, focusOnly() {},
+  toasts: [], toast() {}, refreshAll: async () => true, syncData: async () => true,
+  refreshSession: async () => true, refreshData: async () => true,
+  refreshModels: async () => {}, refreshNicknames: async () => {}, retryNow: async () => true,
+  isOwner: false, isAdmin: false, isContributor: false,
+}
+const renderUsersAs = (role) => {
+  const isAdmin = role === 'admin' || role === 'owner'
+  const ctx = {
+    ...usersCtxBase,
+    session: { ...usersCtxBase.session, loggedIn: isAdmin || role === 'contributor', username: 'tester', role, admin: isAdmin },
+    isOwner: role === 'owner', isAdmin, isContributor: isAdmin || role === 'contributor',
+  }
+  return renderToString(
+    React.createElement(MemoryRouter, null,
+      React.createElement(AppContext.Provider, { value: ctx }, React.createElement(UsersPage))),
+  )
+}
+
+check('/users 门控：游客只见访问门槛', () => {
+  const html = renderUsersAs('guest')
+  assert.ok(html.includes('仅管理员及以上可访问'), '游客应看到访问门槛文案')
+  assert.ok(html.includes('>登录<'), '未登录应提供登录入口')
+  assert.ok(!html.includes('操作审计'), '游客不应看到审计卡片')
+  const contrib = renderUsersAs('contributor')
+  assert.ok(contrib.includes('当前账号权限不足'), '已登录的非管理员应看到权限不足提示')
+})
+
+check('/users 门控：管理员只见贡献者列表 + 删除（无待审/任免）', () => {
+  const html = renderUsersAs('admin')
+  assert.ok(html.includes('删除贡献者账号'), '管理员视角应标注能力范围')
+  assert.ok(html.includes('审核注册与任免仅站长可见'), '贡献者卡片应标注权限边界')
+  assert.ok(html.includes('操作审计'), '管理员也应看到操作审计')
+  assert.ok(!html.includes('待审核注册'), '管理员不应看到待审核注册卡片')
+  assert.ok(!html.includes('任命管理员'), '管理员不应有任免按钮')
+  assert.ok(!html.includes('全部用户'), '管理员不应看到全量用户表')
+})
+
+check('/users 门控：站长有完整管理面 + 审计卡片', () => {
+  const html = renderUsersAs('owner')
+  assert.ok(html.includes('待审核注册'), '站长应看到待审核注册')
+  assert.ok(html.includes('全部用户'), '站长应看到全量用户表')
+  assert.ok(html.includes('清理任意非站长账号'), '站长视角应标注可清理任意状态账号')
+  assert.ok(html.includes('操作审计'), '站长应看到操作审计')
+})
+
+check('/users 删除与审计接线（静态源码契约）', () => {
+  const src = readFileSync(new URL('../src/pages/UsersPage.jsx', import.meta.url), 'utf8')
+  // 删除走 DELETE /api/admin/users/:id（不是 POST role 端点）
+  assert.ok(/method:\s*'DELETE'/.test(src), '删除账号必须用 DELETE 方法')
+  assert.ok(src.includes('/api/admin/users/${u.id}`'), '删除端点路径不对')
+  // 确认框必须写明不可恢复 + 记录保留（防误删口径）
+  assert.ok(src.includes('不可恢复') && src.includes('测评记录会保留'), '删除确认框缺风险与保留说明')
+  // 待审/已拒行也要有删除入口（站长清理注册垃圾）
+  assert.ok((src.match(/deleteConfirm\(u\)/g) || []).length >= 4, '待审/已拒行缺删除入口')
+  // 审计走管理端点且有中文动作映射
+  assert.ok(src.includes('/api/admin/audit'), '审计卡片没接 /api/admin/audit')
+  assert.ok(src.includes("ACTION_LABEL[a.action] || a.action"), '未知审计动作应原样展示')
+})
+
 /* ---------- 3.5 日夜主题与全宽版心的落地检查（静态读源码/样式） ---------- */
 const srcOf = (rel) => readFileSync(new URL(`../src/${rel}`, import.meta.url), 'utf8')
 const cssText = srcOf('styles.css')

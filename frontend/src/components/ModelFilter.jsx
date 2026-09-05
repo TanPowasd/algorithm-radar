@@ -12,6 +12,22 @@ import { vendorColorMap } from '../palette'
 export default function ModelFilter() {
   const { data, focusModels, toggleFocusModel, focusOnly, vendorOf, theme } = useApp()
   const [q, setQ] = useState('')
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      const v = localStorage.getItem('radar.filter.collapsed')
+      return v === null ? true : v === 'true'
+    } catch {
+      return true
+    }
+  })
+
+  const toggleCollapse = () => {
+    setCollapsed((v) => {
+      const next = !v
+      try { localStorage.setItem('radar.filter.collapsed', String(next)) } catch {}
+      return next
+    })
+  }
 
   const approvedModels = useMemo(
     () => seriesList((data.records || []).filter((r) => r.status !== 'pending')),
@@ -49,6 +65,29 @@ export default function ModelFilter() {
   const pickGroup = (list) => focusOnly([...new Set([...(validFocus || []), ...list])])
   const invert = () => focusOnly(approvedModels.filter((m) => !validFocus?.has(m)))
 
+  if (collapsed) {
+    return (
+      <div className="filter-compact-bar" id="model-filter">
+        <span className="fc-tag">🎯 模型聚焦</span>
+        <span className="fc-desc">
+          {activeCount > 0
+            ? `已选 ${activeCount} / ${approvedModels.length} 个模型（全站仅显示选中成绩）`
+            : `显示全部 ${approvedModels.length} 个模型（未设置过滤）`}
+        </span>
+        <div className="fc-actions">
+          {activeCount > 0 && (
+            <button className="btn small ghost" onClick={() => focusOnly([])}>
+              查看全部
+            </button>
+          )}
+          <button className="btn small ghost" onClick={toggleCollapse}>
+            筛选模型 ▾
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="card filter-card" id="model-filter">
       <div className="card-head" style={{ marginBottom: 0 }}>
@@ -67,6 +106,7 @@ export default function ModelFilter() {
           />
           {activeCount > 0 && <button className="btn small ghost" onClick={() => focusOnly([])}>查看全部</button>}
           <button className="btn small ghost" onClick={invert} title="反选">反选</button>
+          <button className="btn small ghost" onClick={toggleCollapse} title="收起模型面板">收起 ▴</button>
         </div>
       </div>
       <div className="filter-groups">

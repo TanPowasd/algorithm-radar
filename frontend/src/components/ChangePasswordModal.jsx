@@ -2,14 +2,33 @@ import { useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
 
-/** 修改密码弹窗：成功后其他设备全部下线，当前设备自动续签 */
+/** 账号设置弹窗：昵称即时生效；改密码成功后其他设备全部下线，当前设备自动续签 */
 export default function ChangePasswordModal({ onClose }) {
-  const { toast, refreshSession } = useApp()
+  const { toast, refreshSession, refreshNicknames, session } = useApp()
+  const [nick, setNick] = useState(session.nickname || '')
+  const [nickBusy, setNickBusy] = useState(false)
+  const [nickError, setNickError] = useState('')
   const [form, setForm] = useState({ oldPassword: '', newPassword: '', newPassword2: '' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }))
+
+  const submitNick = async (e) => {
+    e.preventDefault()
+    setNickError('')
+    setNickBusy(true)
+    try {
+      const res = await api('/api/profile/nickname', { method: 'POST', body: { nickname: nick } })
+      toast(res.message || '昵称已更新')
+      await Promise.all([refreshSession(), refreshNicknames()])
+      onClose()
+    } catch (err) {
+      setNickError(err.message)
+    } finally {
+      setNickBusy(false)
+    }
+  }
 
   const submit = async (e) => {
     e.preventDefault()
@@ -34,11 +53,28 @@ export default function ChangePasswordModal({ onClose }) {
 
   return (
     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <form className="modal narrow" onSubmit={submit}>
+      <form className="modal narrow" onSubmit={submitNick}>
         <div className="modal-head">
-          <h3>修改密码</h3>
+          <h3>账号设置</h3>
           <button type="button" className="icon-btn close" onClick={onClose}>✕</button>
         </div>
+
+        <div className="field">
+          <label>昵称（全站显示名，1–24 字）</label>
+          <input
+            value={nick}
+            maxLength={24}
+            onChange={(e) => setNick(e.target.value)}
+            placeholder={session.username}
+          />
+        </div>
+        {nickError && <div className="form-error">{nickError}</div>}
+        <div className="modal-foot" style={{ marginTop: 0 }}>
+          <button type="submit" className="btn primary" disabled={nickBusy}>{nickBusy ? '保存中…' : '保存昵称'}</button>
+        </div>
+
+        <hr className="modal-divider" />
+
         <div className="callout">
           新密码 8–64 位，存储为 PBKDF2 哈希。修改成功后<strong>其他设备会全部退出登录</strong>，本设备保持在线。
         </div>

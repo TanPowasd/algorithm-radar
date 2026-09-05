@@ -790,6 +790,7 @@ tr.lb-detail-row > td { background: var(--surface-2); }
 .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 var(--sp-4); }
 .modal-foot { display: flex; gap: var(--sp-2); justify-content: flex-end; margin-top: var(--sp-4); }
 .modal-foot .left { margin-right: auto; }
+.modal-divider { border: 0; border-top: 1px dashed var(--border); margin: var(--sp-4) 0; }
 .form-error { color: var(--red); font-size: var(--fs-sm); margin: var(--sp-2) 0; }
 .callout {
   background: var(--surface-2); border: 1px solid var(--border); border-left: 2px solid var(--accent);
@@ -1002,3 +1003,93 @@ table.data.has-check td.sticky-col, table.data.has-check th.sticky-col { left: 3
   .topbar, .notice, .filters, .pager, .back-top, .shortcut-btn, .shortcut-panel, .card-tools, .seg { display: none !important; }
   .card { border: 1px solid #ccc; break-inside: avoid; }
 }
+
+/* ---------------- 下拉菜单（Topbar Dropdown） ---------------- */
+.dropdown-wrap {
+  position: relative;
+  display: inline-block;
+}
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 170px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: pop-in 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-decoration: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.dropdown-item:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.dropdown-divider {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 4px 2px;
+}
+
+/* ---------------- 模型筛选器紧凑态 ---------------- */
+.filter-compact-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px var(--sp-4);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  flex-wrap: wrap;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.filter-compact-bar:hover {
+  border-color: var(--border);
+}
+.filter-compact-bar .fc-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: var(--font-head);
+  letter-spacing: 0.04em;
+}
+.filter-compact-bar .fc-desc {
+  color: var(--muted);
+  flex: 1;
+}
+.filter-compact-bar .fc-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-left: auto;
+}
+

@@ -386,20 +386,28 @@ export async function setRole(db: D1Database, id: number, role: string): Promise
     await db.prepare("UPDATE users SET role = ?1 WHERE id = ?2").bind(role, id).run();
 }
 
-/** 删除账号（物理删除）：管理员可删已激活贡献者，站长还可删管理员。
+/** 删除账号（物理删除）：管理员可删已激活贡献者，站长可删任意非站长账号（含待审/已拒，清理注册垃圾）。
  *  测评记录不删——records.author 是用户名字符串快照，不依赖用户表；名册上这些记录并入「全民制作人」。
  *  会话令牌因回查用户表查不到人而立即失效；被删用户的用户 ID 随后可重新注册（视为全新账号）。 */
-export async function deleteUser(db: D1Database, id: number, actor: AuthUser): Promise<void> {
+export async function deleteUser(db: D1Database, id: number, actor: AuthUser): Promise<UserRow> {
     const user = await requireUser(db, id);
     if (user.role === "owner") throw forbidden("不能删除站长账号");
     if (user.id === actor.uid) throw badRequest("不能删除自己的账号");
     if (user.role === "admin") {
         if (!isAtLeast(actor, "owner")) throw forbidden("删除管理员账号需要站长权限");
-    } else if (user.status !== "active") {
-        // 贡献者：仅可删已激活账号；待审用「拒绝」，已拒绝账号无登录能力，留给站长在名册外处理
-        throw badRequest("只能删除已激活的贡献者账号");
+    } else if (!isAtLeast(actor, "owner") && user.status !== "active") {
+        // 管理员只能删已激活贡献者；待审/已拒账号由站长清理
+        throw badRequest("管理员只能删除已激活的贡献者账号");
     }
     await db.prepare("DELETE FROM users WHERE id = ?1").bind(id).run();
     // 顺手清掉登录失败锁定记录，避免同名新账号继承旧计数
     await db.prepare("DELETE FROM login_guard WHERE username = ?1").bind(user.username).run();
+    return user;
+}
+
+/** 登录用户自助改昵称（显示名即时生效：会话每次请求回查用户表，无需重新登录） */
+export async function updateNickname(db: D1Database, uid: number, nickname: string): Promise<string> {
+    const nick = validateNickname(nickname);
+    await db.prepare("UPDATE users SET nickname = ?1 WHERE id = ?2").bind(nick, uid).run();
+    return nick;
 }

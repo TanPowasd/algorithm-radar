@@ -698,3 +698,42 @@ export function buildCsv(records: Rec[]): string {
     }
     return lines.join("\r\n") + "\r\n";
 }
+
+// ---------------------------------------------------------------- 审计日志（v3.8）
+
+export interface AuditEntry {
+    id: number;
+    actorId: number | null;
+    actor: string;
+    action: string;
+    detail: string;
+    createdAt: string;
+}
+
+/** 敏感操作留痕：只追加不修改。detail 截断 500 字防滥用；失败不抛出（审计不该拖垮主操作）。 */
+export async function logAudit(
+    db: D1Database,
+    actor: { uid: number; username: string } | null,
+    action: string,
+    detail: string,
+): Promise<void> {
+    try {
+        await db.prepare(
+            "INSERT INTO audit_log(actor_id, actor, action, detail, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        ).bind(actor?.uid ?? null, actor?.username ?? "", action, String(detail).slice(0, 500),
+            new Date().toISOString()).run();
+    } catch (e) {
+        console.warn("[audit] 写入失败：", e instanceof Error ? e.message : e);
+    }
+}
+
+/** 最近 limit 条审计（新→旧），管理端只读展示 */
+export async function listAudit(db: D1Database, limit = 100): Promise<AuditEntry[]> {
+    const { results } = await db.prepare(
+        "SELECT id, actor_id, actor, action, detail, created_at FROM audit_log ORDER BY id DESC LIMIT ?1")
+        .bind(limit).all<any>();
+    return (results || []).map((r) => ({
+        id: r.id, actorId: r.actor_id ?? null, actor: r.actor ?? "",
+        action: r.action ?? "", detail: r.detail ?? "", createdAt: r.created_at ?? "",
+    }));
+}
