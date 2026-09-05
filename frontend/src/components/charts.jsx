@@ -9,10 +9,14 @@ export function cssVar(name) {
 
 /** 创建图表：统一 responsive 设置与主题色 */
 export function makeChart(canvas, config) {
+  const { options = {}, ...rest } = config
   return new Chart(canvas, {
-    responsive: true,
-    maintainAspectRatio: false,
-    ...config,
+    ...rest,
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      ...options,
+    },
   })
 }
 

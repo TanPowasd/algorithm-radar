@@ -407,7 +407,8 @@ body.modal-open { overflow: hidden; }
 
 /* ---------------- 图表 ---------------- */
 .chart-wrap { position: relative; height: clamp(360px, 46vh, 620px); }
-.chart-wrap.bar { height: clamp(340px, 44vh, 680px); }
+.chart-wrap.bar { height: clamp(380px, 50vh, 660px); }
+.chart-wrap canvas { display: block; max-width: 100%; max-height: 100%; }
 .chart-wrap.radar-box {
   display: flex; align-items: center; justify-content: center;
   min-height: clamp(380px, 50vh, 760px);

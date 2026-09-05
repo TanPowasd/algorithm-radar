@@ -156,6 +156,8 @@ export default function BarView() {
         }],
       },
       options: {
+        responsive: true,
+        maintainAspectRatio: false,
         indexAxis: horizontal ? 'y' : 'x',
         animation: { duration: 260 },
         scales: {
@@ -166,7 +168,7 @@ export default function BarView() {
             ? { grid: { display: false }, ticks: { color: tc.text, font: { size: 10 } } }
             : { min: 0, max: 100, grid: { color: tc.grid }, ticks: { color: tc.text } },
         },
-        layout: { padding: { top: 22, right: 34 } },
+        layout: { padding: { top: 22, right: 34, bottom: 12, left: 6 } },
         plugins: { legend: { display: false } },
       },
       plugins: [barLevelPaint, barTopLabel],
