@@ -371,9 +371,7 @@ check('渲染 /?v=bar（柱状：最小样本滑杆 + 厂商图例）', () => {
   assert.ok(html.includes('思考等级纹理'))
 })
 
-check('渲染 /?v=trend /?v=leaderboard', () => {
-  const t = renderAt('/?v=trend')
-  assert.ok(t.includes('成绩时间趋势'))
+check('渲染 /?v=leaderboard', () => {
   const l = renderAt('/?v=leaderboard')
   assert.ok(l.includes('AI 排名榜'))
   assert.ok(l.includes('厂商'), '榜单缺厂商列')

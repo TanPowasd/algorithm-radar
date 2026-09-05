@@ -9,7 +9,7 @@ const ROLE_LABELS = { owner: '站长', admin: '管理员', contributor: '贡献�
 const THEME_LABEL = { dark: ['☾', '夜间模式（按 T 切到日间）'], light: ['☀', '日间模式（按 T 切到跟随系统）'], system: ['◐', '跟随系统（按 T 切到夜间）'] }
 
 export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud }) {
-  const { session, offline, isAdmin, isOwner, theme, themeMode, toggleTheme,
+  const { session, offline, isAdmin, theme, themeMode, toggleTheme,
     widthMode, setWidthMode, toast, refreshAll } = useApp()
   const location = useLocation()
   const [pwOpen, setPwOpen] = useState(false)
@@ -39,7 +39,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
       <div className="spacer" />
       <nav style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {isAdmin && <Link className="btn small ghost" to="/admin">审核台</Link>}
-        {isOwner && <Link className="btn small ghost" to="/users">用户管理</Link>}
+        {isAdmin && <Link className="btn small ghost" to="/users">用户管理</Link>}
         <Link className="btn small ghost" to="/contributors">贡献榜</Link>
         <Link className="btn small ghost" to="/prompts">推荐提示词</Link>
         {(location.pathname === '/admin' || location.pathname === '/users' || location.pathname === '/contributors' || location.pathname === '/prompts') && (

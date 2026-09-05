@@ -4,7 +4,7 @@
  */
 import {
     approveUser, AuthUser, authenticate, changePassword, countUsers, createToken, csrfCookie,
-    CSRF_COOKIE, CSRF_HEADER, constantTimeEqual, cookieValue, isAtLeast,
+    CSRF_COOKIE, CSRF_HEADER, constantTimeEqual, cookieValue, deleteUser, isAtLeast,
     listActiveContributors, listUsers, newCsrfToken, registerUser, rejectUser,
     renewAfter, sessionCookie, SESSION_COOKIE, SessionData, setRole, setupOwner, verifyToken,
 } from "./auth";
@@ -401,9 +401,14 @@ const routes: Route[] = [
         return { ok: true };
     } },
 
-    { method: "GET", path: "/api/admin/users", role: "owner", handler: async (ctx) => {
-        requireRole(ctx, "owner");
-        return { users: await listUsers(ctx.env.DB) };
+    /** 用户列表：站长看全部；管理员只能看到已激活贡献者（删除贡献者的操作面） */
+    { method: "GET", path: "/api/admin/users", role: "admin", handler: async (ctx) => {
+        requireRole(ctx, "admin");
+        let users = await listUsers(ctx.env.DB);
+        if (!isAtLeast(ctx.user, "owner")) {
+            users = users.filter((u) => u.role === "contributor" && u.status === "active");
+        }
+        return { users };
     } },
 
     { method: "POST", path: "/api/admin/users/:id/approve", role: "owner", handler: async (ctx) => {
@@ -421,6 +426,13 @@ const routes: Route[] = [
     { method: "POST", path: "/api/admin/users/:id/role", role: "owner", handler: async (ctx) => {
         requireRole(ctx, "owner");
         await setRole(ctx.env.DB, Number(ctx.params.id), str(ctx.body?.role));
+        return { ok: true };
+    } },
+
+    /** 删除账号（物理删除）：管理员可删已激活贡献者，站长还可删管理员；测评记录保留 */
+    { method: "DELETE", path: "/api/admin/users/:id", role: "admin", handler: async (ctx) => {
+        const actor = requireRole(ctx, "admin");
+        await deleteUser(ctx.env.DB, Number(ctx.params.id), actor);
         return { ok: true };
     } },
 
