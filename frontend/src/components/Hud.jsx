@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 /**
  * 参考视觉里的 HUD：固定读数条。
- *  GRID   = 背景栅距（40px 设计常量）
+ *  运行读数收纳在设置菜单中，不占用首屏数据空间。
  *  SAMPLES= 当前口径下的记录数（父组件传入）
  *  FPS    = 实测帧率（rAF 采样，1s 刷新一次）
  */
@@ -28,7 +28,6 @@ export default function Hud({ samples = 0, models = 0, view = '' }) {
 
   return (
     <div className="hud" aria-label="运行状态">
-      <span className="hud-cell"><span className="hud-led" />GRID<b>40</b></span>
       <span className="hud-cell">VIEW<b>{(view || '—').toUpperCase()}</b></span>
       <span className="hud-cell alt">SAMPLES<b>{samples}</b></span>
       <span className="hud-cell">MODELS<b>{models}</b></span>

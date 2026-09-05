@@ -2,6 +2,12 @@
 
 多个 AI 模型在洛谷题目上的解题能力对比站。游客可浏览排名、下载数据；贡献者提交测评；管理员审核并发布题目；站长管理用户。
 
+> **界面重构（当前）**：全宽、矩阵优先的数据工作台；直角面板与小圆角控件，保留科技感标题和数据字体。
+> 首次访问默认亮色，明暗选择持久化；已有主题偏好不覆盖，设置菜单仍可选跟随系统。
+> 新增矩阵题号/题名查找、键盘标签切换、弹层焦点管理；统计口径、数据库、权限与 API 不变。
+> **主部署仍是根目录 `wrangler.toml`（Workers）**。可选 Pages 入口位于 `pages/`，API 服务绑定到同一 Worker，
+> 不单独建库，也不复制 Cron/限流。详见 [重构与验收说明](docs/UI_REFACTOR.md)。
+
 > v3.9 · 2026-09：**从 Pages 迁移到 Workers**（静态资产 + Worker 单部署目标；Pages 不支持 Cron Trigger 与
 > ratelimit binding）——D1 数据零迁移；新增 **每日数据快照**（Cron UTC 21:00 → R2 `ai-vs-luogu-backups`，
 > 保留 90 天，站长可 `POST /api/admin/snapshot` 手动触发）；**原生限流**（`WRITE_LIMIT` 60/分 + `AUTH_LIMIT`
@@ -152,6 +158,32 @@ npx wrangler secret delete SETUP_TOKEN              # 用完即删
 
 - 数据导入：登录站长 → 顶栏「导入」→ 选择旧站导出 JSON（合并 / 覆盖两种模式）。
 - 自定义域名、Git 集成部署均在 Cloudflare 控制台按 Pages 项目常规操作即可。
+
+### 可选 Pages 前端入口（共享现有 Worker）
+
+根目录 `npm run deploy` 仍只发布原 Workers 站点。**无需为了本次界面重构迁移 k4u.top 或更换 D1。**
+
+Pages 使用 `pages/wrangler.toml`（独立目录中的标准配置文件名，避免与主 Worker 配置混用）：
+
+```bash
+npm run build:pages   # 构建相同前端 + 编译 Pages Functions；不发布
+npm run dev          # 终端 1：原 Worker，默认 8788
+npm run dev:pages    # 终端 2：Pages，8789；通过本地服务绑定调用终端 1
+npm run e2e:pages    # 独立临时库中完整测试 Pages → Worker；不接触以上开发库
+```
+
+可选发布命令是 `npm run deploy:pages`，目标 Pages 项目默认名为 `ai-vs-luogu-pages`。
+如需使用已有 Pages 项目，请先修改 `pages/wrangler.toml` 的 `name`；`API.service` 必须与主 Worker 名称一致。
+发布前需保证同账户下的主 Worker 已部署。Pages 自己不绑定 D1/R2，不配置第二个定时任务。
+Pages 域名与 Workers 域名下的登录 Cookie 各自独立，但账号及测评记录是同一套。
+不要把 Pages 自定义域与现有 Worker 的 k4u.top 绑定同时启用；本次只增加兼容入口，不变更域名归属。
+
+只看界面、不启动任何数据库：
+
+```bash
+npm --prefix frontend run demo
+# http://127.0.0.1:5176/ — 独立端口、只读合成样本，拒绝所有写请求，不是线上真实测评
+```
 
 ## 五、安全设计
 

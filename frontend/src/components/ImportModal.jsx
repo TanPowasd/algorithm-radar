@@ -1,9 +1,11 @@
 import { useRef, useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
+import { useDialog } from '../hooks/useDialog'
 
 /** 导入旧站导出的 JSON（管理员） */
 export default function ImportModal({ onClose }) {
+  const dialogRef = useDialog(onClose)
   const { toast, refreshAll } = useApp()
   const fileRef = useRef(null)
   const [mode, setMode] = useState('merge')
@@ -50,7 +52,7 @@ export default function ImportModal({ onClose }) {
 
   return (
     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <form className="modal" onSubmit={submit}>
+      <form ref={dialogRef} className="modal" role="dialog" aria-modal="true" aria-label="导入历史数据" tabIndex={-1} onSubmit={submit}>
         <div className="modal-head">
           <h3>导入数据</h3>
           <button type="button" className="icon-btn close" onClick={onClose}>✕</button>

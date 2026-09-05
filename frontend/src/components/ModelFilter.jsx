@@ -68,11 +68,11 @@ export default function ModelFilter() {
   if (collapsed) {
     return (
       <div className="filter-compact-bar" id="model-filter">
-        <span className="fc-tag">🎯 模型聚焦</span>
+        <span className="fc-tag">模型</span>
         <span className="fc-desc">
           {activeCount > 0
-            ? `已选 ${activeCount} / ${approvedModels.length} 个模型（全站仅显示选中成绩）`
-            : `显示全部 ${approvedModels.length} 个模型（未设置过滤）`}
+            ? `已选 ${activeCount} / ${approvedModels.length} 个`
+            : `全部 ${approvedModels.length} 个`}
         </span>
         <div className="fc-actions">
           {activeCount > 0 && (
@@ -80,7 +80,7 @@ export default function ModelFilter() {
               查看全部
             </button>
           )}
-          <button className="btn small ghost" onClick={toggleCollapse}>
+          <button className="btn small ghost" onClick={toggleCollapse} aria-expanded="false">
             筛选模型 ▾
           </button>
         </div>
@@ -99,6 +99,7 @@ export default function ModelFilter() {
           <input
             id="model-filter-search"
             className="filter-search"
+            aria-label="搜索模型或厂商"
             placeholder="搜索模型 / 厂商…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -106,12 +107,12 @@ export default function ModelFilter() {
           />
           {activeCount > 0 && <button className="btn small ghost" onClick={() => focusOnly([])}>查看全部</button>}
           <button className="btn small ghost" onClick={invert} title="反选">反选</button>
-          <button className="btn small ghost" onClick={toggleCollapse} title="收起模型面板">收起 ▴</button>
+          <button className="btn small ghost" onClick={toggleCollapse} title="收起模型面板" aria-expanded="true">收起 ▴</button>
         </div>
       </div>
       <div className="filter-groups">
         <div className="filter-chips">
-          <button className={`fchip ${activeCount === 0 ? 'on' : ''}`} style={{ '--vc': 'var(--accent)' }} onClick={() => focusOnly([])} title="显示全部模型">
+          <button className={`fchip ${activeCount === 0 ? 'on' : ''}`} aria-pressed={activeCount === 0} style={{ '--vc': 'var(--accent)' }} onClick={() => focusOnly([])} title="显示全部模型">
             全部
           </button>
           {groups.map(([vendor, list]) => (
@@ -120,7 +121,7 @@ export default function ModelFilter() {
               className="fchip"
               style={{ '--vc': colors.get(list[0]) || 'var(--muted)' }}
               onClick={() => pickGroup(list)}
-              title={`只选该厂商 ${list.length} 个模型`}
+              title={`加入该厂商 ${list.length} 个模型`}
             >
               {vendor}
             </button>
@@ -138,6 +139,7 @@ export default function ModelFilter() {
                 <button
                   key={m}
                   className={`fchip ${on ? 'on' : ''} ${q && !on ? 'dim' : ''}`}
+                  aria-pressed={on}
                   style={{ '--vc': colors.get(m) || 'var(--muted)' }}
                   onClick={() => click(m)}
                   title={`${on ? '取消选择' : '选择该模型'} · 厂商 ${vendor}`}

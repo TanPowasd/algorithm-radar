@@ -319,7 +319,7 @@ check('渲染 /（矩阵默认视图）', () => {
   assert.ok(html.includes('最佳等级'), '缺「最佳等级」口径按钮')
   assert.ok(html.includes('最佳分数'), '缺「最佳分数」口径按钮')
   assert.ok(html.includes('id="model-filter"'), '缺模型筛选器')
-  assert.ok(html.includes('class="hud"'), '缺 HUD')
+  assert.ok(html.includes('数据与设置'), '缺数据导出与显示设置入口')
   // 十字高亮依赖的坐标属性必须落在 DOM 上
   assert.ok(/data-c="c0"/.test(html), '单元格缺 data-c 列坐标')
   assert.ok(/data-r="r0"/.test(html), '单元格缺 data-r 行坐标')
@@ -654,7 +654,7 @@ check('夜间/日间两套令牌都在，且日间是同构冷白版', () => {
   assert.match(cssText, /--accent:\s*#5ad9ff/, '夜间主色应为参考稿的青 #5ad9ff')
   assert.match(cssText, /--accent-3:\s*#b8ff5c/, '缺柠檬点缀色')
   const lightBlock = cssText.slice(cssText.indexOf(':root[data-theme="light"]'))
-  assert.match(lightBlock.slice(0, 1200), /--accent:\s*#0b87b8/, '日间需要自己的（更深的）主色，不能直接套夜间值')
+  assert.match(lightBlock.slice(0, 1200), /--accent:\s*#006b94/, '日间需要自己的高对比主色，不能直接套夜间值')
   assert.ok(/--green:/.test(cssText) && /--red:/.test(cssText), '通过/未过语义色必须保留')
 })
 
@@ -676,6 +676,73 @@ check('主题三态：跟随系统 + 监听系统切换', () => {
   assert.ok(stateText.includes("prefers-color-scheme: dark"), '未读取系统偏好')
   assert.ok(/addEventListener\('change'/.test(stateText), '系统主题切换时不会跟随')
   assert.ok(stateText.includes('toggleTheme'), '缺主题循环入口')
+})
+
+check('首次访问默认亮色，已有明暗选择继续保留', async () => {
+  const { useApp } = await import('../src/state.jsx')
+  // eslint-disable-next-line react/only-export-components -- Node SSR 自检探针，不是热更新入口。
+  function ThemeProbe() {
+    const { theme, themeMode } = useApp()
+    return React.createElement('output', null, `${themeMode}/${theme}`)
+  }
+  const renderTheme = () => renderToString(React.createElement(AppProvider, null, React.createElement(ThemeProbe)))
+  const previous = store.get('radar.theme')
+  try {
+    store.delete('radar.theme')
+    assert.ok(renderTheme().includes('light/light'), '即使系统是暗色，新访客也应默认亮色')
+    store.set('radar.theme', 'dark')
+    assert.ok(renderTheme().includes('dark/dark'), '已有暗色选择不能被覆盖')
+    store.set('radar.theme', 'light')
+    assert.ok(renderTheme().includes('light/light'))
+    store.set('radar.theme', 'invalid')
+    assert.ok(renderTheme().includes('light/light'), '损坏的偏好应回退亮色')
+    store.set('radar.theme', 'system')
+    assert.ok(renderTheme().includes('system/dark'), '保留显式跟随系统的功能')
+  } finally {
+    if (previous === undefined) store.delete('radar.theme')
+    else store.set('radar.theme', previous)
+  }
+})
+
+check('首页直线标签保留六视图、当前状态与键盘接线', () => {
+  const html = renderAt('/')
+  assert.match(html, /role="tablist" aria-label="分析视图"/)
+  assert.match(html, /id="view-tab-matrix" role="tab" aria-selected="true"/)
+  assert.match(html, /role="tabpanel" aria-labelledby="view-tab-matrix"/)
+  assert.ok(srcOf('components/ViewTabs.jsx').includes('ArrowRight'))
+  assert.match(cssText, /--r-lg:\s*0px/)
+  assert.match(cssText, /--r-pill:\s*2px/)
+})
+
+check('矩阵查找只缩小题目行，整体统计与模型列保持不变', () => {
+  const all = renderAt('/')
+  const pid = Object.keys(snapshot.problems)[0]
+  const found = renderAt(`/?mx:q=${pid}`)
+  const rows = (html) => [...html.matchAll(/<th[^>]*data-detail="([^"]+)"/g)].map((match) => match[1])
+  assert.equal(rows(found).length, 1)
+  assert.equal(rows(found)[0], pid)
+  const sum = (html) => html.match(/<tr class="sum-row">.*?<\/tr>/)?.[0]
+  assert.equal(sum(found), sum(all), '题目查找不能重算整体分数')
+  assert.ok(renderAt('/?mx:q=__no_such_problem__').includes('显示全部题目'))
+  assert.match(found, /tabindex="0".*?查看测评详情/)
+})
+
+check('账号设置为两个独立表单，改密不能误提交昵称', () => {
+  const text = srcOf('components/ChangePasswordModal.jsx')
+  assert.match(text, /<form onSubmit=\{submitNick\} aria-label="修改昵称">/)
+  assert.match(text, /<form onSubmit=\{submit\} aria-label="修改密码">/)
+  assert.ok(text.includes('/api/change-password'))
+})
+
+check('弹层保留焦点管理与 Esc；明细按钮支持自动展开搜索', () => {
+  for (const name of ['AuthModal', 'RecordFormModal', 'PublishModal', 'ImportModal', 'ChangePasswordModal', 'ProblemDrawer']) {
+    const text = srcOf(`components/${name}.jsx`)
+    assert.ok(text.includes('useDialog(onClose)'), `${name} 未接入弹层键盘管理`)
+    assert.ok(text.includes('aria-modal="true"'), `${name} 未声明模态`)
+  }
+  assert.ok(srcOf('pages/HomePage.jsx').includes('radar:focus-records'))
+  assert.ok(srcOf('views/RecordsTable.jsx').includes("addEventListener('radar:focus-records'"))
+  assert.ok(srcOf('hooks/useHotkeys.js').includes('[aria-modal="true"]'))
 })
 
 /* ---------- 3.6 删除记录（管理员 / 站长）---------- */

@@ -1,14 +1,14 @@
 /**
- * 端到端权限矩阵自检：在隔离的临时 D1 环境（wrangler pages dev --persist-to）里
+ * 端到端权限矩阵自检：在隔离的临时 D1/R2 环境里
  * 跑完整的账号生命周期与权限组合，防止改坏后端权限口径。
  *
  * 用法：npm run e2e   （等价于 npm run build && node scripts/e2e.mjs）
  * 前置：根目录已 npm install（需要 wrangler）。
- * 环境完全隔离：使用 .wrangler/tmp-e2e 存储目录与 8799 端口，结束即清理，
+ * 环境完全隔离：使用 .wrangler/e2e-redesign-* 新建存储目录与 8799 端口，结束即清理，
  * 不会碰本地开发数据库（8788/.wrangler/state）。
  */
 import { spawn } from 'node:child_process'
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -26,8 +26,12 @@ if (!existsSync(require.resolve('wrangler/package.json', { paths: [root] }))) {
 }
 
 const PORT = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : 8799
+const targetPages = process.argv.includes('--pages')
 const BASE_URL = `http://127.0.0.1:${PORT}/`
-const PERSIST = path.join(root, '.wrangler', 'tmp-e2e')
+// 每轮新建，不删除或复用已有本地数据库。
+mkdirSync(path.join(root, '.wrangler'), { recursive: true })
+const PERSIST = mkdtempSync(path.join(root, '.wrangler', 'e2e-redesign-'))
+if (path.dirname(PERSIST) !== path.join(root, '.wrangler')) throw new Error('测试存储目录越界')
 
 /* ---------- 极简会话罐：吸收 Set-Cookie、拼 Cookie 头、取 CSRF ---------- */
 class Jar {
@@ -55,6 +59,7 @@ async function call(jar, method, pathname, body, extraHeaders = {}) {
   if (method !== 'GET' && method !== 'HEAD') headers['X-CSRF-Token'] = jar.csrf()
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(apiUrl(pathname), {
+    signal: AbortSignal.timeout(15_000),
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -84,25 +89,27 @@ let child = null
 let exited = false
 
 function startServer() {
-  rmSync(PERSIST, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
   // Workers 模式（wrangler.toml: main + assets）：静态资产 + /api + Cron/限流/R2 绑定全部本地模拟
   child = spawn(process.execPath, [
-    wranglerBin, 'dev',
+    wranglerBin, ...(targetPages
+      ? ['pages', 'dev', '-c', 'wrangler.toml', '-c', '../wrangler.toml']
+      : ['dev']),
     '--port', String(PORT), '--persist-to', PERSIST,
-  ], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+  ], { cwd: targetPages ? path.join(root, 'pages') : root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+  child.stdout.on('data', (chunk) => { if (process.env.E2E_VERBOSE) process.stdout.write(chunk) })
+  child.stderr.on('data', (chunk) => { if (process.env.E2E_VERBOSE) process.stderr.write(chunk) })
   child.on('exit', () => { exited = true })
 }
 
 async function stopServer() {
-  if (!child || exited) return
-  if (process.platform === 'win32') {
-    const { status } = await new Promise((resolve) => {
+  if (child && !exited && process.platform === 'win32') {
+    const status = await new Promise((resolve) => {
       const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
       killer.on('exit', resolve)
       killer.on('error', () => resolve(-1))
     })
     if (status !== 0) child.kill('SIGKILL')
-  } else {
+  } else if (child && !exited) {
     child.kill('SIGKILL')
   }
   child = null
@@ -117,7 +124,7 @@ async function waitReady() {
   while (Date.now() < deadline) {
     if (exited) throw new Error('wrangler 提前退出（端口被占或构建缓存损坏，可重跑或换 E2E_PORT）')
     try {
-      const res = await fetch(apiUrl('/api/ping'))
+      const res = await fetch(apiUrl('/api/ping'), { signal: AbortSignal.timeout(2000) })
       if (res.ok) return
     } catch { /* 未就绪继续等 */ }
     await sleep(600)
@@ -135,6 +142,13 @@ try {
   startServer()
   await waitReady()
   console.log('[e2e] 服务器就绪，开始权限矩阵')
+
+  for (const pathname of ['/', '/contributors', '/prompts', '/register']) {
+    const res = await fetch(apiUrl(pathname), { headers: { 'Sec-Fetch-Mode': 'navigate' } })
+    ok(`SPA 深链接 ${pathname}`, res.ok && (await res.text()).includes('id="root"'))
+  }
+  const apiNavigation = await fetch(apiUrl('/api/ping'), { headers: { 'Sec-Fetch-Mode': 'navigate', Accept: 'text/html' } })
+  ok('直接访问 API 不被 SPA 吞掉', apiNavigation.headers.get('content-type')?.includes('application/json'))
 
   const owner = await prime(new Jar()), admin = await prime(new Jar()),
     contrib = await prime(new Jar()), tmp = await prime(new Jar())

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "demo": "vite --config vite.demo.config.mjs",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",

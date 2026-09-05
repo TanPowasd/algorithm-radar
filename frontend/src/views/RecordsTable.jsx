@@ -59,27 +59,37 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
   }
 
   useEffect(() => {
+    let focusTimer
+    const focusSearch = () => {
+      setCollapsed(false)
+      try { localStorage.setItem('radar.records.collapsed', 'false') } catch {}
+      clearTimeout(focusTimer)
+      focusTimer = setTimeout(() => {
+        const el = document.getElementById('f-keyword')
+        if (el) {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+          el.focus()
+          el.select?.()
+        }
+      }, 60)
+    }
     const onKey = (e) => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('[aria-modal="true"]')) return
       const tag = e.target?.tagName?.toLowerCase()
       if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable) return
       if (e.key === 'f' || e.key === 'F') {
-        if (collapsed) {
-          setCollapsed(false)
-          try { localStorage.setItem('radar.records.collapsed', 'false') } catch {}
-          setTimeout(() => {
-            const el = document.getElementById('f-keyword')
-            if (el) {
-              el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-              el.focus()
-              el.select?.()
-            }
-          }, 60)
-        }
+        e.preventDefault()
+        focusSearch()
       }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [collapsed])
+    window.addEventListener('radar:focus-records', focusSearch)
+    return () => {
+      clearTimeout(focusTimer)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('radar:focus-records', focusSearch)
+    }
+  }, [])
 
   const isMyRecord = (r) => Boolean(
     session.loggedIn && (

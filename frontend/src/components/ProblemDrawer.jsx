@@ -5,9 +5,11 @@ import DeleteRecordButton from './DeleteRecordButton'
 import PidLink from './PidLink'
 import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLabel, reviewerLabel, fmtClock, fmtDateTime } from '../aggregate'
 import { THINKING_LABELS } from '../aggregate'
+import { useDialog } from '../hooks/useDialog'
 
 /** 题目详情抽屉：题目信息 + 推荐提示词（一键复制）+ 该题全部记录 + 三个统计 */
 export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitClick, onEditRecord }) {
+  const dialogRef = useDialog(onClose)
   const { data, toast, nicknameOf, nameByUid, isAdmin, session } = useApp()
   const problem = data.problems?.[pid]
   const isMyRecord = (r) => Boolean(
@@ -37,7 +39,7 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
   return (
     <>
       <div className="drawer-overlay" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-label="题目详情">
+      <aside ref={dialogRef} className="drawer" role="dialog" aria-modal="true" aria-label="题目详情" tabIndex={-1}>
         <div className="drawer-head">
           <div className="d-title">
             <h3><PidLink pid={pid} className="d-pid" /> · {problem?.title || '题目详情'}</h3>

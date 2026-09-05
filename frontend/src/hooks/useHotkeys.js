@@ -14,6 +14,7 @@ export function useHotkeys(keymap, deps = []) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.defaultPrevented || document.querySelector('[aria-modal="true"]')) return
       const t = e.target
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
         // 输入态只放行 Escape（由组件自己处理）

@@ -53,7 +53,7 @@ const prefersDark = () => {
   try {
     return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
   } catch {
-    return true // 读不到系统偏好时保持本站传统：夜间优先
+    return false
   }
 }
 
@@ -66,8 +66,8 @@ export function AppProvider({ children }) {
   const [loaded, setLoaded] = useState(false)
   /** 主题三态：'system' | 'light' | 'dark'（旧值 light/dark 直接兼容） */
   const [themeMode, setThemeMode] = useState(() => {
-    const v = readLS(LS_THEME, 'dark')
-    return v === 'system' || v === 'light' || v === 'dark' ? v : 'dark'
+    const v = readLS(LS_THEME, 'light')
+    return v === 'system' || v === 'light' || v === 'dark' ? v : 'light'
   })
   const [systemDark, setSystemDark] = useState(() => prefersDark())
   /** 版心：'full' 全宽铺满（默认） / 'narrow' 限宽居中 */
@@ -262,8 +262,8 @@ export function AppProvider({ children }) {
   }, [radarSize])
 
   const toggleTheme = useCallback(() => {
-    setThemeMode((m) => (m === 'dark' ? 'light' : m === 'light' ? 'system' : 'dark'))
-  }, [])
+    setThemeMode(theme === 'dark' ? 'light' : 'dark')
+  }, [theme])
 
   /* ---------------- 模型筛选 ---------------- */
   /** 聚焦某模型（加入/移出选择集）；选择集为空 = 全部 */

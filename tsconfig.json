@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": false
   },
-  "include": ["worker/**/*.ts", "functions/**/*.ts"]
+  "include": ["worker/**/*.ts", "pages/**/*.ts"]
 }

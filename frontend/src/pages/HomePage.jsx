@@ -66,8 +66,7 @@ export default function HomePage() {
   }
 
   const focusSearch = () => {
-    const el = document.getElementById('f-keyword')
-    if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus(); el.select?.() }
+    window.dispatchEvent(new Event('radar:focus-records'))
   }
 
   useHotkeys({
@@ -86,30 +85,36 @@ export default function HomePage() {
 
   return (
     <>
+      <a className="skip-link" href="#analysis-panel">跳到评测矩阵与分析</a>
       <Topbar
         onOpenAuth={() => setAuthOpen(true)}
         onOpenPublish={() => setPublishOpen(true)}
         onOpenImport={() => setImportOpen(true)}
         hud={hud}
       />
-      <main className="layout">
-        <Notice />
+      <main className="layout home-layout">
+        <div className="overview-heading">
+          <div><span className="eyebrow">ALGORITHM RADAR / BENCHMARK</span><h2>模型解题评测</h2></div>
+          <span className="overview-caption">以题目为坐标，比较模型的真实作答记录。</span>
+        </div>
         <StatsBar />
-        <ContributorFilter />
-        <ModelFilter />
+        <Notice />
+        <div className="analysis-filters" aria-label="全站数据筛选">
+          <ModelFilter />
+          <ContributorFilter />
+          <span className="filter-scope">筛选同步应用于统计、分析与明细</span>
+        </div>
 
-        <div className="card">
-          <div className="card-head" style={{ marginBottom: 0 }}>
+        <div className="analysis-nav">
             <ViewTabs tabs={TABS} active={view} onChange={setView} />
             <div className="card-tools">
-              <span className="hint">按 1–6 切视图 · ? 看快捷键</span>
+              <button className="btn small ghost" onClick={focusSearch} title="查找测评明细（F）">查找明细 <kbd>F</kbd></button>
               {isContributor && (
                 <button className="btn primary" onClick={() => setRecordModal({ edit: null, lockPid: null })}>
                   + 提交测评
                 </button>
               )}
             </div>
-          </div>
         </div>
 
         {offline && loaded && (
@@ -121,6 +126,7 @@ export default function HomePage() {
           </div>
         )}
 
+        <section id="analysis-panel" role="tabpanel" aria-labelledby={`view-tab-${view}`} tabIndex={0}>
         {view === 'matrix' && (
           <MatrixView
             onOpenDetail={openDetail}
@@ -133,6 +139,7 @@ export default function HomePage() {
         {view === 'leaderboard' && <LeaderboardView onOpenDetail={openDetail} />}
         {view === 'roll' && <RollBoardView onOpenDetail={openDetail} />}
         {view === 'insight' && <InsightView />}
+        </section>
 
         <RecordsTable
           onOpenDetail={openDetail}

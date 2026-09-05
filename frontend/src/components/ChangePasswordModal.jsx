@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
+import { useDialog } from '../hooks/useDialog'
 
 /** 账号设置弹窗：昵称即时生效；改密码成功后其他设备全部下线，当前设备自动续签 */
 export default function ChangePasswordModal({ onClose }) {
+  const dialogRef = useDialog(onClose)
   const { toast, refreshSession, refreshNicknames, session } = useApp()
   const [nick, setNick] = useState(session.nickname || '')
   const [nickBusy, setNickBusy] = useState(false)
@@ -53,15 +55,17 @@ export default function ChangePasswordModal({ onClose }) {
 
   return (
     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <form className="modal narrow" onSubmit={submitNick}>
+      <div ref={dialogRef} className="modal narrow" role="dialog" aria-modal="true" aria-label="账号设置" tabIndex={-1}>
         <div className="modal-head">
           <h3>账号设置</h3>
-          <button type="button" className="icon-btn close" onClick={onClose}>✕</button>
+          <button type="button" className="icon-btn close" onClick={onClose} aria-label="关闭账号设置">×</button>
         </div>
 
+        <form onSubmit={submitNick} aria-label="修改昵称">
         <div className="field">
-          <label>昵称（全站显示名，1–24 字）</label>
+          <label htmlFor="account-nickname">昵称（全站显示名，1–24 字）</label>
           <input
+            id="account-nickname"
             value={nick}
             maxLength={24}
             onChange={(e) => setNick(e.target.value)}
@@ -72,30 +76,33 @@ export default function ChangePasswordModal({ onClose }) {
         <div className="modal-foot" style={{ marginTop: 0 }}>
           <button type="submit" className="btn primary" disabled={nickBusy}>{nickBusy ? '保存中…' : '保存昵称'}</button>
         </div>
+        </form>
 
         <hr className="modal-divider" />
 
+        <form onSubmit={submit} aria-label="修改密码">
         <div className="callout">
           新密码 8–64 位，存储为 PBKDF2 哈希。修改成功后<strong>其他设备会全部退出登录</strong>，本设备保持在线。
         </div>
         <div className="field">
-          <label>旧密码</label>
-          <input type="password" value={form.oldPassword} onChange={(e) => set({ oldPassword: e.target.value })} autoComplete="current-password" />
+          <label htmlFor="account-old-password">旧密码</label>
+          <input id="account-old-password" type="password" value={form.oldPassword} onChange={(e) => set({ oldPassword: e.target.value })} autoComplete="current-password" />
         </div>
         <div className="field">
-          <label>新密码（8–64 位）</label>
-          <input type="password" value={form.newPassword} onChange={(e) => set({ newPassword: e.target.value })} autoComplete="new-password" />
+          <label htmlFor="account-new-password">新密码（8–64 位）</label>
+          <input id="account-new-password" type="password" value={form.newPassword} onChange={(e) => set({ newPassword: e.target.value })} autoComplete="new-password" />
         </div>
         <div className="field">
-          <label>确认新密码</label>
-          <input type="password" value={form.newPassword2} onChange={(e) => set({ newPassword2: e.target.value })} autoComplete="new-password" />
+          <label htmlFor="account-confirm-password">确认新密码</label>
+          <input id="account-confirm-password" type="password" value={form.newPassword2} onChange={(e) => set({ newPassword2: e.target.value })} autoComplete="new-password" />
         </div>
         {error && <div className="form-error">{error}</div>}
         <div className="modal-foot">
           <button type="button" className="btn ghost" onClick={onClose}>取消</button>
           <button type="submit" className="btn primary" disabled={busy}>{busy ? '提交中…' : '修改密码'}</button>
         </div>
-      </form>
+        </form>
+      </div>
     </div>
   )
 }

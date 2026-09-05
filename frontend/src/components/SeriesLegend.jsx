@@ -4,10 +4,10 @@ export default function SeriesLegend({ seriesList, colorMap, visible, onToggle, 
     return (
       <div className="series-legend">
         {seriesList.map((s) => (
-          <span key={s} className={`series-chip ${visible && !visible.has(s) ? 'off' : ''}`} onClick={() => onToggle(s)}>
+          <button type="button" key={s} aria-pressed={!visible || visible.has(s)} className={`series-chip ${visible && !visible.has(s) ? 'off' : ''}`} onClick={() => onToggle(s)}>
             <span className="dot" style={{ background: colorMap.get(s) || '#888' }} />
             {s}
-          </span>
+          </button>
         ))}
       </div>
     )
@@ -26,7 +26,9 @@ export default function SeriesLegend({ seriesList, colorMap, visible, onToggle, 
           <span className="sw" style={{ background: colorMap.get(list[0]) || '#888' }} />
           <b>{vendor}</b>
           {list.map((s) => (
-            <span
+            <button
+              type="button"
+              aria-pressed={!visible || visible.has(s)}
               key={s}
               className={`series-chip ${visible && !visible.has(s) ? 'off' : ''}`}
               onClick={() => onToggle(s)}
@@ -34,7 +36,7 @@ export default function SeriesLegend({ seriesList, colorMap, visible, onToggle, 
             >
               <span className="dot" style={{ background: colorMap.get(s) || '#888' }} />
               {s}
-            </span>
+            </button>
           ))}
         </span>
       ))}

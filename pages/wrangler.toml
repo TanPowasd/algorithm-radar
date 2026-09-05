@@ -1,0 +1,9 @@
+# 可选 Pages 前端入口；主部署仍以根目录 wrangler.toml 的 Worker 为准。
+# API 经服务绑定调用现有 Worker，因此 D1、R2、限流及 Cron 只有一套。
+name = "ai-vs-luogu-pages"
+pages_build_output_dir = "../frontend/dist"
+compatibility_date = "2026-09-01"
+
+[[services]]
+binding = "API"
+service = "ai-vs-luogu"

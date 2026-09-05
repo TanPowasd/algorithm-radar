@@ -8,7 +8,7 @@ import { copyText } from '../hooks/copyText'
  */
 const KEYS = [
   { k: '1 – 6', d: '切换视图（矩阵 / 雷达 / 柱状 / 榜单 / 滚榜 / 洞察）' },
-  { k: 'T', d: '循环主题：夜间 → 日间 → 跟随系统' },
+  { k: 'T', d: '切换亮色 / 暗色（自动记住选择）' },
   { k: 'W', d: '切换版心：全宽铺满 ⇄ 限宽居中' },
   { k: 'F', d: '聚焦明细搜索框' },
   { k: 'R', d: '重新拉取数据' },
@@ -26,6 +26,7 @@ export default function ShortcutHelp({ extra }) {
 
   useEffect(() => {
     const onKey = (e) => {
+      if (document.querySelector('[aria-modal="true"]')) return
       const t = e.target
       const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
       if (e.key === '?' && !typing) { setOpen((v) => !v); return }
@@ -49,7 +50,7 @@ export default function ShortcutHelp({ extra }) {
         <div className="shortcut-panel" role="dialog" aria-label="快捷键">
           <h4>
             操作面板
-            <span className="close" onClick={() => setOpen(false)} role="button" tabIndex={0}>✕</span>
+            <button className="icon-btn close" onClick={() => setOpen(false)} aria-label="关闭快捷键说明">×</button>
           </h4>
           <div className="shortcut-list">
             {KEYS.map((row) => (

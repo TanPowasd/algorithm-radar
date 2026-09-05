@@ -6,14 +6,9 @@ import ChangePasswordModal from './ChangePasswordModal'
 import Hud from './Hud'
 
 const ROLE_LABELS = { owner: '站长', admin: '管理员', contributor: '贡献者' }
-const THEME_LABEL = {
-  dark: ['☾', '夜间模式（按 T 切到日间）'],
-  light: ['☀', '日间模式（按 T 切到跟随系统）'],
-  system: ['◐', '跟随系统（按 T 切到夜间）'],
-}
 
 export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud }) {
-  const { session, offline, isAdmin, theme, themeMode, toggleTheme,
+  const { session, offline, isAdmin, theme, themeMode, setThemeMode, toggleTheme,
     widthMode, setWidthMode, toast, refreshAll } = useApp()
   const location = useLocation()
   const [pwOpen, setPwOpen] = useState(false)
@@ -28,7 +23,11 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
       }
     }
     const onKeyDown = (e) => {
-      if (e.key === 'Escape') setMenu(null)
+      if (e.key === 'Escape') {
+        const expanded = topbarRef.current?.querySelector('[aria-expanded="true"]')
+        if (expanded) { e.stopPropagation(); expanded.focus() }
+        setMenu(null)
+      }
     }
     document.addEventListener('click', onDocClick)
     document.addEventListener('keydown', onKeyDown)
@@ -57,25 +56,28 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
     setMenu((m) => (m === name ? null : name))
   }
 
-  const [icon, tip] = THEME_LABEL[themeMode] || THEME_LABEL.dark
+  const nextThemeLabel = theme === 'light' ? '切换到暗色' : '切换到亮色'
   const isSubPage = ['/admin', '/users', '/contributors', '/prompts', '/register'].includes(location.pathname)
 
   return (
     <header className="topbar" ref={topbarRef}>
       <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }}>
         <div className="brand">
+          <svg className="brand-mark" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+            <path d="M1 9V1h8M19 1h8v8M27 19v8h-8M9 27H1v-8" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M5 20l6-9 5 5 7-11" stroke="currentColor" strokeWidth="2" />
+          </svg>
           <h1>AI vs 洛谷</h1>
           <span className="sub">解题能力对比</span>
         </div>
       </Link>
       <span className={`conn ${offline ? 'bad' : 'ok'}`} title={offline ? '服务器离线（展示缓存数据）' : '已连接'} />
-      {hud && <Hud {...hud} />}
       <div className="spacer" />
 
-      <nav style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      <nav className="topbar-nav" aria-label="主导航">
         {/* 常驻基础导航 */}
         <Link className={`btn small ${location.pathname === '/contributors' ? 'primary' : 'ghost'}`} to="/contributors">
-          贡献榜
+          贡献者
         </Link>
         <Link className={`btn small ${location.pathname === '/prompts' ? 'primary' : 'ghost'}`} to="/prompts">
           推荐提示词
@@ -93,7 +95,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
             aria-expanded={menu === 'tools'}
             title="数据导出与显示布局设置"
           >
-            工具 ▾
+            数据与设置 ▾
           </button>
           {menu === 'tools' && (
             <div className="dropdown-menu">
@@ -102,16 +104,24 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
                 className="dropdown-item"
                 onClick={() => { download('/api/export/public?format=csv'); setMenu(null) }}
               >
-                <span>📄</span> 导出数据 (CSV)
+                导出数据 (CSV)
               </button>
               <button
                 type="button"
                 className="dropdown-item"
                 onClick={() => { download('/api/export/public?format=json'); setMenu(null) }}
               >
-                <span>📦</span> 导出数据 (JSON)
+                导出数据 (JSON)
               </button>
               <div className="dropdown-divider" />
+              <label className="dropdown-setting">
+                外观
+                <select value={themeMode} onChange={(event) => setThemeMode(event.target.value)}>
+                  <option value="light">亮色</option>
+                  <option value="dark">暗色</option>
+                  <option value="system">跟随系统</option>
+                </select>
+              </label>
               <button
                 type="button"
                 className="dropdown-item"
@@ -120,9 +130,9 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
                   setMenu(null)
                 }}
               >
-                <span>{widthMode === 'full' ? '⤡' : '⤢'}</span>
                 {widthMode === 'full' ? '切换为限宽居中' : '切换为全宽铺满'}
               </button>
+              {hud && <details className="runtime-details"><summary>运行读数</summary><Hud {...hud} /></details>}
             </div>
           )}
         </div>
@@ -142,10 +152,10 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
             {menu === 'admin' && (
               <div className="dropdown-menu">
                 <Link className="dropdown-item" to="/admin">
-                  <span>🛡</span> 审核台
+                  审核台
                 </Link>
                 <Link className="dropdown-item" to="/users">
-                  <span>👥</span> 用户管理
+                  用户管理
                 </Link>
                 {onOpenPublish && (
                   <button
@@ -153,7 +163,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
                     className="dropdown-item"
                     onClick={() => { onOpenPublish(); setMenu(null) }}
                   >
-                    <span>➕</span> 发布新题
+                    发布新题
                   </button>
                 )}
                 {onOpenImport && (
@@ -162,7 +172,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
                     className="dropdown-item"
                     onClick={() => { onOpenImport(); setMenu(null) }}
                   >
-                    <span>📥</span> 导入历史数据
+                    导入历史数据
                   </button>
                 )}
               </div>
@@ -177,6 +187,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
               type="button"
               className="btn small ghost"
               onClick={() => toggleMenu('user')}
+              aria-expanded={menu === 'user'}
               style={{ display: 'flex', alignItems: 'center', gap: 6 }}
             >
               <span className="role-tag" style={{ fontSize: 11 }}>{ROLE_LABELS[session.role] || session.role}</span>
@@ -190,7 +201,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
                   className="dropdown-item"
                   onClick={() => { setPwOpen(true); setMenu(null) }}
                 >
-                  <span>⚙</span> 账号设置（改密）
+                  账号设置（昵称 / 密码）
                 </button>
                 <button
                   type="button"
@@ -198,7 +209,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
                   onClick={() => { logout(); setMenu(null) }}
                   style={{ color: 'var(--red)' }}
                 >
-                  <span>🚪</span> 退出登录
+                  退出登录
                 </button>
               </div>
             )}
@@ -212,12 +223,13 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
 
         {/* 主题切换 */}
         <button
-          className="icon-btn"
+          className="btn small ghost theme-toggle"
           onClick={toggleTheme}
-          title={`${tip}（当前 ${themeMode} → 实际 ${theme}）`}
-          style={{ width: 28, height: 28, fontSize: 13 }}
+          title={`${nextThemeLabel}（T）· 自动记住选择`}
+          aria-label={nextThemeLabel}
         >
-          {icon}
+          <span aria-hidden="true">{theme === 'light' ? '◐' : '◑'}</span>
+          {theme === 'light' ? '暗色' : '亮色'}
         </button>
       </nav>
       {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}

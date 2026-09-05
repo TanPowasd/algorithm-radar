@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApp } from '../state'
 import { api } from '../api/client'
+import { useDialog } from '../hooks/useDialog'
 
 /** 登录弹窗（用户 ID + 密码；含首次初始化站长）；注册走独立页面 /register */
 export default function AuthModal({ onClose }) {
+  const dialogRef = useDialog(onClose)
   const { session, refreshAll, toast } = useApp()
   const [tab, setTab] = useState(session.canSetup ? 'setup' : 'login')
   const [form, setForm] = useState({ userId: '', nickname: '', password: '', setupToken: '' })
@@ -44,10 +46,10 @@ export default function AuthModal({ onClose }) {
 
   return (
     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <form className="modal narrow" onSubmit={submit}>
+      <form ref={dialogRef} className="modal narrow" role="dialog" aria-modal="true" aria-label={tab === 'login' ? '登录' : '初始化站长账号'} tabIndex={-1} onSubmit={submit}>
         <div className="modal-head">
           <h3>{tab === 'login' ? '登录' : '初始化站长账号'}</h3>
-          <button type="button" className="icon-btn close" onClick={onClose}>✕</button>
+          <button type="button" className="icon-btn close" onClick={onClose} aria-label="关闭登录">×</button>
         </div>
 
         {session.canSetup && (
@@ -65,8 +67,8 @@ export default function AuthModal({ onClose }) {
         )}
 
         <div className="field">
-          <label>用户 ID（登录用）</label>
-          <input value={form.userId} onChange={(e) => set({ userId: e.target.value })} autoComplete="username" />
+          <label htmlFor="auth-user">用户 ID（登录用）</label>
+          <input id="auth-user" value={form.userId} onChange={(e) => set({ userId: e.target.value })} autoComplete="username" />
         </div>
         {tab === 'setup' && (
           <div className="field">
@@ -75,8 +77,8 @@ export default function AuthModal({ onClose }) {
           </div>
         )}
         <div className="field">
-          <label>密码</label>
-          <input type="password" value={form.password} onChange={(e) => set({ password: e.target.value })} autoComplete="current-password" />
+          <label htmlFor="auth-password">密码</label>
+          <input id="auth-password" type="password" value={form.password} onChange={(e) => set({ password: e.target.value })} autoComplete="current-password" />
         </div>
         {tab === 'setup' && (
           <div className="field">

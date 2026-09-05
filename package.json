@@ -12,7 +12,12 @@
     "build": "npm --prefix frontend run build",
     "seed": "node scripts/seed.mjs",
     "e2e": "npm run build && node scripts/e2e.mjs",
+    "e2e:pages": "npm run build && node scripts/e2e.mjs --pages",
     "deploy": "npm run build && wrangler deploy",
+    "dev:pages": "wrangler pages dev --cwd pages --port 8789",
+    "build:pages": "npm run build && wrangler pages functions build pages/functions --outdir .wrangler/pages-build",
+    "deploy:pages": "npm run build && wrangler pages deploy --cwd pages",
+    "types:pages": "wrangler types pages/pages-env.d.ts --config pages/wrangler.toml --env-interface PagesEnv --include-runtime false",
     "d1:init:local": "wrangler d1 execute DB --local --file=db/schema.sql",
     "d1:init:remote": "wrangler d1 execute DB --remote --file=db/schema.sql"
   },

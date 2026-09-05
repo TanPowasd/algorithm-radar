@@ -1,2 +1,3 @@
 # SPA 回退由 wrangler.toml [assets] 的 not_found_handling = "single-page-application" 处理，
 # Workers 资产模式下不要再写 /* /index.html 200（会被判无限循环，部署报 100324）。
+# Pages 模式使用其原生 SPA 回退（不生成顶层 404.html），同样不需要通配重写。

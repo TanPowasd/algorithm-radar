@@ -3,6 +3,7 @@ import { useApp } from '../state'
 import { api } from '../api/client'
 import { PID_RE, DIFFICULTY_NAMES, PROMPT_TEMPLATE } from '../aggregate'
 import CopyButton from './CopyButton'
+import { useDialog } from '../hooks/useDialog'
 
 /** 难度选项：value = 实际难度值字符串（'' 为选择占位）。直接由共享难度表生成，杜绝档位错位。 */
 const DIFF_OPTIONS = [
@@ -20,6 +21,7 @@ function parseTags(text) {
  * - 编辑：传入 editProblem（题目对象）→ 题号锁定，保存走 PUT（全量覆盖）
  */
 export default function PublishModal({ onClose, initialPid, onPublished, editProblem }) {
+  const dialogRef = useDialog(onClose)
   const { toast, refreshAll } = useApp()
   const isEdit = !!editProblem
   const [form, setForm] = useState(() => ({
@@ -92,7 +94,7 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
 
   return (
     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <form className="modal" onSubmit={submit}>
+      <form ref={dialogRef} className="modal" role="dialog" aria-modal="true" aria-label={editProblem ? '编辑题目' : '发布题目'} tabIndex={-1} onSubmit={submit}>
         <div className="modal-head">
           <h3>{isEdit ? `编辑题目 · ${form.pid}` : '发布新题'}</h3>
           <button type="button" className="icon-btn close" onClick={onClose}>✕</button>

@@ -21,16 +21,16 @@ export default function StatsBar() {
 
   const items = [
     { label: focused ? '当前记录' : '测评记录', value: stats.total, tone: 'tone-accent' },
-    { label: focused ? '当前模型' : '参赛模型', value: stats.models, tone: 'tone-purple' },
+    { label: focused ? '当前模型' : '评测模型', value: stats.models, tone: 'tone-purple' },
     { label: '已发布题目', value: stats.problems, tone: 'tone-orange' },
     { label: focused ? '当前通过率' : '最终通过率', value: `${stats.acRate}%`, tone: 'tone-green' },
     { label: focused ? '当前贡献者' : '贡献者', value: stats.contributors, tone: 'tone-red' },
   ]
   return (
-    <div className="stats">
+    <div className="stats" aria-label="测评统计">
       {items.map((it) => (
         <div className="stat" key={it.label}>
-          <div className="s-label"><span className={`tone-dot ${it.tone}`} />{it.label}</div>
+          <div className="s-label">{it.label}</div>
           <div className="s-value">{it.value}</div>
         </div>
       ))}

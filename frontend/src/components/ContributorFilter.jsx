@@ -35,10 +35,10 @@ export default function ContributorFilter() {
 
   return (
     <div className="filter-compact-bar" id="contributor-filter">
-      <span className="fc-tag">👤 贡献者视角</span>
+      <span className="fc-tag">贡献者</span>
       {active ? (
         <>
-          <span className="fc-desc">只看 <strong>{activeLabel}</strong> 的已审核记录（全站视图与统计同步生效）</span>
+          <span className="fc-desc"><strong>{activeLabel}</strong></span>
           <div className="fc-actions">
             <button className="btn small ghost" onClick={() => setFocusContributor(null)}>查看全部</button>
             <select
@@ -46,6 +46,7 @@ export default function ContributorFilter() {
               value={String(focusContributor)}
               onChange={(e) => setFocusContributor(e.target.value === '' ? null : e.target.value === 'legacy' ? 'legacy' : Number(e.target.value))}
               title="切换贡献者"
+              aria-label="选择贡献者"
             >
               <option value="">全部贡献者</option>
               {people.map((p) => <option key={p.key} value={String(p.key)}>{p.label}</option>)}
@@ -55,7 +56,6 @@ export default function ContributorFilter() {
         </>
       ) : (
         <>
-          <span className="fc-desc">显示全部贡献者的记录（选择某人后全站只看 TA 的成绩）</span>
           <div className="fc-actions">
             <select
               className="fc-select"
@@ -65,8 +65,9 @@ export default function ContributorFilter() {
                 setFocusContributor(e.target.value === 'legacy' ? 'legacy' : Number(e.target.value))
               }}
               title="选择要查看的贡献者"
+              aria-label="选择贡献者"
             >
-              <option value="">选择贡献者…</option>
+              <option value="">全部贡献者</option>
               {people.map((p) => <option key={p.key} value={String(p.key)}>{p.label}</option>)}
               {hasLegacy && <option value="legacy">全民制作人（历史导入）</option>}
             </select>

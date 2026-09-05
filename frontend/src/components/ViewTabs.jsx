@@ -1,33 +1,33 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-
-/** 滑动 pill 选项卡：pill 位置用 CSSOM 测量定位（与旧站一致） */
+/** 标准标签页：方向键 / Home / End 切换，选中项由底线标识。 */
 export default function ViewTabs({ tabs, active, onChange }) {
-  const wrapRef = useRef(null)
-  const [pill, setPill] = useState({ left: 0, width: 0 })
-
-  useLayoutEffect(() => {
-    const measure = () => {
-      const wrap = wrapRef.current
-      if (!wrap) return
-      const el = wrap.querySelector(`[data-tab="${active}"]`)
-      if (!el) return
-      setPill({ left: el.offsetLeft, width: el.offsetWidth })
-    }
-    measure()
-    window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
-  }, [active, tabs])
+  const onKeyDown = (event, index) => {
+    let next
+    if (event.key === 'ArrowRight') next = (index + 1) % tabs.length
+    else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = tabs.length - 1
+    else return
+    event.preventDefault()
+    onChange(tabs[next].key)
+    event.currentTarget.parentElement.querySelectorAll('[role="tab"]')[next]?.focus()
+  }
 
   return (
-    <nav className="view-tabs" ref={wrapRef}>
-      <span className="view-tab-pill" style={{ transform: `translateX(${pill.left}px)`, width: pill.width }} />
-      {tabs.map((t) => (
+    <nav className="view-tabs" role="tablist" aria-label="分析视图">
+      {tabs.map((t, index) => (
         <button
+          type="button"
           key={t.key}
-          data-tab={t.key}
+          id={`view-tab-${t.key}`}
+          role="tab"
+          aria-selected={active === t.key}
+          aria-controls="analysis-panel"
+          tabIndex={active === t.key ? 0 : -1}
           className={`view-tab ${active === t.key ? 'active' : ''}`}
           onClick={() => onChange(t.key)}
+          onKeyDown={(event) => onKeyDown(event, index)}
         >
+          <span className="view-index" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
           {t.label}
         </button>
       ))}

@@ -3,6 +3,7 @@ import { useApp } from '../state'
 import { api } from '../api/client'
 import { normalizeSub, RESULTS, THINKING_LEVELS, THINKING_LABELS, DEFAULT_THINKING, todayStr, DIFFICULTY_NAMES } from '../aggregate'
 import CopyButton from './CopyButton'
+import { useDialog } from '../hooks/useDialog'
 
 /** 测评难度选项：1–7（value 字符串，与 select 的 state 一致） */
 const REC_DIFF_OPTIONS = Object.entries(DIFFICULTY_NAMES)
@@ -19,6 +20,7 @@ function Field({ label, children }) {
 }
 
 export default function RecordFormModal({ editRecord, lockPid, onClose }) {
+  const dialogRef = useDialog(onClose)
   const { data, models, toast, refreshAll, isAdmin } = useApp()
   const isEdit = !!editRecord
 
@@ -157,7 +159,7 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
 
   return (
     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <form className="modal wide" onSubmit={submit}>
+      <form ref={dialogRef} className="modal wide" role="dialog" aria-modal="true" aria-label={isEdit ? '编辑测评' : '提交测评'} tabIndex={-1} onSubmit={submit}>
         <div className="modal-head">
           <h3>{isEdit ? `编辑测评 · ${editRecord.id}` : '提交测评记录'}</h3>
           <button type="button" className="icon-btn close" onClick={onClose}>✕</button>
