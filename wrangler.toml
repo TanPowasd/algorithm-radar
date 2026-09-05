@@ -1,16 +1,47 @@
-# Cloudflare Pages 项目配置（前端静态资源 + /api/* Pages Functions + D1 绑定）
-# 部署：npm run deploy；database_id 已填入下方。
+# Cloudflare Workers 配置（静态资产 + /api/* Worker + D1 + Cron 快照 + 原生限流）
+# 2026-09-05：项目从 Pages 迁移到 Workers（Pages 不支持 Cron Trigger 与 ratelimit binding）；
+# D1 数据库原样复用，无需迁移数据。部署：npm run deploy（wrangler deploy）。
+
 name = "ai-vs-luogu"
-pages_build_output_dir = "frontend/dist"
+main = "worker/index.ts"
 compatibility_date = "2026-09-01"
 
-# 注意：Pages 项目不支持 [[rules]]，schema 文本改由 worker/schema.ts 内联提供
+# 静态资产：命中 frontend/dist 直接返回（带 _headers/_redirects 语义）；
+# 未命中交给 Worker——/api/* 走 API，其余由 ASSETS 兜底（SPA 回退到 index.html）
+[assets]
+directory = "./frontend/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "ai-vs-luogu"
 database_id = "709c23c0-9908-40d2-982b-94bcc5e4cfff"
 
+# Cron：每日 UTC 21:00（北京时间 05:00）做数据快照到 R2
+[triggers]
+crons = ["0 21 * * *"]
+
+# 原生限流（跨 isolate 可靠；period 仅支持 10/60 秒，长窗口限流仍由进程内尽力而为叠加）
+[[ratelimits]]
+name = "WRITE_LIMIT"
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
+[[ratelimits]]
+name = "AUTH_LIMIT"
+namespace_id = "1002"
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+# 每日数据快照桶（首次部署前需：npx wrangler r2 bucket create ai-vs-luogu-backups）
+[[r2_buckets]]
+binding = "SNAPSHOT_BUCKET"
+bucket_name = "ai-vs-luogu-backups"
+
 [vars]
-# 可选：公网首次初始化站长用的一次性口令（更推荐 `wrangler pages secret put SETUP_TOKEN`）
+# 可选：公网首次初始化站长用的一次性口令（更推荐 `wrangler secret put SETUP_TOKEN`）
 # SETUP_TOKEN = ""

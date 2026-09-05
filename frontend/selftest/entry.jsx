@@ -22,6 +22,9 @@ snapshot.models = snapshot.models || []
 console.log(`样本来源：${fixturePath.split(/[\\/]/).pop()}`)
 
 const store = new Map([['radar.cache.v3', raw]])
+// 明细表默认折叠（64dbabd）会让表格体不渲染；自检统一展开渲染旧断言，
+// 默认折叠行为另有专项断言（见「明细表默认折叠」）
+store.set('radar.records.collapsed', 'false')
 globalThis.localStorage = {
   getItem: (k) => (store.has(k) ? store.get(k) : null),
   setItem: (k, v) => store.set(k, String(v)),
@@ -399,6 +402,18 @@ check('渲染明细表：时间列两行（日期 + 时分）', () => {
   assert.ok(html.includes('录入时分'), '缺口径说明')
 })
 
+check('明细表默认折叠：只留卡片头与展开按钮，表格体不渲染', () => {
+  store.delete('radar.records.collapsed') // 恢复产品默认（折叠）
+  try {
+    const html = renderAt('/')
+    assert.ok(html.includes('展开明细'), '折叠态缺「展开明细」按钮')
+    assert.ok(html.includes('id="records-count"'), '折叠态缺记录数提示')
+    assert.ok(!html.includes('tcell'), '折叠态不应渲染表格单元格（时间列/tcell）')
+  } finally {
+    store.set('radar.records.collapsed', 'false') // 还原自检展开态
+  }
+})
+
 check('渲染抽屉 + 一键复制（提示词出现在抽屉里）', () => {
   const anyPid = Object.keys(snapshot.problems)[0]
   const withPrompt = Object.keys(snapshot.problems).find((p) => snapshot.problems[p].prompt) || anyPid
@@ -496,6 +511,73 @@ check('/users 删除与审计接线（静态源码契约）', () => {
   // 审计走管理端点且有中文动作映射
   assert.ok(src.includes('/api/admin/audit'), '审计卡片没接 /api/admin/audit')
   assert.ok(src.includes("ACTION_LABEL[a.action] || a.action"), '未知审计动作应原样展示')
+})
+
+/* ---------- 洞察口径（v3.9）：模型稳定性 / 题目区分度 / 思考等级收益 ---------- */
+const { modelStability, problemDiscrimination, thinkingYield, bestScoreOf, stdDev } =
+  await import('../src/aggregate.js')
+
+check('洞察基础口径：bestScoreOf 与 stdDev', () => {
+  assert.equal(bestScoreOf({ submissions: [{ score: 30 }, { score: null }, { score: 80 }] }), 80, '无分数轮次不计，取最高')
+  assert.equal(bestScoreOf({ submissions: [{ score: null }] }), null, '全部无分 → null')
+  assert.equal(bestScoreOf({ submissions: [] }), null, '空轮次 → null')
+  assert.equal(stdDev([5, 5, 5]), 0, '常量序列标准差为 0')
+  assert.equal(stdDev([1]), 0, '样本不足 2 → 0')
+  assert.equal(stdDev([]), 0, '空序列 → 0')
+  assert.ok(Math.abs(stdDev([0, 10]) - 5) < 1e-9, '两值标准差 = 差值一半')
+})
+
+check('洞察：模型稳定性（AC 率分母 = 作答记录数，无分记录不计入均分）', () => {
+  const recs = [
+    { model: 'A', pid: 'P1', thinking: 'max', status: 'approved', submissions: [{ score: 100, result: 'AC' }] },
+    { model: 'A', pid: 'P2', thinking: 'max', status: 'approved', submissions: [{ score: null, result: 'TLE' }] },
+    { model: 'A', pid: 'P3', thinking: 'max', status: 'approved', submissions: [{ score: 0, result: 'WA' }] },
+    { model: 'B', pid: 'P1', thinking: 'low', status: 'approved', submissions: [{ score: 100, result: 'AC' }] },
+  ]
+  const rows = modelStability(recs)
+  const a = rows.find((r) => r.model === 'A')
+  const b = rows.find((r) => r.model === 'B')
+  assert.equal(a.answered, 3, 'A 作答 3 条（含无分轮次记录）')
+  assert.equal(a.ac, 1, 'A AC 1 条')
+  assert.equal(a.problems, 3, 'A 覆盖 3 题')
+  assert.ok(Math.abs(a.avgBest - (100 + 0) / 2) < 1e-9, '无分数记录不进均分：(100+0)/2')
+  assert.ok(Math.abs(a.acRate - 1 / 3) < 1e-9, 'AC 率分母 = 作答记录数')
+  assert.ok(Math.abs(a.stdBest - 50) < 1e-9, 'A 两样本 [100,0] 标准差 50')
+  assert.equal(b.stdBest, 0, 'B 单样本标准差 0')
+})
+
+check('洞察：题目区分度（极差按模型均分算，降序）', () => {
+  const recs = [
+    { model: 'A', pid: 'P1', status: 'approved', submissions: [{ score: 100 }] },
+    { model: 'B', pid: 'P1', status: 'approved', submissions: [{ score: 0 }] },
+    { model: 'A', pid: 'P2', status: 'approved', submissions: [{ score: 50 }] },
+    { model: 'B', pid: 'P2', status: 'approved', submissions: [{ score: 60 }] },
+  ]
+  const rows = problemDiscrimination(recs)
+  assert.equal(rows[0].pid, 'P1', 'P1 极差 100 排第一')
+  assert.ok(Math.abs(rows[0].spread - 100) < 1e-9, 'P1 极差 = 100−0')
+  assert.ok(Math.abs(rows[1].spread - 10) < 1e-9, 'P2 极差 = 60−50')
+  assert.equal(rows[0].models, 2, 'P1 参与模型数 2')
+})
+
+check('洞察：思考等级收益（未知等级归 max，按等级顺序输出）', () => {
+  const recs = [
+    { model: 'A', pid: 'P1', thinking: 'off', status: 'approved', submissions: [{ score: 0 }] },
+    { model: 'A', pid: 'P2', thinking: 'ultra', status: 'approved', submissions: [{ score: 100, result: 'AC' }] },
+    { model: 'A', pid: 'P3', thinking: ' alien ', status: 'approved', submissions: [{ score: 50 }] },
+  ]
+  const rows = thinkingYield(recs)
+  assert.deepEqual(rows.map((r) => r.thinking), ['ultra', 'max', 'off'], '输出按等级强弱排序，未知等级并入 max')
+  assert.equal(rows[1].answered, 1, 'max 桶只含归并的未知等级记录')
+})
+
+check('渲染 /?v=insight（三张洞察表）', () => {
+  const html = renderAt('/?v=insight')
+  assert.ok(html.includes('模型稳定性'), '缺模型稳定性卡片')
+  assert.ok(html.includes('题目区分度'), '缺题目区分度卡片')
+  assert.ok(html.includes('思考等级收益'), '缺思考等级收益卡片')
+  assert.ok(html.includes('成绩标准差'), '稳定性表缺标准差列')
+  assert.ok(html.includes('模型均分极差'), '区分度表缺极差列')
 })
 
 /* ---------- 3.5 日夜主题与全宽版心的落地检查（静态读源码/样式） ---------- */

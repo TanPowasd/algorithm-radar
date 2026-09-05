@@ -12,9 +12,17 @@ import { ApiError, DIFFICULTY_NAMES, forbidden, tooMany, unauthorized } from "./
 import * as store from "./store";
 import { fetchLuoguProblem } from "./luogu";
 import { ensureSchema } from "./ensureSchema";
+import { runSnapshot } from "./snapshot";
 export interface Env {
     DB: D1Database;
-    /** 公网首次初始化站长用的一次性口令（wrangler pages secret put SETUP_TOKEN） */
+    /** 静态资产绑定：非 /api 请求由入口转交（SPA 回退由 assets.not_found_handling 处理） */
+    ASSETS: Fetcher;
+    /** 原生限流 binding（wrangler.toml [[ratelimits]]，跨 isolate 可靠；周期仅 10/60 秒） */
+    WRITE_LIMIT?: RateLimit;
+    AUTH_LIMIT?: RateLimit;
+    /** 每日数据快照 R2 桶 */
+    SNAPSHOT_BUCKET?: R2Bucket;
+    /** 公网首次初始化站长用的一次性口令（wrangler secret put SETUP_TOKEN） */
     SETUP_TOKEN?: string;
 }
 
@@ -64,6 +72,18 @@ function tryAcquire(key: string, limit: number, windowMs: number): boolean {
 
 function clientIp(req: Request): string {
     return req.headers.get("CF-Connecting-IP") || "local";
+}
+
+/** 原生限流优先（跨 isolate 可靠）；无绑定或服务异常时回退进程内 60 秒窗口（尽力而为） */
+async function burstLimit(env: Env, binding: RateLimit | undefined, key: string, fallbackLimit: number): Promise<boolean> {
+    if (binding) {
+        try {
+            return (await binding.limit({ key })).success;
+        } catch {
+            return true;
+        }
+    }
+    return tryAcquire(key, fallbackLimit, 60_000);
 }
 
 // ---------------------------------------------------------------- 工具
@@ -171,9 +191,11 @@ const routes: Route[] = [
     } },
 
     { method: "POST", path: "/api/setup", role: null, handler: async (ctx) => {
-        // 初始化端点同样限速（渗透报告 medium-4）：进程内尽力而为 + 成功后不可重入；
+        // 初始化端点同样限速（渗透报告 medium-4）：原生 binding 爆发层 + 进程内 10 分钟窗口；
         // 限速放在 DB 检查之前，避免初始化窗口内无谓的 D1 读放大
-        if (!tryAcquire("setup:" + clientIp(ctx.req), 5, 600_000)) {
+        const ip = clientIp(ctx.req);
+        if (!(await burstLimit(ctx.env, ctx.env.AUTH_LIMIT, "setup:" + ip, 5))
+            || !tryAcquire("setup:" + ip, 5, 600_000)) {
             throw tooMany("初始化尝试过于频繁，请 10 分钟后再试");
         }
         if (await countUsers(ctx.env.DB) > 0) {
@@ -190,7 +212,10 @@ const routes: Route[] = [
     } },
 
     { method: "POST", path: "/api/login", role: null, handler: async (ctx) => {
-        if (!tryAcquire("login:" + clientIp(ctx.req), 6, 600_000)) {
+        const ip = clientIp(ctx.req);
+        // 原生 binding 挡 60 秒爆发，进程内 6 次/10 分钟挡长窗（配合 D1 账号级锁定）
+        if (!(await burstLimit(ctx.env, ctx.env.AUTH_LIMIT, "login:" + ip, 10))
+            || !tryAcquire("login:" + ip, 6, 600_000)) {
             throw tooMany("登录尝试过于频繁，请 10 分钟后再试");
         }
         const user = await authenticate(ctx.env.DB, str(ctx.body?.username), str(ctx.body?.password));
@@ -206,7 +231,9 @@ const routes: Route[] = [
      *  其他设备旧令牌立即失效；当前设备换发新会话 Cookie。限流 5 次/10 分钟防爆破 */
     { method: "POST", path: "/api/change-password", role: "contributor", handler: async (ctx) => {
         const user = requireRole(ctx, "contributor");
-        if (!tryAcquire("changepw:" + clientIp(ctx.req), 5, 600_000)) {
+        const ip = clientIp(ctx.req);
+        if (!(await burstLimit(ctx.env, ctx.env.AUTH_LIMIT, "changepw:" + ip, 5))
+            || !tryAcquire("changepw:" + ip, 5, 600_000)) {
             throw tooMany("操作过于频繁，请 10 分钟后再试");
         }
         await changePassword(ctx.env.DB, user.uid, str(ctx.body?.oldPassword), str(ctx.body?.newPassword));
@@ -222,20 +249,37 @@ const routes: Route[] = [
     } },
 
     { method: "POST", path: "/api/auth/register", role: null, handler: async (ctx) => {
-        if (!tryAcquire("register:" + clientIp(ctx.req), 6, 3_600_000)) {
+        const ip = clientIp(ctx.req);
+        if (!(await burstLimit(ctx.env, ctx.env.AUTH_LIMIT, "register:" + ip, 10))
+            || !tryAcquire("register:" + ip, 6, 3_600_000)) {
             throw tooMany("注册尝试过于频繁，请稍后再试");
         }
         await registerUser(ctx.env.DB, str(ctx.body?.username), str(ctx.body?.nickname), str(ctx.body?.password));
         return { ok: true, message: "注册成功，请等待站长审核" };
     } },
 
+    /** 数据快照（ETag/304）：revision 单调递增，浏览器无变更刷新只回 304（零正文传输）。
+     *  ETag 按查看者口径区分（游客与管理员可见集合不同），避免跨角色拿到陈旧缓存 */
     { method: "GET", path: "/api/data", role: null, handler: async (ctx) => {
         const snap = await store.snapshot(ctx.env.DB, ctx.user?.username ?? null, isAtLeast(ctx.user, "admin"));
-        return { revision: snap.revision, updatedAt: snap.updatedAt, records: snap.records, problems: snap.problems };
+        const etag = `"r${snap.revision}-${isAtLeast(ctx.user, "admin") ? "a" : "g"}"`;
+        const inm = ctx.req.headers.get("If-None-Match");
+        if (inm && inm.split(",").some((t) => t.trim() === etag)) {
+            return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-cache" } });
+        }
+        return new Response(JSON.stringify({
+            revision: snap.revision, updatedAt: snap.updatedAt, records: snap.records, problems: snap.problems,
+        }), {
+            headers: {
+                "Content-Type": "application/json;charset=UTF-8",
+                ETag: etag,
+                "Cache-Control": "no-cache",
+            },
+        });
     } },
 
     { method: "POST", path: "/api/records", role: "contributor", handler: async (ctx) => {
-        if (!tryAcquire("write:" + clientIp(ctx.req), 60, 60_000)) {
+        if (!(await burstLimit(ctx.env, ctx.env.WRITE_LIMIT, "write:" + clientIp(ctx.req), 60))) {
             throw tooMany("操作过于频繁，请稍后再试");
         }
         const user = requireRole(ctx, "contributor");
@@ -471,7 +515,9 @@ const routes: Route[] = [
 
     { method: "GET", path: "/api/luogu", role: "admin", handler: async (ctx) => {
         requireRole(ctx, "admin");
-        if (!tryAcquire("luogu:" + clientIp(ctx.req), 30, 60_000)) {
+        const ip = clientIp(ctx.req);
+        if (!(await burstLimit(ctx.env, ctx.env.WRITE_LIMIT, "luogu:" + ip, 30))
+            || !tryAcquire("luogu:" + ip, 30, 60_000)) {
             throw tooMany("抓取过于频繁，请稍后再试");
         }
         const problem = await fetchLuoguProblem(ctx.url.searchParams.get("pid") || "");
@@ -514,6 +560,14 @@ const routes: Route[] = [
         await store.resetCatalog(ctx.env.DB);
         await store.logAudit(ctx.env.DB, owner, "catalog.reset", "清空收录目录与全部记录");
         return { ok: true, revision: await store.getRevision(ctx.env.DB) };
+    } },
+
+    /** 手动触发数据快照（与每日 Cron 同一实现）：全库 JSON 写入 R2，留审计 */
+    { method: "POST", path: "/api/admin/snapshot", role: "owner", handler: async (ctx) => {
+        const owner = requireRole(ctx, "owner");
+        const r = await runSnapshot(ctx.env);
+        await store.logAudit(ctx.env.DB, owner, "snapshot", `数据快照 ${r.key}`);
+        return { ok: true, ...r };
     } },
 
     { method: "GET", path: "/api/export/public", role: null, handler: async (ctx) => {

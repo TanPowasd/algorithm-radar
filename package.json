@@ -7,12 +7,12 @@
   "scripts": {
     "install:web": "npm --prefix frontend install",
     "dev:web": "npm --prefix frontend run dev",
-    "dev": "wrangler pages dev frontend/dist --port 8788",
+    "dev": "wrangler dev --port 8788",
     "dev:full": "npm run build && concurrently -k \"npm:dev:web\" \"npm:dev\" ",
     "build": "npm --prefix frontend run build",
     "seed": "node scripts/seed.mjs",
     "e2e": "npm run build && node scripts/e2e.mjs",
-    "deploy": "npm run build && wrangler pages deploy frontend/dist",
+    "deploy": "npm run build && wrangler deploy",
     "d1:init:local": "wrangler d1 execute DB --local --file=db/schema.sql",
     "d1:init:remote": "wrangler d1 execute DB --remote --file=db/schema.sql"
   },

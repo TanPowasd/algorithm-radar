@@ -50,8 +50,8 @@ function apiUrl(pathname) {
   return u
 }
 
-async function call(jar, method, pathname, body) {
-  const headers = { Cookie: jar.header() }
+async function call(jar, method, pathname, body, extraHeaders = {}) {
+  const headers = { Cookie: jar.header(), ...extraHeaders }
   if (method !== 'GET' && method !== 'HEAD') headers['X-CSRF-Token'] = jar.csrf()
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(apiUrl(pathname), {
@@ -61,7 +61,7 @@ async function call(jar, method, pathname, body) {
   })
   jar.absorb(res)
   const data = await res.json().catch(() => null)
-  return { status: res.status, data }
+  return { status: res.status, data, headers: res.headers }
 }
 
 /* ---------- 断言收集 ---------- */
@@ -85,8 +85,9 @@ let exited = false
 
 function startServer() {
   rmSync(PERSIST, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
+  // Workers 模式（wrangler.toml: main + assets）：静态资产 + /api + Cron/限流/R2 绑定全部本地模拟
   child = spawn(process.execPath, [
-    wranglerBin, 'pages', 'dev', 'frontend/dist',
+    wranglerBin, 'dev',
     '--port', String(PORT), '--persist-to', PERSIST,
   ], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
   child.on('exit', () => { exited = true })
@@ -204,6 +205,22 @@ try {
   const modelId = ((await call(admin, 'GET', '/api/models')).data?.models ?? []).find((m) => m.name === 'GPT-5')?.id
   ok('管理员删除模型', (await call(admin, 'DELETE', `/api/models/${modelId}`)).data?.ok)
   ok('管理员删除题目', (await call(admin, 'DELETE', '/api/problems/B1001')).data?.ok)
+
+  // 7.6 ETag/304：revision 单调，无变更刷新应 304；数据变更后应 200 新 ETag
+  const d1 = await call(tmp, 'GET', '/api/data')
+  const etag = d1.headers?.get('etag')
+  ok('/api/data 带 ETag 头', Boolean(etag), `实际 ${etag}`)
+  const revalidate = await call(tmp, 'GET', '/api/data', undefined, etag ? { 'If-None-Match': etag } : {})
+  ok('无变更重复请求 → 304', revalidate.status === 304, `实际 ${revalidate.status}`)
+  ok('304 不带正文', (await revalidate.headers?.get('content-type')) === null || revalidate.data === null)
+  await call(owner, 'POST', '/api/models', { name: 'ETAG-PROBE', vendor: 'test' })
+  const afterWrite = await call(tmp, 'GET', '/api/data', undefined, etag ? { 'If-None-Match': etag } : {})
+  ok('数据变更后旧 ETag → 200 且 ETag 更新', afterWrite.status === 200 && afterWrite.headers?.get('etag') !== etag)
+
+  // 7.7 数据快照：与每日 Cron 同一实现，写入本地模拟 R2
+  const snap = await call(owner, 'POST', '/api/admin/snapshot')
+  ok('站长手动快照成功（写 R2）', snap.data?.ok === true && String(snap.data?.key || '').startsWith('snapshots/'), JSON.stringify(snap.data))
+  ok('管理员触发快照 → 403（仅站长）', (await call(admin, 'POST', '/api/admin/snapshot')).status === 403)
 
   // 8. 审计日志：破坏性与权限操作全部留痕
   const audit = (await call(admin, 'GET', '/api/admin/audit')).data?.entries ?? []

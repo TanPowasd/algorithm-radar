@@ -31,5 +31,5 @@ echo [3/3] 启动本地服务（http://127.0.0.1:8788）...
 echo       首次使用：打开页面后点「登录 / 注册 → 初始化站长」创建站长账号。
 echo       如需导入旧站数据：npm run seed
 start "" cmd /c "timeout /t 14 /nobreak >nul && start http://127.0.0.1:8788/"
-call node_modules\.bin\wrangler.cmd pages dev frontend/dist --port 8788
+call node_modules\.bin\wrangler.cmd dev --port 8788
 pause

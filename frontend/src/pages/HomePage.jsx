@@ -10,6 +10,7 @@ import RadarView from '../views/RadarView'
 import BarView from '../views/BarView'
 import LeaderboardView from '../views/LeaderboardView'
 import RollBoardView from '../views/RollBoardView'
+import InsightView from '../views/InsightView'
 import RecordsTable from '../views/RecordsTable'
 import RecordFormModal from '../components/RecordFormModal'
 import ProblemDrawer from '../components/ProblemDrawer'
@@ -27,6 +28,7 @@ const TABS = [
   { key: 'bar', label: '柱状图' },
   { key: 'leaderboard', label: '榜单' },
   { key: 'roll', label: '滚榜' },
+  { key: 'insight', label: '洞察' },
 ]
 
 export default function HomePage() {
@@ -72,6 +74,7 @@ export default function HomePage() {
     3: () => setView('bar'),
     4: () => setView('leaderboard'),
     5: () => setView('roll'),
+    6: () => setView('insight'),
     t: toggleTheme,
     w: () => setWidthMode(widthMode === 'full' ? 'narrow' : 'full'),
     f: focusSearch,
@@ -96,7 +99,7 @@ export default function HomePage() {
           <div className="card-head" style={{ marginBottom: 0 }}>
             <ViewTabs tabs={TABS} active={view} onChange={setView} />
             <div className="card-tools">
-              <span className="hint">按 1–5 切视图 · ? 看快捷键</span>
+              <span className="hint">按 1–6 切视图 · ? 看快捷键</span>
               {isContributor && (
                 <button className="btn primary" onClick={() => setRecordModal({ edit: null, lockPid: null })}>
                   + 提交测评
@@ -126,6 +129,7 @@ export default function HomePage() {
         {view === 'bar' && <BarView />}
         {view === 'leaderboard' && <LeaderboardView onOpenDetail={openDetail} />}
         {view === 'roll' && <RollBoardView onOpenDetail={openDetail} />}
+        {view === 'insight' && <InsightView />}
 
         <RecordsTable
           onOpenDetail={openDetail}

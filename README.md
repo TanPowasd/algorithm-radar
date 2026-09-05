@@ -2,6 +2,16 @@
 
 多个 AI 模型在洛谷题目上的解题能力对比站。游客可浏览排名、下载数据；贡献者提交测评；管理员审核并发布题目；站长管理用户。
 
+> v3.9 · 2026-09：**从 Pages 迁移到 Workers**（静态资产 + Worker 单部署目标；Pages 不支持 Cron Trigger 与
+> ratelimit binding）——D1 数据零迁移；新增 **每日数据快照**（Cron UTC 21:00 → R2 `ai-vs-luogu-backups`，
+> 保留 90 天，站长可 `POST /api/admin/snapshot` 手动触发）；**原生限流**（`WRITE_LIMIT` 60/分 + `AUTH_LIMIT`
+> 10/分，跨 isolate 可靠，长窗口限流仍由进程内叠加）；**`/api/data` ETag/304**（revision 单调递增做校验器，
+> 无变更刷新零正文传输；ETag 按游客/管理员口径区分）；前端新增 **「洞察」视图**（模型稳定性 / 题目区分度 /
+> 思考等级收益三张口径表）；`npm run e2e` 权限矩阵端到端自检（52 项，隔离临时环境）。
+> v3.8 · 2026-09：**删除账号**（管理员删已激活贡献者、站长删任意非站长含待审/已拒；记录保留、署名为用户名
+> 快照；`audit_log` 敏感操作留痕）；**自助改昵称**（顶栏「账号设置」）。
+> v3.6 · 2026-09：前端 UI 整体重构（「软件渲染管线」视觉语言）；v3.5 三区数据；v3.4 收录制。
+
 > v3.6 · 2026-09：前端 UI 整体重构（**只动 `frontend/`，后端逻辑与接口零改动**）——
 > 「软件渲染管线」视觉语言（Chakra Petch + JetBrains Mono / 40px 栅格底纹 / 青·蓝·柠檬配色 / 顶栏 HUD 读数），
 > 版心默认全宽铺满并可切限宽；新增 **ACM 滚榜** 视图（团队=模型、队员=思考等级，逐条回放 + 实时名次）；
@@ -28,7 +38,7 @@
 
 | 身份 | 权限 |
 |---|---|
-| 游客 | 浏览矩阵/雷达/柱状/趋势/榜单/滚榜六个分析视图与测评明细（仅收录制可见数据）；查看贡献者名册（按注册时间排序）；导出 CSV / JSON（仅收录且已审核数据）；**不可提交** |
+| 游客 | 浏览矩阵/雷达/柱状/榜单/滚榜/洞察六个分析视图与测评明细（仅收录制可见数据）；查看贡献者名册（按注册时间排序）；导出 CSV / JSON（仅收录且已审核数据）；**不可提交** |
 | 贡献者 | 提交测评记录（仅可选**已发布题目**与**已收录模型**，题名/难度由题目目录带入且不可改，见「题目信息单一来源」，进入待审核队列）；可见自己的待审记录 |
 | 管理员 | 审核测评（单条/批量通过、拒绝=移入回收站）；**删除任意测评记录**（含已通过记录：明细表逐条删除、勾选批量删除、题目抽屉内删除，均为软删除进回收站）；编辑记录；发布题目（收录：输题号自动抓洛谷，失败可手动补全；可配推荐提示词）；增删改 AI 模型（收录+改名）；**历史数据收录台**（未收录题目/模型的隐藏记录分组、一键收录、移入回收站）；**回收站管理**（恢复 / 永久删除 / 清空）；全量导出与导入；**删除已激活贡献者账号**（用户管理页，仅见贡献者列表）；查看操作审计 |
 | 站长 | 管理员全部权限 + 审核注册（批准为贡献者）+ 任命/免除/**删除**管理员 + **清理任意非站长账号**（含待审/已拒）+ **清空目录重新收录**。站长删不掉、也不能删自己；所有敏感操作（删账号/删记录/清空目录/导入等）自动留痕到**操作审计** |
@@ -39,7 +49,7 @@
   **其已提交的测评记录保留**——`records.author` 是用户名字符串快照不依赖用户表，名册上这些记录并入「全民制作人」；
   站长不可被删除，也不能删除自己的账号；每次删账号都写入**操作审计**（谁、何时、删了谁）。
 - **改昵称**：任何登录用户经顶栏「账号设置」自助改昵称（1–24 字），显示名即时生效（会话每请求回查用户表，无需重新登录）。
-- **操作审计（v3.8）**：`audit_log` 表只追加记录敏感操作——删账号、任免角色、批准/拒绝注册、删记录（软删）、批量移回收站、永久删除/清空回收站、删题目、删模型、清空目录、导入数据；
+- **操作审计（v3.8）**：`audit_log` 表只追加记录敏感操作——删账号、任免角色、批准/拒绝注册、删记录（软删）、批量移回收站、永久删除/清空回收站、删题目、删模型、清空目录、导入数据、手动数据快照（v3.9）；
   管理员及以上在 `/users` 页底部只读查看最近 100 条（新→旧），动作名有中文映射，未知动作原样展示。
 - 贡献者名册：`/contributors`（公开），按**注册时间**排序（与贡献量无关），展示用户 ID/昵称/贡献数等；历史导入数据对应的 `admin`/`guest` 账号排在末尾。
 - 审计字段：每条测评记录带 `author_id`（提供者用户 ID）与 `reviewer_id`/`reviewed_at`（批准人用户 ID 与批准时间；管理员自己直接提交的记录自审自记）。**首次录入的历史数据没有这些 ID，提供者/审核人统一署名「全民制作人」**（名册中也合并为同一条目，按注册时间排在末尾）；待审核的记录审核人显示「待审核」。
@@ -60,23 +70,24 @@
 ## 二、目录结构
 
 ```
-├── frontend/            # React 19 + Vite SPA（构建产物部署到 Cloudflare Pages）
-│   ├── src/             #   api/ 客户端 · state/ 全局状态 · views/ 六视图 · pages/ 五页面
+├── frontend/            # React 19 + Vite SPA（构建产物由 Worker 静态资产托管）
+│   ├── src/             #   api/ 客户端 · state/ 全局状态 · views/ 七视图 · pages/ 五页面
 │   │   ├── palette.js   #     厂商色相/思考等级纹理（同厂商同色相，等级用透明度+斜纹）
 │   │   ├── rollboard.js #     滚榜事件流与快照（团队=模型、队员=思考等级）
 │   │   ├── hooks/       #     useUrlState（视图状态同步 URL）· useHotkeys · copyText
 │   │   └── components/  #     Hud · CopyButton · TimeCell · ShortcutHelp · ModelFilter …
 │   ├── selftest/        #   Node 里跑的真实渲染 + 口径断言（fixture.json 为固定样本）
 │   └── scripts/         #   make-fixture.mjs（裁剪样本）· check-classes.mjs（类名契约检查）
-├── functions/           # Cloudflare Pages Functions：/api/* 全部路由（Workers）
-│   └── api/[[route]].ts
-├── worker/              # 共享后端逻辑（TypeScript）：auth（PBKDF2+HMAC 会话）、
-│                        # store（D1 存取/审核/导入）、luogu（洛谷抓取+SSRF 防护）、router
-├── db/schema.sql        # D1 表结构（幂等；Functions 首次请求自动建表）
+├── worker/              # Worker 主程序（TypeScript）：
+│   │                      index.ts（fetch 分流 /api 与静态资产 + scheduled 快照）、
+│   │                      snapshot.ts（全库 JSON → R2，90 天保留）、
+│   │                      auth（PBKDF2+HMAC 会话）、store（D1 存取/审核/导入/审计）、
+│   │                      luogu（洛谷抓取+SSRF 防护）、router、schema
+├── db/schema.sql        # D1 表结构（幂等；Worker 首次请求自动建表）
 ├── scripts/seed.mjs     # 本地种子：初始化站长 + 导入历史数据 JSON
-├── scripts/e2e.mjs      # 端到端权限矩阵自检（隔离临时 D1 + 8799 端口，跑完即清理）：npm run e2e
+├── scripts/e2e.mjs      # 端到端权限矩阵自检（隔离临时 D1+R2，跑完即清理）：npm run e2e
 ├── tags.json            # 洛谷标签 → 算法大类映射种子（后端打包引用）
-├── wrangler.toml        # Pages/D1 绑定配置
+├── wrangler.toml        # Workers 配置（assets/D1/Cron/ratelimit/R2）
 └── start-website.bat    # Windows 双击启动
 ```
 
@@ -91,8 +102,8 @@
 ```bash
 npm install                      # 根目录：wrangler 等工具
 npm run install:web              # 前端依赖
-npm run build                    # 构建前端到 frontend/dist
-npm run dev                      # 启动 http://127.0.0.1:8788（Workers + 本地 D1）
+npm run build                    # 构建前端到 frontend/dist（Worker 静态资产指向这里）
+npm run dev                      # 启动 http://127.0.0.1:8788（Worker + 本地 D1/R2 模拟）
 ```
 
 前端热更新开发（可选）：
@@ -113,22 +124,27 @@ npm run seed                     # 已有站长时需 SEED_OWNER_PASSWORD=*** np
 
 首次使用：打开 http://127.0.0.1:8788 → 「登录 / 注册」→「初始化站长」。
 
-## 四、部署到 Cloudflare（Pages + D1）
+## 四、部署到 Cloudflare（Workers + D1 + R2）
 
 ```bash
 npx wrangler login                                  # 1. 登录 Cloudflare
-npx wrangler d1 create ai-vs-luogu                  # 2. 创建 D1 数据库
-#    把返回的 database_id 填入 wrangler.toml
-npm run deploy                                      # 3. 构建并部署（Pages 自动识别 functions/ 与 D1 绑定）
-npx wrangler d1 execute DB --remote --file=db/schema.sql   # 4.（可选）远程建表；不执行也会在首个请求时自动建表
+npx wrangler d1 create ai-vs-luogu                  # 2. 创建 D1 数据库（已完成，id 在 wrangler.toml）
+npx wrangler r2 bucket create ai-vs-luogu-backups   # 3. 快照桶（需先在控制台启用 R2，免费额度 10GB）
+npm run deploy                                      # 4. wrangler deploy（构建前端 + 部署 Worker）
+npx wrangler d1 execute DB --remote --file=db/schema.sql   # 5.（可选）远程建表；首个请求也会自动建表
 ```
 
-公网初始化站长（防止被抢注）：
+- **2026-09-05 起项目运行在 Workers**（`https://ai-vs-luogu.<子域>.workers.dev`）；原 Pages 项目
+  `ai-vs-luogu.pages.dev` 不再更新，确认新地址正常后可在控制台删除，或绑自定义域到 Worker。
+- 每日快照：Cron `0 21 * * *`（UTC，即北京时间 05:00）把全库 JSON 写入 R2
+  `snapshots/<日期>/rev-<revision>.json`（另存 `latest.json`），保留 90 天自动清理；
+  站长也可随时 `POST /api/admin/snapshot` 手动触发（写入审计）。
+- 公网初始化站长（防止被抢注）：
 
 ```bash
-npx wrangler pages secret put SETUP_TOKEN --project-name ai-vs-luogu   # 设置一个一次性口令
+npx wrangler secret put SETUP_TOKEN                 # 设置一个一次性口令
 #    打开网站 → 登录/注册 → 初始化站长 → 填入该口令与站长账密
-npx wrangler pages secret delete SETUP_TOKEN --project-name ai-vs-luogu  # 用完即删
+npx wrangler secret delete SETUP_TOKEN              # 用完即删
 ```
 
 - 数据导入：登录站长 → 顶栏「导入」→ 选择旧站导出 JSON（合并 / 覆盖两种模式）。
@@ -137,9 +153,9 @@ npx wrangler pages secret delete SETUP_TOKEN --project-name ai-vs-luogu  # 用�
 ## 五、安全设计
 
 - PBKDF2-SHA256（100k 迭代）口令哈希（WebCrypto；迭代次数是 Workers CPU 限额与安全的平衡点）。
-- 会话 = HMAC-SHA256 签名令牌存 HttpOnly Cookie（12h，1h 自动续签）；密钥首次启动自动生成存 D1。**会话每次请求回查用户表**：改密（`password_version` 递增）、封禁、降权后旧令牌立即失效；登录用户可在顶栏「改密码」。
-- CSRF 双提交（`radar_csrf` Cookie + `X-CSRF-Token` 头）；登录限流 6 次/10 分钟；洛谷抓取 30 次/分；写操作 60 次/分。
-- 洛谷抓取：目标 host 编译期白名单（www.luogu.com.cn）+ 仅 https + 题号正则白名单 + 302 location 同样校验。
+- 会话 = HMAC-SHA256 签名令牌存 HttpOnly Cookie（12h，1h 自动续签）；密钥首次启动自动生成存 D1。**会话每次请求回查用户表**：改密（`password_version` 递增）、封禁、降权、删号后旧令牌立即失效；登录用户可在顶栏「账号设置」改昵称/密码。
+- **双层限流**：Cloudflare 原生 ratelimit binding 挡爆发（`WRITE_LIMIT` 60 次/分给写操作与洛谷抓取、`AUTH_LIMIT` 10 次/分给登录/注册/初始化/改密，跨 isolate 可靠）+ 进程内滑动窗口挡长窗（登录 6 次/10 分钟、注册 6 次/小时等，尽力而为）；登录另有 D1 账号级锁定（5 次失败锁 15 分钟）。
+- CSRF 双提交（`radar_csrf` Cookie + `X-CSRF-Token` 头）；洛谷抓取：目标 host 编译期白名单（www.luogu.com.cn）+ 仅 https + 题号正则白名单 + 302 location 同样校验。
 - 请求体限额：导入 16MB / 测评记录 2MB / 其他 64KB；所有写入经白名单清洗（长度/枚举/正则）。
 - 待审核记录对游客与贡献者不可见；游客导出只含已审核数据。
 - Pages 静态资源带 CSP（`_headers`）：`default-src 'none'; script-src 'self'; …`。
@@ -150,7 +166,9 @@ npx wrangler pages secret delete SETUP_TOKEN --project-name ai-vs-luogu  # 用�
 认证：`POST /api/setup` `POST /api/login` `POST /api/logout` `POST /api/auth/register` `POST /api/change-password`（登录用户改密；成功后其他设备全部下线） `POST /api/profile/nickname`（自助改昵称，即时生效）
 贡献者：`POST /api/records`（模型须已收录）
 管理员：`PUT/DELETE /api/records/{id}`（DELETE=软删除入回收站） `POST /api/records/{id}/status` `POST /api/records/bulk`（reject=入回收站） `POST /api/problems`（发布） `PUT /api/problems/{pid}`（编辑） `DELETE /api/problems/{pid}` `POST/PUT/DELETE /api/models*` `GET /api/luogu?pid=` `GET /api/hidden-records` `GET /api/hidden-records/detail` `POST /api/admin/purge-records`（隐藏记录入回收站） `GET /api/trash` `POST /api/trash/restore|purge|empty` `GET /api/export`（全量含 models） `POST /api/import` `DELETE /api/admin/users/{id}`（删账号：管理员删已激活贡献者，站长可删任意非站长） `GET /api/admin/audit`（操作审计，最近 100 条）
-站长：`GET /api/admin/users`（管理员调用时仅返回已激活贡献者） `POST /api/admin/users/{id}/approve|reject|role` `POST /api/catalog/reset`
+站长：`GET /api/admin/users`（管理员调用时仅返回已激活贡献者） `POST /api/admin/users/{id}/approve|reject|role` `POST /api/catalog/reset` `POST /api/admin/snapshot`（手动数据快照到 R2）
+
+公开数据接口 `GET /api/data` 带 **ETag/304**：revision 单调递增作强校验器，浏览器自动协商缓存——数据没变的刷新零正文传输；ETag 按查看者口径区分（游客 `-g` / 管理员 `-a`，可见集合不同），登录/登出切换不会拿到对方口径的陈旧缓存。
 
 ## 七、数据模型（records 表核心字段）
 
@@ -162,11 +180,11 @@ npx wrangler pages secret delete SETUP_TOKEN --project-name ai-vs-luogu  # 用�
 
 ```bash
 ./node_modules/.bin/tsc --noEmit          # worker TS 类型检查
-npm --prefix frontend run build           # 前端构建（wrangler pages dev 直接读 dist）
+npm --prefix frontend run build           # 前端构建（wrangler dev 直接读 dist）
 npm --prefix frontend run lint            # oxlint
-npm --prefix frontend run selftest        # 口径断言 + 六视图真实渲染冒烟（Node 内跑，48 项）
+npm --prefix frontend run selftest        # 口径断言 + 真实渲染冒烟（Node 内跑，54 项）
 npm --prefix frontend run check-classes   # JSX 类名 vs styles.css 契约检查（防漏样式）
-npm run e2e                               # 构建 + 权限矩阵端到端自检（隔离临时环境，46 项）
+npm run e2e                               # 构建 + 权限矩阵/ETag/快照端到端自检（52 项，隔离临时环境）
 npm --prefix frontend run selftest:fixture # 从根目录最新导出快照重裁自检样本
 ```
 
@@ -205,6 +223,11 @@ npm --prefix frontend run selftest:fixture # 从根目录最新导出快照重�
 - **交互**：视图与口径状态写进 URL（`?v=`、`mx:`、`rd:`、`br:`、`tr:`、`lb:`、`rec:` 命名空间），刷新/分享保现场；
   右下角 `?` 面板列出快捷键；矩阵悬停十字高亮，空格子在贡献者视角下就地「+ 快速提单」；
   表头行头 sticky；模型筛选器支持搜索、厂商分组多选、反选。
+- **洞察视图（v3.9，快捷键 `6`）**：三张纯口径数据表，全部复用「已审核 + 模型筛选」的榜单口径——
+  ①模型稳定性（覆盖题数 / 作答 / AC / AC 率 / 最佳成绩均分 / **成绩标准差**，标准差越小越稳）；
+  ②题目区分度（参与模型 / 记录数 / **模型均分极差 max−min** / 模型间标准差，按极差降序 Top 15，极差大=这题拉得开差距）；
+  ③思考等级收益（各等级作答数 / AC 率 / 最佳成绩均分，等级从强到弱，验证「开高等级是否值得」）。
+  最佳成绩 = 该记录有分数轮次的最高分；无分数轮次一律不计（与全站铁律一致）。
 - **删除测评记录（管理员 / 站长）**：纯前端能力，复用既有 `DELETE /api/records/{id}` 与
   `POST /api/records/bulk {action:'reject'}`，**软删除进回收站**（不是物理删除，可在审核台回收站恢复或永久清除）。
   三个入口：测评明细逐条「删除」、明细勾选「删除所选（移入回收站）」（表头复选框 = 全选本页）、
@@ -212,7 +235,8 @@ npm --prefix frontend run selftest:fixture # 从根目录最新导出快照重�
   二次确认里列出模型·题号·思考等级·日期·提供者并写明可恢复，删除后 `refreshAll()` 立即刷新全站统计。
   后端 `requireRole(ctx,'admin')` 对站长（rank 3）与管理员（rank 2）同样放行，故两种身份都能删；贡献者与游客看不到入口。
 - **本地存储键**（改名即破坏兼容，勿随意变更）：`radar.cache.v3` · `radar.theme` · `radar.focusModels` ·
-  `radar.widthMode` · `radar.bar.minSamples` · `radar.radarSize` · `radar.bar.excludedPids` · `radar.notice.dismissedDay`。
+  `radar.widthMode` · `radar.bar.minSamples` · `radar.radarSize` · `radar.bar.excludedPids` · `radar.notice.dismissedDay` ·
+  `radar.records.collapsed`（明细表折叠态，默认折叠）。
 - **字体**：Chakra Petch（标题）+ JetBrains Mono（正文）经 `@fontsource` 自托管打进 `dist/assets`，
   满足 CSP 的 `font-src 'self'`，不外链任何第三方资源。
 

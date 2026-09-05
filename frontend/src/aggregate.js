@@ -390,3 +390,110 @@ export function reviewerLabel(r, nameByUid) {
   }
   return r.status === 'approved' ? LEGACY_PRODUCER : null
 }
+
+// ---------------------------------------------------------------- 洞察口径（v3.9）
+
+/** 记录级最佳成绩：有分数轮次的最高分（无分数轮次不计；全无分为 null） */
+export const bestScoreOf = (r) => {
+  const scores = roundScores(r)
+  return scores.length ? Math.max(...scores) : null
+}
+
+/** 总体标准差（样本 <2 时为 0） */
+export function stdDev(nums) {
+  if (!nums || nums.length < 2) return 0
+  const mean = nums.reduce((a, b) => a + b, 0) / nums.length
+  return Math.sqrt(nums.reduce((a, b) => a + (b - mean) ** 2, 0) / nums.length)
+}
+
+/**
+ * 模型稳定性：每模型 { model, answered(作答记录数), ac(AC 记录数), problems(覆盖题数),
+ * avgBest(最佳成绩均分), stdBest(最佳成绩标准差，越小越稳), acRate }。
+ * AC 率分母 = 作答记录数（与全站口径一致）。
+ */
+export function modelStability(records) {
+  const byModel = new Map()
+  for (const r of records) {
+    if (!answered(r)) continue
+    let m = byModel.get(r.model)
+    if (!m) { m = { model: r.model, answered: 0, ac: 0, bests: [], problems: new Set() }; byModel.set(r.model, m) }
+    m.answered += 1
+    m.problems.add(r.pid)
+    if ((r.submissions || []).some((s) => s.result === 'AC')) m.ac += 1
+    const best = bestScoreOf(r)
+    if (best !== null) m.bests.push(best)
+  }
+  return [...byModel.values()].map((m) => ({
+    model: m.model,
+    answered: m.answered,
+    ac: m.ac,
+    problems: m.problems.size,
+    avgBest: m.bests.length ? m.bests.reduce((a, b) => a + b, 0) / m.bests.length : null,
+    stdBest: stdDev(m.bests),
+    acRate: m.answered ? m.ac / m.answered : 0,
+  }))
+}
+
+/**
+ * 题目区分度：每题 { pid, title, models(参与模型数), records(记录数),
+ * spread(模型均分极差 max−min), std(模型间均分标准差) }，按极差降序。
+ * 区分度高 = 这道题能把不同模型拉开差距（极差大）。
+ */
+export function problemDiscrimination(records) {
+  const byPidModel = new Map()
+  const titles = new Map()
+  for (const r of records) {
+    if (!answered(r)) continue
+    if (!titles.has(r.pid)) titles.set(r.pid, r.title || '')
+    let byModel = byPidModel.get(r.pid)
+    if (!byModel) { byModel = new Map(); byPidModel.set(r.pid, byModel) }
+    let m = byModel.get(r.model)
+    if (!m) { m = []; byModel.set(r.model, m) }
+    const best = bestScoreOf(r)
+    if (best !== null) m.push(best)
+  }
+  const rows = []
+  for (const [pid, byModel] of byPidModel) {
+    const avgs = []
+    for (const bests of byModel.values()) {
+      if (bests.length) avgs.push(bests.reduce((a, b) => a + b, 0) / bests.length)
+    }
+    if (!avgs.length) continue
+    rows.push({
+      pid,
+      title: titles.get(pid) || '',
+      models: byModel.size,
+      records: [...byModel.values()].reduce((a, b) => a + b.length, 0),
+      spread: avgs.length >= 2 ? Math.max(...avgs) - Math.min(...avgs) : 0,
+      std: stdDev(avgs),
+    })
+  }
+  rows.sort((a, b) => b.spread - a.spread || b.models - a.models)
+  return rows
+}
+
+/** 思考等级收益：每等级 { thinking, answered, ac, acRate, avgBest }，按等级从强到弱 */
+export function thinkingYield(records) {
+  const byLevel = new Map()
+  for (const r of records) {
+    const lv = THINKING_LEVELS.includes(r.thinking) ? r.thinking : 'max'
+    let m = byLevel.get(lv)
+    if (!m) { m = { thinking: lv, answered: 0, ac: 0, bests: [] }; byLevel.set(lv, m) }
+    m.answered += 1
+    if ((r.submissions || []).some((s) => s.result === 'AC')) m.ac += 1
+    const best = bestScoreOf(r)
+    if (best !== null) m.bests.push(best)
+  }
+  return THINKING_LEVELS
+    .filter((lv) => byLevel.has(lv))
+    .map((lv) => {
+      const m = byLevel.get(lv)
+      return {
+        thinking: lv,
+        answered: m.answered,
+        ac: m.ac,
+        acRate: m.answered ? m.ac / m.answered : 0,
+        avgBest: m.bests.length ? m.bests.reduce((a, b) => a + b, 0) / m.bests.length : null,
+      }
+    })
+}
