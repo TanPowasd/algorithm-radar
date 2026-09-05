@@ -8,7 +8,6 @@ import ViewTabs from '../components/ViewTabs'
 import MatrixView from '../views/MatrixView'
 import RadarView from '../views/RadarView'
 import BarView from '../views/BarView'
-import TrendView from '../views/TrendView'
 import LeaderboardView from '../views/LeaderboardView'
 import RollBoardView from '../views/RollBoardView'
 import RecordsTable from '../views/RecordsTable'
@@ -26,7 +25,6 @@ const TABS = [
   { key: 'matrix', label: '矩阵' },
   { key: 'radar', label: '雷达图' },
   { key: 'bar', label: '柱状图' },
-  { key: 'trend', label: '趋势图' },
   { key: 'leaderboard', label: '榜单' },
   { key: 'roll', label: '滚榜' },
 ]
@@ -72,9 +70,8 @@ export default function HomePage() {
     1: () => setView('matrix'),
     2: () => setView('radar'),
     3: () => setView('bar'),
-    4: () => setView('trend'),
-    5: () => setView('leaderboard'),
-    6: () => setView('roll'),
+    4: () => setView('leaderboard'),
+    5: () => setView('roll'),
     t: toggleTheme,
     w: () => setWidthMode(widthMode === 'full' ? 'narrow' : 'full'),
     f: focusSearch,
@@ -99,7 +96,7 @@ export default function HomePage() {
           <div className="card-head" style={{ marginBottom: 0 }}>
             <ViewTabs tabs={TABS} active={view} onChange={setView} />
             <div className="card-tools">
-              <span className="hint">按 1–6 切视图 · ? 看快捷键</span>
+              <span className="hint">按 1–5 切视图 · ? 看快捷键</span>
               {isContributor && (
                 <button className="btn primary" onClick={() => setRecordModal({ edit: null, lockPid: null })}>
                   + 提交测评
@@ -127,7 +124,6 @@ export default function HomePage() {
         )}
         {view === 'radar' && <RadarView />}
         {view === 'bar' && <BarView />}
-        {view === 'trend' && <TrendView />}
         {view === 'leaderboard' && <LeaderboardView onOpenDetail={openDetail} />}
         {view === 'roll' && <RollBoardView onOpenDetail={openDetail} />}
 
