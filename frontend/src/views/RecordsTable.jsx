@@ -35,6 +35,51 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
     return { key: k, dir: d === 'asc' ? 'asc' : 'desc' }
   })
   const [page, setPage] = useState(() => Number(url.get('page', '')) || 0)
+  const [collapsed, setCollapsed] = useState(() => {
+    const hasUrlQuery = Boolean(
+      url.get('keyword') || url.get('series') || url.get('difficulty') ||
+      url.get('category') || url.get('result') || url.get('thinking') ||
+      url.get('onlyMine') || url.get('page')
+    )
+    if (hasUrlQuery) return false
+    try {
+      const v = localStorage.getItem('radar.records.collapsed')
+      return v === null ? true : v === 'true'
+    } catch {
+      return true
+    }
+  })
+
+  const toggleCollapse = () => {
+    setCollapsed((v) => {
+      const next = !v
+      try { localStorage.setItem('radar.records.collapsed', String(next)) } catch {}
+      return next
+    })
+  }
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable) return
+      if (e.key === 'f' || e.key === 'F') {
+        if (collapsed) {
+          setCollapsed(false)
+          try { localStorage.setItem('radar.records.collapsed', 'false') } catch {}
+          setTimeout(() => {
+            const el = document.getElementById('f-keyword')
+            if (el) {
+              el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+              el.focus()
+              el.select?.()
+            }
+          }, 60)
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [collapsed])
 
   const isMyRecord = (r) => Boolean(
     session.loggedIn && (
@@ -182,21 +227,59 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
     </th>
   )
 
-  const hasFilter = !!(filters.keyword || filters.series || filters.difficulty !== '' || filters.category || filters.result || filters.thinking || filters.onlyMine)
+  const onHeadClick = (e) => {
+    if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a')) return
+    toggleCollapse()
+  }
 
   return (
     <div className="card" id="records-card">
-      <div className="card-head">
+      <div
+        className="card-head"
+        style={{ marginBottom: collapsed ? 0 : undefined, cursor: 'pointer', userSelect: 'none' }}
+        onClick={onHeadClick}
+      >
         <h2>测评明细</h2>
-        <span className="hint" id="records-count">{filtered.length} 条</span>
+        <span className="hint" id="records-count">
+          {hasFilter ? `已筛选 ${filtered.length} 条` : `${filtered.length} 条`}
+        </span>
         <div className="card-tools">
-          <span className="hint">时间列 = 测评日期 + 录入时分</span>
-          {hasFilter ? (
-            <button className="btn small ghost" onClick={clearAll}>清除筛选</button>
-          ) : null}
+          {hasFilter && (
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={(e) => { e.stopPropagation(); clearAll(); }}
+            >
+              清除筛选
+            </button>
+          )}
+          {collapsed ? (
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={(e) => { e.stopPropagation(); toggleCollapse(); }}
+              title="展开测评明细表格"
+            >
+              展开明细 ▾
+            </button>
+          ) : (
+            <>
+              <span className="hint">时间列 = 测评日期 + 录入时分</span>
+              <button
+                type="button"
+                className="btn small ghost"
+                onClick={(e) => { e.stopPropagation(); toggleCollapse(); }}
+                title="收起测评明细表格"
+              >
+                收起明细 ▴
+              </button>
+            </>
+          )}
         </div>
       </div>
-      <div className="filters">
+      {!collapsed && (
+        <>
+          <div className="filters">
         <input
           id="f-keyword" placeholder="搜索 题号/标题/模型/备注…（按 F 聚焦）" value={filters.keyword}
           onChange={(e) => setF({ keyword: e.target.value })}
@@ -379,6 +462,8 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
           <span className="pages">{safePage + 1} / {pages}</span>
           <button className="btn small ghost" disabled={safePage >= pages - 1} onClick={() => goPage(safePage + 1)}>下一页</button>
         </div>
+      )}
+        </>
       )}
     </div>
   )
