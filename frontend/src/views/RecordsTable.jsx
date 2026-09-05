@@ -227,6 +227,8 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
     </th>
   )
 
+  const hasFilter = !!(filters.keyword || filters.series || filters.difficulty !== '' || filters.category || filters.result || filters.thinking || filters.onlyMine)
+
   const onHeadClick = (e) => {
     if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a')) return
     toggleCollapse()
