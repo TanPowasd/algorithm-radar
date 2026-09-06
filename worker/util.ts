@@ -45,8 +45,16 @@ export interface ProblemEntry {
     tags: string[];
     categories: string[];
     manual: boolean;
-    /** 推荐提示词：管理员为该题配置的统一测试提示词 */
+    /** 推荐提示词：管理员为该题配置的统一测试提示词（空 = 用前端拼装的标准模板） */
     prompt: string;
+    /** 题面 markdown（抓取自洛谷或管理员手动维护；标准模板会原样嵌入） */
+    content: string;
+    /** 时间限制（ms）；未知为 null */
+    timeLimit: number | null;
+    /** 内存限制（MB）；未知为 null */
+    memoryLimit: number | null;
+    /** 洛谷题目页是否存在附件（复制提示词后前端据此弹下载提醒） */
+    hasAttachments: boolean;
     fetchedAt: string;
 }
 
@@ -78,6 +86,8 @@ export const MAX_MODEL = 80, MAX_VARIANT = 80, MAX_AGENT = 120, MAX_TOKEN_SOURCE
 export const MAX_TITLE = 200, MAX_NOTE = 1000, MAX_SUB_NOTE = 300, MAX_CATEGORY = 40;
 export const MAX_CATEGORIES = 12, MAX_SUBMISSIONS = 40, MAX_RECORDS = 20000, MAX_PROBLEMS = 20000;
 export const MAX_TAGS = 30;
+/** 题面 markdown 上限（洛谷完整题面含图片链接通常 2–30KB，留足余量） */
+export const MAX_CONTENT = 100_000;
 
 export class ApiError extends Error {
     status: number;
@@ -221,6 +231,10 @@ export function sanitizeProblem(pidRaw: unknown, raw: any): ProblemEntry | null 
         categories: nameList(raw.categories, MAX_CATEGORIES, MAX_CATEGORY, "算法类别"),
         manual: Boolean(raw.manual),
         prompt: text(raw.prompt, 4000, "推荐提示词"),
+        content: text(raw.content, MAX_CONTENT, "题面内容"),
+        timeLimit: intOrNull(raw.timeLimit, 1, 86_400_000, "时间限制"),
+        memoryLimit: intOrNull(raw.memoryLimit, 1, 1_048_576, "内存限制"),
+        hasAttachments: Boolean(raw.hasAttachments),
         fetchedAt: text(raw.fetchedAt, 40, "抓取时间"),
     };
 }

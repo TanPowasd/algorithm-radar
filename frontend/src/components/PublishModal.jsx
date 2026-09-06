@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
-import { PID_RE, DIFFICULTY_NAMES, PROMPT_TEMPLATE } from '../aggregate'
+import { PID_RE, DIFFICULTY_NAMES, standardPrompt } from '../aggregate'
 import CopyButton from './CopyButton'
 import { useDialog } from '../hooks/useDialog'
 
@@ -31,6 +31,10 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
       ? '' : String(editProblem.difficulty),
     tags: (editProblem?.tags || []).join('、'),
     prompt: editProblem?.prompt || '',
+    content: editProblem?.content || '',
+    timeLimit: editProblem?.timeLimit ?? '',
+    memoryLimit: editProblem?.memoryLimit ?? '',
+    hasAttachments: Boolean(editProblem?.hasAttachments),
     manual: Boolean(editProblem?.manual),
   }))
   const [fetchState, setFetchState] = useState(null) // {kind, text}
@@ -52,6 +56,10 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
         difficulty: info.difficulty === null || info.difficulty === undefined
           ? '' : String(info.difficulty),
         tags: (info.tags || []).join('、'),
+        content: info.content || form.content,
+        timeLimit: info.timeLimit ?? form.timeLimit,
+        memoryLimit: info.memoryLimit ?? form.memoryLimit,
+        hasAttachments: Boolean(info.hasAttachments),
         manual: false,
       })
       setFetchState({ kind: 'ok', text: `抓取成功：${info.title || info.pid}` })
@@ -72,6 +80,10 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
         difficulty: form.difficulty === '' ? null : Number(form.difficulty),
         tags: parseTags(form.tags),
         prompt: form.prompt,
+        content: form.content,
+        timeLimit: form.timeLimit === '' ? null : Number(form.timeLimit),
+        memoryLimit: form.memoryLimit === '' ? null : Number(form.memoryLimit),
+        hasAttachments: form.hasAttachments,
         manual: form.manual,
       }
       if (isEdit) {
@@ -137,27 +149,60 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
           {isEdit && <span className="chain">编辑保存后标签将被下方内容整体替换（留空 = 清空标签）。</span>}
         </div>
         <div className="field">
+          <label>题面内容（markdown，抓取自动带入；留空时标准模板会引导去洛谷看原题）</label>
+          <textarea
+            value={form.content}
+            onChange={(e) => set({ content: e.target.value })}
+            placeholder="## 题目描述&#10;…&#10;## 输入格式&#10;…&#10;## 输出格式&#10;…&#10;## 说明/提示&#10;…"
+            rows={6}
+            style={{ fontFamily: 'var(--mono, monospace)', fontSize: 'var(--fs-xs)' }}
+          />
+          <div className="grid2" style={{ marginTop: 8 }}>
+            <div className="field">
+              <label>时间限制（ms，可空）</label>
+              <input type="number" min="1" value={form.timeLimit ?? ''} onChange={(e) => set({ timeLimit: e.target.value })} placeholder="1000" />
+            </div>
+            <div className="field">
+              <label>内存限制（MB，可空）</label>
+              <input type="number" min="1" value={form.memoryLimit ?? ''} onChange={(e) => set({ memoryLimit: e.target.value })} placeholder="512" />
+            </div>
+          </div>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 'var(--fs-sm)', color: 'var(--text-2)' }}>
+            <input type="checkbox" checked={form.hasAttachments} onChange={(e) => set({ hasAttachments: e.target.checked })} />
+            该题在洛谷存在题目附件（勾选后，使用者复制提示词时会弹窗提醒去洛谷下载附件）
+          </label>
+        </div>
+        <div className="field">
           <div className="field-head">
-            <label>推荐提示词（该题的统一测试提示词，可空）</label>
+            <label>推荐提示词（专属定制提示词，可空；留空 = 使用标准统一模板现场拼装）</label>
             <CopyButton text={form.prompt} toast={toast} size="small" kind="ghost" title="复制当前填写的提示词" />
           </div>
           <textarea
             value={form.prompt}
             onChange={(e) => set({ prompt: e.target.value })}
-            placeholder="贴上推荐给所有贡献者使用的统一提示词，例如：请独立完成这道洛谷题，给出完整可提交的 C++17 代码，只输出代码块。"
+            placeholder="留空即用标准模板（工作区隔离指令 + 题面 + 时空限制）；如需特殊口径可在此为该题定制完整提示词。"
             rows={4}
           />
           <div className="prompt-tools">
-            <button type="button" className="btn small ghost" id="pub-prompt-tpl" onClick={() => set({ prompt: PROMPT_TEMPLATE(form.pid) })}>
-              填入统一模板
+            <button
+              type="button" className="btn small ghost" id="pub-prompt-tpl"
+              onClick={() => set({ prompt: standardPrompt({
+                pid: form.pid,
+                content: form.content,
+                timeLimit: form.timeLimit === '' ? null : Number(form.timeLimit),
+                memoryLimit: form.memoryLimit === '' ? null : Number(form.memoryLimit),
+                hasAttachments: form.hasAttachments,
+              }) })}
+            >
+              填入标准模板
             </button>
             <button type="button" className="btn small ghost" onClick={() => set({ prompt: '' })} disabled={!form.prompt}>
-              清空
+              清空（回到标准模板）
             </button>
           </div>
           <span className="chain">
             {isEdit
-              ? '编辑保存后提示词被下方内容整体替换（留空 = 移除推荐提示词）。'
+              ? '编辑保存后提示词被下方内容整体替换（留空 = 移除专属定制，回到标准模板）。'
               : '提示词会展示在题目详情抽屉与提交表单里，供所有人一键复制；再次发布同题号可更新。'}
           </span>
         </div>

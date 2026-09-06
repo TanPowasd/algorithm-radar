@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
-import { normalizeSub, RESULTS, THINKING_LEVELS, THINKING_LABELS, DEFAULT_THINKING, todayStr, DIFFICULTY_NAMES } from '../aggregate'
-import CopyButton from './CopyButton'
+import { normalizeSub, RESULTS, THINKING_LEVELS, THINKING_LABELS, DEFAULT_THINKING, todayStr, DIFFICULTY_NAMES, promptOf } from '../aggregate'
+import PromptCopyButton from './PromptCopyButton'
 import { useDialog } from '../hooks/useDialog'
 
 /** 测评难度选项：1–7（value 字符串，与 select 的 state 一致） */
@@ -249,14 +249,14 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
           </div>
         )}
 
-        {form.pid && data.problems?.[form.pid]?.prompt && (
+        {form.pid && data.problems?.[form.pid] && (
           <div className="callout prompt-box" style={{ paddingRight: 12 }}>
             <div className="prompt-head">
               <span className="prompt-title">该题推荐提示词</span>
-              <span className="chain">（统一测试口径 · 粘贴到你的 Agent 前先读一遍）</span>
-              <CopyButton text={data.problems[form.pid].prompt} toast={toast} />
+              <span className="chain">（统一测试口径 · 工作区文件夹已按当前模型注入；粘贴前把残留占位符替换掉）</span>
+              <PromptCopyButton problem={data.problems[form.pid]} modelId={form.model.trim() || undefined} toast={toast} />
             </div>
-            <pre style={{ maxHeight: 160, overflowY: 'auto' }}>{data.problems[form.pid].prompt}</pre>
+            <pre style={{ maxHeight: 200, overflowY: 'auto' }}>{promptOf(data.problems[form.pid], form.model.trim() || undefined)}</pre>
           </div>
         )}
 

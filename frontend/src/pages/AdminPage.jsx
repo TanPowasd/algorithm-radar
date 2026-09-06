@@ -5,8 +5,8 @@ import Topbar from '../components/Topbar'
 import AuthModal from '../components/AuthModal'
 import PublishModal from '../components/PublishModal'
 import { api } from '../api/client'
-import { difficultyName, seriesKey, isPending, isApproved, providerLabel, fmtClock, fmtDateTime } from '../aggregate'
-import CopyButton from '../components/CopyButton'
+import { difficultyName, seriesKey, isPending, isApproved, providerLabel, fmtClock, fmtDateTime, promptOf } from '../aggregate'
+import PromptCopyButton from '../components/PromptCopyButton'
 import PidLink from '../components/PidLink'
 
 /**
@@ -550,16 +550,16 @@ export default function AdminPage() {
                       {(p.tags || []).length > 8 && <span className="chain">…</span>}
                     </td>
                     <td>
-                      {p.prompt ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, maxWidth: 340 }}>
-                          <span className="chain" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={p.prompt}>
-                            {p.prompt}
-                          </span>
-                          <CopyButton text={p.prompt} toast={toast} label="复制" okLabel="已复制" />
-                        </div>
-                      ) : (
-                        <span className="chain" title="点「编辑」为该题补充统一测试提示词">未配置</span>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, maxWidth: 340 }}>
+                        {p.prompt
+                          ? <span className="status-tag role-admin" title="管理员为本题定制的提示词">专属定制</span>
+                          : <span className="status-tag role-contributor" title="按标准模板现场拼装（工作区指令 + 题面 + 限制）">标准模板</span>}
+                        <span className="chain" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}
+                          title={promptOf(p)}>
+                          {promptOf(p)}
+                        </span>
+                        <PromptCopyButton problem={p} toast={toast} label="复制" okLabel="已复制" />
+                      </div>
                     </td>
                     <td className="num">{recordCountByPid.get(p.pid) || 0}</td>
                     <td className="actions">

@@ -31,17 +31,38 @@ export function luoguUrl(pid) {
 }
 
 /**
- * 统一测试口径模板：纯前端文案。
- * 某题没配推荐提示词时的兜底（替它带上题号）；管理员发布题目时可在此基础上再改。
- * 发布弹窗与公开的「推荐提示词」页共用这一份，避免两处文案走偏。
+ * 统一测试口径模板（v3.11）：动态拼装，不是固定文案。
+ * 结构：工作区隔离指令（{模型id}_{题号} 文件夹 + 禁网/禁背题）→ 题面 markdown → 时空限制。
+ * - modelId：提供者正在测的模型名。已知时注入文件夹名；未知时保留 {模型id} 占位符，
+ *   由复制者发送前手动替换（抽屉/提示词库等处没有模型上下文）。
+ * - 题面缺失（手动发布未补题面）时降级为「前往洛谷查看原题」链接行，不产出半截模板。
  */
-export const PROMPT_TEMPLATE = (pid) => `请独立完成这道洛谷题${pid ? `（${pid}）` : ''}。要求：
-1）只输出一段完整、可直接提交的 C++17 代码（用 \`\`\`cpp 代码块包裹），不要解释、不要伪码、不要多份实现；
-2）自己构造边界样例并在脑内逐条验证后再给最终版本；
-3）不使用任何在线评测反馈，一次性给出终版。`
+export function standardPrompt(p, modelId) {
+  const pid = String(p?.pid || '').toUpperCase()
+  const folder = `${modelId ? modelId : '{模型id}'}_${pid || '{题号}'}`
+  const lines = []
+  lines.push(`建立 ${folder} 文件夹，你的工作区严格被限定在此文件夹，禁止联网，禁止使用搜索和网页抓取工具，` +
+    `禁止读取本地除题目附件外的其他文件，禁止作弊背题，请独立思考完成下面的算法题，并给出最终可交付的文件。`)
+  const content = String(p?.content || '').trim()
+  if (content) {
+    lines.push('', '---', '', content.trim())
+  } else {
+    const url = luoguUrl(pid)
+    lines.push('', `题面请前往洛谷查看：${url ? `${url}（${pid}）` : pid || '洛谷题目页'}。`)
+  }
+  const limits = []
+  if (p?.timeLimit) limits.push(`- 时间限制：${p.timeLimit} ms`)
+  if (p?.memoryLimit) limits.push(`- 内存限制：${p.memoryLimit} MB`)
+  if (limits.length) lines.push('', '---', '', '**题目限制**', ...limits)
+  if (p?.hasAttachments) {
+    lines.push('', '**注意**：本题在洛谷附有题目附件（如附加输入/数据文件），请先从洛谷题目页下载附件并放入工作区后再作答。')
+  }
+  return lines.join('\n')
+}
 
-/** 题目实际使用的提示词：配过就用配的，没配就退到统一模板（带题号） */
-export const promptOf = (p) => (p?.prompt ? p.prompt : PROMPT_TEMPLATE(p?.pid || ''))
+/** 题目实际使用的提示词：管理员配过专属提示词就用配的，没配就按标准模板现场拼装 */
+export const promptOf = (p, modelId) =>
+  (p?.prompt && p.prompt.trim()) ? p.prompt : standardPrompt(p, modelId)
 
 export const seriesKey = (r) => r.model
 export const isApproved = (r) => r.status !== 'pending'

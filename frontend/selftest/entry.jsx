@@ -446,6 +446,64 @@ check('渲染抽屉 + 一键复制（提示词出现在抽屉里）', () => {
   assert.ok(html.includes('统一测试口径'), '提示词正文未渲染')
 })
 
+/* ---------- v3.11 推荐提示词模板：标准模板拼装 + 附件提醒 ---------- */
+const { standardPrompt } = await import('../src/aggregate.js')
+
+check('标准模板拼装：工作区指令 + 题面 + 限制 + 附件注意', () => {
+  const p = {
+    pid: 'P1001', title: 'A+B Problem', content: '## 题目描述\n\n输入两个整数。',
+    timeLimit: 1000, memoryLimit: 512, hasAttachments: true,
+  }
+  const withModel = standardPrompt(p, 'gpt-5')
+  assert.ok(withModel.startsWith('建立 gpt-5_P1001 文件夹'), '已知模型名应注入文件夹名')
+  assert.ok(withModel.includes('禁止联网') && withModel.includes('禁止作弊背题'), '缺工作区隔离指令')
+  assert.ok(withModel.includes('## 题目描述') && withModel.includes('输入两个整数。'), '题面 markdown 未嵌入')
+  assert.ok(withModel.includes('时间限制：1000 ms'), '缺时间限制')
+  assert.ok(withModel.includes('内存限制：512 MB'), '缺内存限制')
+  assert.ok(withModel.includes('洛谷附有题目附件'), '附件题缺下载提醒')
+  const noModel = standardPrompt(p)
+  assert.ok(noModel.includes('{模型id}_P1001'), '未知模型名应保留 {模型id} 占位符')
+  const bare = standardPrompt({ pid: 'P1002' })
+  assert.ok(bare.includes('www.luogu.com.cn/problem/P1002'), '无题面时应降级为洛谷原题链接')
+  assert.ok(!bare.includes('时间限制'), '无限制数据时不应输出限制行')
+})
+
+check('附件提醒弹窗：复制口统一走 PromptCopyButton（静态源码契约）', () => {
+  const srcAt = (rel) => readFileSync(new URL(`../src/${rel}`, import.meta.url), 'utf8')
+  const btn = srcAt('components/PromptCopyButton.jsx')
+  assert.ok(btn.includes('hasAttachments') && btn.includes('setShowNotice(true)'), '附件题复制后必须触发提醒')
+  assert.ok(btn.includes('luoguUrl') && btn.includes('noopener noreferrer'), '提醒窗应给洛谷原题外链（新标签+noopener）')
+  assert.ok(/useDialog\(/.test(btn), '提醒弹窗未接入焦点管理')
+  // 四处提示词复制口都必须走 PromptCopyButton，不能再裸用 CopyButton 复制题目提示词
+  const spots = ['components/ProblemDrawer.jsx', 'components/RecordFormModal.jsx', 'pages/AdminPage.jsx', 'pages/PromptsPage.jsx']
+  for (const f of spots) {
+    const s = srcAt(f)
+    assert.ok(s.includes('PromptCopyButton'), `${f} 未接入 PromptCopyButton`)
+    assert.ok(!/CopyButton\s+text=\{[^}]*prompt/i.test(s), `${f} 仍在裸用 CopyButton 复制提示词`)
+  }
+})
+
+check('渲染抽屉：无专属提示词时也展示标准模板（v3.11）', () => {
+  const anyPid = Object.keys(snapshot.problems)[0]
+  const seeded = {
+    ...snapshot,
+    problems: {
+      ...snapshot.problems,
+      [anyPid]: { ...snapshot.problems[anyPid], prompt: '' },
+    },
+  }
+  store.set('radar.cache.v3', JSON.stringify(seeded))
+  const html = renderToString(
+    React.createElement(MemoryRouter, null,
+      React.createElement(AppProvider, null,
+        React.createElement(ProblemDrawer, { pid: anyPid, onClose() {} }))),
+  )
+  store.set('radar.cache.v3', raw)
+  assert.ok(html.includes('标准统一模板'), '无专属提示词的题应标注标准统一模板')
+  assert.ok(html.includes('建立 '), '标准模板正文未渲染（缺工作区指令）')
+  assert.ok(html.includes('{模型id}'), '抽屉无模型上下文时应保留占位符')
+})
+
 check('渲染后台/注册/贡献者页（全站统一不崩）', () => {
   for (const path of ['/admin', '/users', '/register', '/contributors']) {
     const html = renderAt(path)

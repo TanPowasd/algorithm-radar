@@ -28,6 +28,10 @@ export const SCHEMA_STATEMENTS: string[] = [
     categories  TEXT NOT NULL DEFAULT '[]',
     manual      INTEGER NOT NULL DEFAULT 0,
     prompt      TEXT NOT NULL DEFAULT '',
+    content     TEXT NOT NULL DEFAULT '',
+    time_limit  INTEGER,
+    memory_limit INTEGER,
+    has_attachments INTEGER NOT NULL DEFAULT 0,
     fetched_at  TEXT
 )`,
     `CREATE TABLE IF NOT EXISTS models (

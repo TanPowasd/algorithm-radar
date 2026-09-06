@@ -141,16 +141,26 @@ async function loginResponse(ctx: RouteCtx, user: AuthUser): Promise<Json> {
     };
 }
 
-/** 发布/编辑前尝试用洛谷抓取补全缺失的标题/难度（失败不阻塞：可手动填） */
+/** 发布/编辑前尝试用洛谷抓取补全缺失的标题/难度/题面/限制（失败不阻塞：可手动填） */
 async function maybeFetchLuogu(pid: string, info: Record<string, unknown>) {
     const needTitle = !info.title || !String(info.title).trim();
     const needDifficulty = info.difficulty === undefined || info.difficulty === null;
-    if (!needTitle && !needDifficulty) return;
+    const needContent = !info.content || !String(info.content).trim();
+    if (!needTitle && !needDifficulty && !needContent) return;
     try {
         const fetched = await fetchLuoguProblem(pid);
         if (needTitle) info.title = fetched.title;
         if (needDifficulty && fetched.difficulty !== null) info.difficulty = fetched.difficulty;
-        if ((!Array.isArray(info.tags) || info.tags.length === 0) && fetched.tags.length) info.tags = fetched.tags;
+        if (needContent) {
+            info.content = fetched.content;
+            info.timeLimit = fetched.timeLimit;
+            info.memoryLimit = fetched.memoryLimit;
+        }
+        // 附件标记：抓取结果可信（attachments 数组）；管理员随后可手动覆盖
+        info.hasAttachments = fetched.hasAttachments;
+        if ((!Array.isArray(info.tags) || info.tags.length === 0) && fetched.tags.length) {
+            info.tags = fetched.tags;
+        }
         if ((!Array.isArray(info.categories) || info.categories.length === 0) && fetched.categories.length) {
             info.categories = fetched.categories;
         }

@@ -3,10 +3,10 @@ import { copyText } from '../hooks/copyText'
 
 /**
  * 一键复制按钮（提示词等长文本统一入口）。
- * 复制成功后按钮自身反馈 1.6s，同时抛 toast。
+ * 复制成功后按钮自身反馈 1.6s，同时抛 toast；onCopied 在复制成功后回调（附件提醒弹窗用）。
  */
 export default function CopyButton({
-  text, label = '一键复制', okLabel = '已复制', toast, size = 'small', kind = '', title, stop = true,
+  text, label = '一键复制', okLabel = '已复制', toast, size = 'small', kind = '', title, stop = true, onCopied,
 }) {
   const [done, setDone] = useState(false)
   const timer = useRef(null)
@@ -20,6 +20,7 @@ export default function CopyButton({
       clearTimeout(timer.current)
       timer.current = setTimeout(() => setDone(false), 1600)
       toast?.('已复制到剪贴板')
+      onCopied?.()
     } else {
       toast?.('复制失败，请手动选择文本', 'err')
     }

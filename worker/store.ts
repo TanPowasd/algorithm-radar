@@ -49,7 +49,12 @@ function mapProblem(row: any): ProblemEntry {
     return {
         pid: row.pid, title: row.title, difficulty: row.difficulty ?? null,
         tags, categories, manual: Boolean(row.manual),
-        prompt: row.prompt ?? "", fetchedAt: row.fetched_at ?? "",
+        prompt: row.prompt ?? "",
+        content: row.content ?? "",
+        timeLimit: row.time_limit ?? null,
+        memoryLimit: row.memory_limit ?? null,
+        hasAttachments: Boolean(row.has_attachments),
+        fetchedAt: row.fetched_at ?? "",
     };
 }
 
@@ -70,10 +75,15 @@ const updateRecStmt = (db: D1Database, r: Rec) => db.prepare(
     "status=?16, author=?17, author_id=?18, reviewer_id=?19, reviewed_at=?20, deleted_at=?21, created_at=?22, updated_at=?23 WHERE id=?1").bind(...recParams(r));
 
 const saveProblemStmt = (db: D1Database, p: ProblemEntry) => db.prepare(
-    "INSERT INTO problems(pid, title, difficulty, tags, categories, manual, prompt, fetched_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) " +
+    "INSERT INTO problems(pid, title, difficulty, tags, categories, manual, prompt, content, time_limit, memory_limit, has_attachments, fetched_at) " +
+    "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) " +
     "ON CONFLICT(pid) DO UPDATE SET title=excluded.title, difficulty=excluded.difficulty, tags=excluded.tags, " +
-    "categories=excluded.categories, manual=excluded.manual, prompt=excluded.prompt, fetched_at=excluded.fetched_at")
-    .bind(p.pid, p.title, p.difficulty, JSON.stringify(p.tags), JSON.stringify(p.categories), p.manual ? 1 : 0, p.prompt ?? "", p.fetchedAt);
+    "categories=excluded.categories, manual=excluded.manual, prompt=excluded.prompt, content=excluded.content, " +
+    "time_limit=excluded.time_limit, memory_limit=excluded.memory_limit, has_attachments=excluded.has_attachments, " +
+    "fetched_at=excluded.fetched_at")
+    .bind(p.pid, p.title, p.difficulty, JSON.stringify(p.tags), JSON.stringify(p.categories),
+        p.manual ? 1 : 0, p.prompt ?? "", p.content ?? "", p.timeLimit, p.memoryLimit,
+        p.hasAttachments ? 1 : 0, p.fetchedAt);
 
 const bumpMetaStmts = (db: D1Database): D1PreparedStatement[] => [
     db.prepare("UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'revision'"),
@@ -188,8 +198,12 @@ async function mergeProblemFromRecord(prev: ProblemEntry | null, rec: Rec, raw: 
         tags: Array.isArray(srcTags) && srcTags.length ? nameList(srcTags, MAX_TAGS, MAX_CATEGORY, "标签") : (prev?.tags ?? []),
         categories: rec.categories.length ? rec.categories : (prev?.categories ?? []),
         manual: Boolean(prev?.manual),
-        // 保存记录不改动推荐提示词
+        // 推荐提示词与题面/限制/附件标记永远不被记录保存改动（由管理员发布/编辑端点维护）
         prompt: prev?.prompt || "",
+        content: prev?.content ?? "",
+        timeLimit: prev?.timeLimit ?? null,
+        memoryLimit: prev?.memoryLimit ?? null,
+        hasAttachments: Boolean(prev?.hasAttachments),
         fetchedAt: prev?.fetchedAt || (src && typeof src === "object" ? String(src.fetchedAt ?? "") : ""),
     };
 }
@@ -358,6 +372,11 @@ export async function putProblem(db: D1Database, pid: string, info: any): Promis
         manual: clean.manual || Boolean(prev?.manual),
         // 推荐提示词：新值非空才覆盖（再次发布同题号即可更新提示词）
         prompt: clean.prompt || prev?.prompt || "",
+        // 题面/限制：新值非空才覆盖（发布时洛谷抓取会带全；手动发布可后续编辑补）
+        content: clean.content || prev?.content || "",
+        timeLimit: clean.timeLimit ?? prev?.timeLimit ?? null,
+        memoryLimit: clean.memoryLimit ?? prev?.memoryLimit ?? null,
+        hasAttachments: clean.hasAttachments || Boolean(prev?.hasAttachments),
         fetchedAt: clean.fetchedAt || prev?.fetchedAt || "",
     };
     await db.batch([saveProblemStmt(db, merged), ...bumpMetaStmts(db)]);
@@ -389,6 +408,10 @@ export async function updateProblem(db: D1Database, pid: string, info: any): Pro
         categories: prev.categories,
         manual: clean.manual || Boolean(prev.manual),
         prompt: clean.prompt, // 编辑全量覆盖（留空即清空推荐提示词）
+        content: clean.content, // 编辑全量覆盖（留空即清空题面）
+        timeLimit: clean.timeLimit,
+        memoryLimit: clean.memoryLimit,
+        hasAttachments: clean.hasAttachments,
         fetchedAt: clean.fetchedAt || prev.fetchedAt,
     };
     await db.batch([saveProblemStmt(db, merged), ...bumpMetaStmts(db)]);

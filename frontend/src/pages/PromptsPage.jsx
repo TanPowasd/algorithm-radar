@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Topbar from '../components/Topbar'
-import CopyButton from '../components/CopyButton'
+import PromptCopyButton from '../components/PromptCopyButton'
 import PidLink from '../components/PidLink'
 import { useApp } from '../state'
-import { difficultyName, luoguUrl, promptOf, PROMPT_TEMPLATE, PID_RE, DIFFICULTY_NAMES } from '../aggregate'
+import { difficultyName, luoguUrl, promptOf, standardPrompt, DIFFICULTY_NAMES } from '../aggregate'
 
 export default function PromptsPage() {
   const { data, toast } = useApp()
@@ -58,7 +58,7 @@ export default function PromptsPage() {
     })
   }, [problemList, keyword, diffFilter, typeFilter])
 
-  // 计算当前聚焦题目的详细信息
+  // 计算当前聚焦题目的详细信息（raw 供 PromptCopyButton 判断附件与拼装模板）
   const activeProblem = useMemo(() => {
     const targetPid = String(selectedPid || '').trim().toUpperCase() || (problemList[0]?.pid || 'P1001')
     const found = data.problems?.[targetPid]
@@ -70,6 +70,7 @@ export default function PromptsPage() {
         tags: Array.isArray(found.tags) ? found.tags : [],
         isCustom: Boolean(found.prompt && String(found.prompt).trim()),
         prompt: promptOf(found),
+        raw: found,
         isExisting: true,
       }
     }
@@ -80,7 +81,8 @@ export default function PromptsPage() {
       difficulty: null,
       tags: [],
       isCustom: false,
-      prompt: PROMPT_TEMPLATE(targetPid),
+      prompt: standardPrompt({ pid: targetPid }),
+      raw: null,
       isExisting: false,
     }
   }, [selectedPid, data.problems, problemList])
@@ -188,9 +190,9 @@ export default function PromptsPage() {
           <div className="callout prompt-box" style={{ marginTop: 'var(--sp-2)' }}>
             <div className="prompt-head">
               <span className="prompt-title">该题推荐提示词内容</span>
-              <span className="chain">（直接发送给待测 AI 模型，要求独立完成）</span>
-              <CopyButton
-                text={activeProblem.prompt}
+              <span className="chain">（建立工作区文件夹后发送给待测 AI 模型；发送前把 <code>{'{模型id}'}</code> 占位符替换为实际模型名）</span>
+              <PromptCopyButton
+                problem={activeProblem.raw || { pid: activeProblem.pid }}
                 toast={toast}
                 label="一键复制本题提示词"
                 okLabel="已复制提示词"
@@ -205,10 +207,11 @@ export default function PromptsPage() {
         {/* 规范指南 Callout */}
         <div className="callout" style={{ fontSize: 'var(--fs-sm)', lineHeight: 1.6 }}>
           <strong>统一口径说明：</strong>
-          为确保不同模型在算法题上的横向对比公平客观，雷达站建议评测者使用上述统一推荐提示词。提示词要求模型：
-          ① 仅输出一段包含在 <code>```cpp</code> 代码块中的完整 C++17 源码，不输出任何解释或分析；
-          ② 在脑内完成边界用例推导与验证；
-          ③ 一次性给出作答，不依赖任何在线评测反馈或多轮调试。
+          为确保不同模型在算法题上的横向对比公平客观，雷达站建议评测者使用上述统一推荐提示词。提示词要求被测模型：
+          ① 在限定的 <code>{'{模型id}_{题号}'}</code> 工作区文件夹内独立完成（禁止联网、搜索、网页抓取与读取工作区外的本地文件，禁止背题）；
+          ② 直接以站点录入的题面 markdown 与时间/内存限制作答依据；
+          ③ 给出最终可交付的文件（含附件的题请先从洛谷下载附件放入工作区）。
+          题号旁的「{activeProblem.isCustom ? '专属定制' : '标准统一模板'}」标记表示该题使用管理员定制提示词还是标准模板。
         </div>
 
         {/* 全量题目提示词检索表 */}
@@ -323,8 +326,8 @@ export default function PromptsPage() {
                           >
                             聚焦
                           </button>
-                          <CopyButton
-                            text={finalPrompt}
+                          <PromptCopyButton
+                            problem={p}
                             toast={toast}
                             size="small"
                             label="复制"

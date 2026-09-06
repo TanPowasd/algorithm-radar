@@ -36,6 +36,15 @@ export function ensureSchema(db: D1Database): Promise<void> {
             // 迁移 v3.5：records.deleted_at（软删除回收站；非空 = 在回收站）
             await ensureColumn(db, "records", "deleted_at",
                 "ALTER TABLE records ADD COLUMN deleted_at TEXT");
+            // 迁移 v3.11：题面 markdown + 时空限制 + 附件标记（标准提示词模板的数据来源）
+            await ensureColumn(db, "problems", "content",
+                "ALTER TABLE problems ADD COLUMN content TEXT NOT NULL DEFAULT ''");
+            await ensureColumn(db, "problems", "time_limit",
+                "ALTER TABLE problems ADD COLUMN time_limit INTEGER");
+            await ensureColumn(db, "problems", "memory_limit",
+                "ALTER TABLE problems ADD COLUMN memory_limit INTEGER");
+            await ensureColumn(db, "problems", "has_attachments",
+                "ALTER TABLE problems ADD COLUMN has_attachments INTEGER NOT NULL DEFAULT 0");
         })().catch((e) => {
             ready = null; // 失败允许下次重试
             throw e;

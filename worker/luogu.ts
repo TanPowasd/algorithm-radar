@@ -123,7 +123,33 @@ export interface LuoguProblem {
     difficulty: number | null;
     tags: string[];
     categories: string[];
+    /** 题面 markdown（背景/描述/输入输出格式/说明提示 按节拼接；空节跳过） */
+    content: string;
+    /** 时间限制（ms，取各子任务最大值）；抓不到为 null */
+    timeLimit: number | null;
+    /** 内存限制（MB，limits.memory 单位是 KB，向上取整）；抓不到为 null */
+    memoryLimit: number | null;
+    /** 洛谷题目页是否附有附件（attachments 数组非空） */
+    hasAttachments: boolean;
     fetchedAt: string;
+}
+
+/** 把 content 各节拼成一份 markdown 题面（name 不重复拼，题目名另有字段） */
+function composeContent(c: any): string {
+    if (!c || typeof c !== "object") return "";
+    const sections: Array<[string, unknown]> = [
+        ["题目背景", c.background],
+        ["题目描述", c.description],
+        ["输入格式", c.formatI],
+        ["输出格式", c.formatO],
+        ["说明/提示", c.hint],
+    ];
+    const parts: string[] = [];
+    for (const [title, body] of sections) {
+        const text = cleanName(String(body ?? ""));
+        if (text) parts.push(`## ${title}\n\n${text}`);
+    }
+    return parts.join("\n\n");
 }
 
 const cache = new Map<string, LuoguProblem>();
@@ -173,12 +199,19 @@ export async function fetchLuoguProblem(pidRaw: string): Promise<LuoguProblem> {
         }
     }
     const diff = Number(problem.difficulty);
+    const limits = problem.limits ?? {};
+    const timeArr = Array.isArray(limits.time) ? limits.time.map(Number).filter(Number.isFinite) : [];
+    const memArr = Array.isArray(limits.memory) ? limits.memory.map(Number).filter(Number.isFinite) : [];
     const result: LuoguProblem = {
         pid,
         title: name,
         difficulty: Number.isInteger(diff) && diff >= 0 && diff <= 7 ? diff : null,
         tags: tagNames,
         categories: categorize(chainNames),
+        content: composeContent(problem.content),
+        timeLimit: timeArr.length ? Math.max(...timeArr) : null,
+        memoryLimit: memArr.length ? Math.ceil(Math.max(...memArr) / 1024) : null,
+        hasAttachments: Array.isArray(problem.attachments) && problem.attachments.length > 0,
         fetchedAt: nowLocal(),
     };
     if (cache.size > 5000) cache.clear();

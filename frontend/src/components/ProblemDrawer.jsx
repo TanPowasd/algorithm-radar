@@ -1,9 +1,9 @@
 import { useMemo } from 'react'
 import { useApp } from '../state'
-import CopyButton from './CopyButton'
+import PromptCopyButton from './PromptCopyButton'
 import DeleteRecordButton from './DeleteRecordButton'
 import PidLink from './PidLink'
-import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLabel, reviewerLabel, fmtClock, fmtDateTime } from '../aggregate'
+import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLabel, reviewerLabel, fmtClock, fmtDateTime, promptOf } from '../aggregate'
 import { THINKING_LABELS } from '../aggregate'
 import { useDialog } from '../hooks/useDialog'
 
@@ -52,13 +52,13 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
           <button className="icon-btn close" onClick={onClose} aria-label="关闭">✕</button>
         </div>
         <div className="drawer-body">
-          {problem?.prompt && (
+          {problem && (
             <div className="callout prompt-box" id="problem-prompt">
               <div className="prompt-head">
-                <span className="prompt-title">推荐提示词 · 统一测试口径</span>
-                <CopyButton text={problem.prompt} toast={toast} />
+                <span className="prompt-title">推荐提示词 · {problem.prompt ? '专属定制口径' : '标准统一模板'}</span>
+                <PromptCopyButton problem={problem} modelId={highlightModel || undefined} toast={toast} />
               </div>
-              <pre>{problem.prompt}</pre>
+              <pre style={{ maxHeight: 320, overflowY: 'auto' }}>{promptOf(problem, highlightModel || undefined)}</pre>
             </div>
           )}
           {stats && (

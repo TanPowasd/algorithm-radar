@@ -13,7 +13,15 @@
 > 保留 90 天，站长可 `POST /api/admin/snapshot` 手动触发）；**原生限流**（`WRITE_LIMIT` 60/分 + `AUTH_LIMIT`
 > 10/分，跨 isolate 可靠，长窗口限流仍由进程内叠加）；**`/api/data` ETag/304**（revision 单调递增做校验器，
 > 无变更刷新零正文传输；ETag 按游客/管理员口径区分）；前端新增 **「洞察」视图**（模型稳定性 / 题目区分度 /
-> 思考等级收益三张口径表）；`npm run e2e` 权限矩阵端到端自检（52 项，隔离临时环境）。
+> 思考等级收益三张口径表）；`npm run e2e` 权限矩阵端到端自检（57 项，隔离临时环境）。
+> v3.11 · 2026-09：**推荐提示词模板重做**——标准模板从固定文案改为**现场拼装**：
+> ①工作区隔离指令（建立 `{模型id}_{题号}` 文件夹、禁联网/禁搜索抓取/禁读附件外文件/禁背题）；
+> ②嵌入**题面 markdown**（发布时从洛谷抓取 `content` 各节拼接，可编辑，上限 100KB）；
+> ③附**时间/内存限制**（抓取自洛谷 limits，ms/MB）。提交表单内复制时自动注入当前模型名，
+> 无模型上下文的复制口保留 `{模型id}` 占位符由测试者发送前替换；题面缺失时降级为洛谷原题链接。
+> **附件提醒**：发布/编辑题目可勾选「存在附件」（洛谷抓取时按 `attachments` 自动预判），
+> 全站复制提示词成功后弹窗提醒前往洛谷下载附件放入工作区。
+> `problems` 表新增 `content`/`time_limit`/`memory_limit`/`has_attachments` 列（自动迁移，D1 数据零迁移）。
 > v3.10 · 2026-09：**贡献者视角**——全站筛选器（总览页「👤 贡献者视角」条，或贡献者名册每行「全站查看」），
 > 选中后矩阵/雷达/柱状/榜单/滚榜/洞察/明细与统计只计 TA 名下的已审核记录，与模型聚焦叠加；历史导入数据
 > 合并为「全民制作人」也可整体选中；选择持久化（`radar.focusContributor`）。
@@ -62,8 +70,13 @@
   管理员及以上在 `/users` 页底部只读查看最近 100 条（新→旧），动作名有中文映射，未知动作原样展示。
 - 贡献者名册：`/contributors`（公开），按**注册时间**排序（与贡献量无关），展示用户 ID/昵称/贡献数等；历史导入数据对应的 `admin`/`guest` 账号排在末尾。
 - 审计字段：每条测评记录带 `author_id`（提供者用户 ID）与 `reviewer_id`/`reviewed_at`（批准人用户 ID 与批准时间；管理员自己直接提交的记录自审自记）。**首次录入的历史数据没有这些 ID，提供者/审核人统一署名「全民制作人」**（名册中也合并为同一条目，按注册时间排在末尾）；待审核的记录审核人显示「待审核」。
-- 推荐提示词：发布题目时填写（再次发布同题号可更新；发布弹窗内置「统一模板」一键填入），
-  展示在**题目详情抽屉 / 提交测评表单 / 审核台题目表**三处，均带统一的「⧉ 一键复制」按钮，统一所有人的测试口径。
+- **推荐提示词（v3.11）**：每道题有两条口径——**专属定制**（管理员在发布/编辑弹窗手写的 `prompt` 字段）
+  与**标准统一模板**（前端 `standardPrompt()` 现场拼装：`{模型id}_{题号}` 工作区文件夹 + 禁网禁背题等隔离指令 +
+  题面 markdown `content` + 时间/内存限制；无专属提示词时自动生效）。管理员发布时抓取洛谷会自动带入题面与限制，
+  也可用「填入标准模板」把拼装结果填进 `prompt` 再手改。提示词展示在**题目详情抽屉 / 提交测评表单 / 审核台题目表 /
+  提示词库页**四处，均带统一复制按钮；提交表单内按当前所选模型注入文件夹名，其余复制口保留 `{模型id}` 占位符。
+  **附件题**：发布时可勾选「该题在洛谷存在题目附件」（抓取时自动预判），任何复制口复制成功后都会弹窗提醒
+  前往洛谷下载附件并放入工作区。
 - **题目信息单一来源**：提交/编辑测评时，**题名与难度由「题目目录」带入并锁死**（虚线只读框 + 🔒 提示），
   提交者与管理员都不能在测评表单里改——要更正请到「题目管理 → 编辑」。算法类别同样在切换题目时按目录重置
   （仍可在其后追加/删除）。仅当目录里确实没有难度（如新抓取的题）时才允许手动选择难度，并提示补全目录。
@@ -209,7 +222,9 @@ npm --prefix frontend run demo
 
 `id`(16hex) · `model`(聚合主键) · `variant` · `agent` · `tokenSource` · `pid`+`title` · `thinking`(ultra>max>xhigh>high>medium>low>off) · `difficulty`(0–7) · `categories[]` · `submissions[]`(每轮 `score` 0–100 可空 / `result` AC|WA|TLE|MLE|RE|CE|未解出 / `note`) · `minutes` · `memory`(MB，可空) · `date` · `note` · `status`(approved|pending) · `author`(提供者登录 ID) + `author_id`(提供者用户 ID) + `reviewer_id`/`reviewed_at`(审核人) · `deleted_at`(软删除/回收站标记) · 时间戳。
 
-`users` 表：`username`(登录 ID)、`nickname`(显示昵称)、`password_hash`(PBKDF2，非明文)、角色/状态/审批信息。`problems` 表额外含 `prompt`（推荐提示词，≤4000 字，统一测试口径）。`audit_log` 表：`actor_id`/`actor`(操作人)、`action`(动作)、`detail`(详情，≤500 字)、`created_at`，只追加不修改。
+`users` 表：`username`(登录 ID)、`nickname`(显示昵称)、`password_hash`(PBKDF2，非明文)、角色/状态/审批信息。
+`problems` 表：`prompt`（专属定制推荐提示词，≤4000 字）、`content`（题面 markdown，≤100KB）、
+`time_limit`/`memory_limit`（时空限制，ms/MB）、`has_attachments`（洛谷附件标记，复制提示词后触发下载提醒）。`audit_log` 表：`actor_id`/`actor`(操作人)、`action`(动作)、`detail`(详情，≤500 字)、`created_at`，只追加不修改。
 
 ## 八、日常开发
 
@@ -217,9 +232,9 @@ npm --prefix frontend run demo
 ./node_modules/.bin/tsc --noEmit          # worker TS 类型检查
 npm --prefix frontend run build           # 前端构建（wrangler dev 直接读 dist）
 npm --prefix frontend run lint            # oxlint
-npm --prefix frontend run selftest        # 口径断言 + 真实渲染冒烟（Node 内跑，54 项）
+npm --prefix frontend run selftest        # 口径断言 + 真实渲染冒烟（Node 内跑，67 项）
 npm --prefix frontend run check-classes   # JSX 类名 vs styles.css 契约检查（防漏样式）
-npm run e2e                               # 构建 + 权限矩阵/ETag/快照端到端自检（52 项，隔离临时环境）
+npm run e2e                               # 构建 + 权限矩阵/ETag/快照端到端自检（57 项，隔离临时环境）
 npm --prefix frontend run selftest:fixture # 从根目录最新导出快照重裁自检样本
 ```
 
