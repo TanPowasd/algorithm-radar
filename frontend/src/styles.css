@@ -553,7 +553,7 @@ td.mcell.score-na { color: var(--muted); }
 .matrix-guide { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: var(--fs-xs); color: var(--muted); }
 .matrix-scale { display: flex; gap: 12px; flex-wrap: wrap; }
 .matrix-scale i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; background: currentColor; }
-tr.sum-row td { font-weight: 700; background: var(--surface-2); }
+tr.sum-row th, tr.sum-row td { font-weight: 700; background: var(--surface-2); border-bottom: 2px solid var(--border); }
 tr.sum-row td.sticky-col { background: var(--surface-2); }
 .matrix-hint, .radar-hint, .tbar-hint, .trend-hint, .lb-hint {
   color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-2); line-height: 1.7;

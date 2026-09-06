@@ -229,6 +229,27 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
             </tr>
           </thead>
           <tbody>
+            <tr className="sum-row">
+              <th className="row-head" data-r="sum">整体</th>
+              {series.map((s, si) => {
+                const info = summary.get(s)
+                if (mode === 'status') {
+                  return (
+                    <td key={s} className="mcell" data-r="sum" data-c={`c${si}`} title={`${info.passRate?.toFixed(1)}%（${info.total} 条）`}>
+                      {info.passRate === null ? '—' : `${Math.round(info.passRate)}%`}
+                    </td>
+                  )
+                }
+                return (
+                  <td
+                    key={s} className={`mcell ${info.avg === null ? 'score-na' : scoreTierClass(Math.round(info.avg))}`}
+                    data-r="sum" data-c={`c${si}`} title={`n=${info.n}`}
+                  >
+                    {info.avg === null ? '—' : Math.round(info.avg)}
+                  </td>
+                )
+              })}
+            </tr>
             {visibleProblems.map(({ problem: p, rank }, pi) => (
               <tr key={p.pid}>
                 <th
@@ -308,27 +329,6 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
                 })}
               </tr>
             ))}
-            <tr className="sum-row">
-              <th className="row-head" data-r="sum">整体</th>
-              {series.map((s, si) => {
-                const info = summary.get(s)
-                if (mode === 'status') {
-                  return (
-                    <td key={s} className="mcell" data-c={`c${si}`} title={`${info.passRate?.toFixed(1)}%（${info.total} 条）`}>
-                      {info.passRate === null ? '—' : `${Math.round(info.passRate)}%`}
-                    </td>
-                  )
-                }
-                return (
-                  <td
-                    key={s} className={`mcell ${info.avg === null ? 'score-na' : scoreTierClass(Math.round(info.avg))}`}
-                    data-c={`c${si}`} title={`n=${info.n}`}
-                  >
-                    {info.avg === null ? '—' : Math.round(info.avg)}
-                  </td>
-                )
-              })}
-            </tr>
           </tbody>
         </table>
       </div>}
@@ -353,7 +353,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
         列 = AI（<b>颜色按厂商归组</b>，同厂商同色系，列下色条即厂商色），行 = 题目（按整体均分 ↓）。
         默认口径「最佳等级」= 该题该模型只取<b>思考等级最高</b>（Ultra&gt;Max&gt;X-High&gt;High&gt;Medium&gt;Low&gt;关闭）的那条记录分数，
         可切到「最佳分数」改取分数最高的那批；悬停行/列有十字高亮，贡献者可在空格子上用「+」快捷提单。
-        查找题目只缩小可见行，底部「整体」仍为当前模型与贡献者范围的整体统计。
+        查找题目只缩小可见行，首行「整体」仍为当前模型与贡献者范围的整体统计。
       </details>
     </div>
   )

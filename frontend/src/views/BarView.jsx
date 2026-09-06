@@ -106,7 +106,7 @@ export default function BarView() {
     (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
 
   const seriesColors = useMemo(
-    () => vendorColorMap(seriesList(approved), vendorOf, theme !== 'light'),
+    () => vendorColorMap(seriesList(approved), vendorOf, theme !== 'light', { shade: false }),
     [approved, vendorOf, theme])
 
   /** 全部组合（不筛阈值）：用于「满足 X / 共 Y」实时计数 */
@@ -263,7 +263,7 @@ export default function BarView() {
           : <div className="empty">没有满足 n≥{barMinSamples} 的「模型 × 思考等级」组合，把左上的阈值滑杆拉低试试</div>}
       </div>
       <div className="tbar-hint">
-        均分 = 该组合全部有分数轮次（0–100）；柱端标注样本量 n。<b>颜色 = 厂商</b>（同厂商不同模型走同一色系的明度阶梯），
+        均分 = 该组合全部有分数轮次（0–100）；柱端标注样本量 n。<b>颜色 = 厂商</b>（同厂商模型使用同一种颜色），
         <b>纹理密度 = 思考等级</b>（Ultra 最实、越往低越虚，关闭思考为点阵）。点击上方题号 chip 可把该题从口径中排除（仅影响本图，本机记忆）。
       </div>
     </div>

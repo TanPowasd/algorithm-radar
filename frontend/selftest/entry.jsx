@@ -132,6 +132,14 @@ check('厂商配色：同厂商 → 同色相', () => {
   assert.notEqual(colors.get('deepseek-v4-flash'), colors.get('kimi-k3'), '不同厂商应不同色')
 })
 
+check('厂商配色（平色模式/柱状图）：同厂商不同模型使用完全相同的颜色', () => {
+  const vendorOf = makeVendorOf([])
+  const names = ['deepseek-v4-flash', 'deepseek-v4-pro', 'qwen-3.8-max', 'kimi-k3']
+  const colors = vendorColorMap(names, vendorOf, true, { shade: false })
+  assert.equal(colors.get('deepseek-v4-flash'), colors.get('deepseek-v4-pro'), '平色模式下同厂商模型颜色必须完全一致')
+  assert.notEqual(colors.get('deepseek-v4-flash'), colors.get('kimi-k3'), '不同厂商应不同色')
+})
+
 check('seriesColorMap 传入 vendorOf 时按厂商上色，不传时保持旧回环', () => {
   const vendorOf = makeVendorOf([])
   const a = seriesColorMap(records, { vendorOf, dark: true })

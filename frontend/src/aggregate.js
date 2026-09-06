@@ -110,7 +110,7 @@ export function seriesColorMap(records, opts) {
   const map = new Map()
   const list = seriesList(records)
   if (opts && typeof opts.vendorOf === 'function') {
-    const colors = vendorColorMap(list, opts.vendorOf, opts.dark !== false)
+    const colors = vendorColorMap(list, opts.vendorOf, opts.dark !== false, opts)
     for (const s of list) map.set(s, colors.get(s))
     return map
   }

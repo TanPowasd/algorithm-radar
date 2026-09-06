@@ -103,8 +103,10 @@ function shadeOf(i) {
  * @param {string[]} series 系列名列表（已排序）
  * @param {(name:string)=>string} vendorOf 厂商解析
  * @param {boolean} dark 是否深色主题（影响明度基线，保证对比度）
+ * @param {boolean|{shade?: boolean}} [opts=true] 是否按明度/饱和度阶梯区分同厂商不同模型；为 false 时同厂商全部模型使用同一种基准色（不调整明度与饱和度）
  */
-export function vendorColorMap(series, vendorOf, dark = true) {
+export function vendorColorMap(series, vendorOf, dark = true, opts = {}) {
+  const shade = typeof opts === 'boolean' ? opts : (opts?.shade ?? true)
   const colors = new Map()
   const vendors = [...new Set(series.map((s) => vendorOf(s)))]
     .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
@@ -112,9 +114,14 @@ export function vendorColorMap(series, vendorOf, dark = true) {
   vendors.forEach((v, i) => hueOf.set(v, VENDOR_HUES[i % VENDOR_HUES.length]))
   const seen = new Map()
   const baseL = dark ? 62 : 44
+  const baseSat = 82
   for (const s of series) {
     const vendor = vendorOf(s)
     const hue = hueOf.get(vendor)
+    if (!shade) {
+      colors.set(s, hslToHex(hue, baseSat, baseL))
+      continue
+    }
     const idx = seen.get(vendor) || 0
     seen.set(vendor, idx + 1)
     const l = Math.max(dark ? 40 : 24, Math.min(dark ? 82 : 62, baseL + shadeOf(idx)))
@@ -125,8 +132,8 @@ export function vendorColorMap(series, vendorOf, dark = true) {
 }
 
 /** 厂商图例：厂商 → {hue, color, models[]} */
-export function vendorLegend(series, vendorOf, dark = true) {
-  const colors = vendorColorMap(series, vendorOf, dark)
+export function vendorLegend(series, vendorOf, dark = true, opts = {}) {
+  const colors = vendorColorMap(series, vendorOf, dark, opts)
   const groups = new Map()
   for (const s of series) {
     const v = vendorOf(s)
