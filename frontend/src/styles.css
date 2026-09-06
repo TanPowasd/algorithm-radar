@@ -219,6 +219,7 @@ body.modal-open { overflow: hidden; }
 .btn.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); }
 .btn.danger:hover { background: color-mix(in srgb, var(--red) 12%, transparent); border-color: var(--red); }
 .btn.small { padding: 4px 10px; font-size: var(--fs-xs); }
+.btn.tiny { padding: 2px 8px; font-size: 11px; line-height: 1.4; border-radius: var(--r-sm); }
 .btn.block { width: 100%; justify-content: center; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn:disabled:hover { border-color: var(--border); box-shadow: none; }
@@ -418,6 +419,7 @@ body.modal-open { overflow: hidden; }
   border: 1px solid transparent; transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
 .series-chip:hover { color: var(--text); border-color: var(--border); background: var(--surface-2); }
+.series-chip.active-hover { color: var(--text); border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
 .series-chip .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 8px color-mix(in srgb, currentColor 40%, transparent); }
 .series-chip.off { opacity: 0.38; text-decoration: line-through; }
 .legend-group { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: var(--sp-2) 0; }
@@ -428,6 +430,13 @@ body.modal-open { overflow: hidden; }
 .legend-vendor .sw { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
 .legend-vendor b { color: var(--text); font-weight: 600; }
 .legend-note { color: var(--muted); font-size: var(--fs-xs); }
+.legend-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px;
+  font-size: var(--fs-xs); color: var(--text-2);
+}
+.legend-toolbar .hint-text {
+  font-size: 11px; color: var(--muted); margin-left: 4px;
+}
 
 /* ---------------- 筛选区 ---------------- */
 .filters { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-3); }

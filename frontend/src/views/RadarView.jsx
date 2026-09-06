@@ -27,6 +27,7 @@ export default function RadarView() {
   const [dim, setDim] = useState(() => (DIMS.some((m) => m.key === url.get('dim', '')) ? url.get('dim') : 'category'))
   const [problem, setProblem] = useState(() => url.get('pid', ''))
   const [visible, setVisible] = useState(null)
+  const [hoveredSeries, setHoveredSeries] = useState(null)
   const [expanded, setExpanded] = useState(false)
   const canvasRef = useRef(null)
   const chartRef = useRef(null)
@@ -36,6 +37,10 @@ export default function RadarView() {
   const approved = useMemo(() => filterByContributor(filterByModels(
     (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
   const series = useMemo(() => seriesList(approved), [approved])
+  const selectAll = useCallback(() => setVisible(new Set(series)), [series])
+  const selectNone = useCallback(() => setVisible(new Set()), [])
+  const selectTop5 = useCallback((n = 5) => setVisible(new Set(series.slice(0, n))), [series])
+  const soloSeries = useCallback((s) => setVisible(new Set([s])), [])
   const colorMap = useMemo(
     () => seriesColorMap(approved, { vendorOf, dark: theme !== 'light' }),
     [approved, vendorOf, theme])
@@ -162,8 +167,14 @@ export default function RadarView() {
         label: problemOptions.find((p) => p.pid === problem)?.title || problem,
         data: entries.map((e) => Number(e.st.value.toFixed(1))),
         borderColor: tc.accent,
+        borderWidth: 2,
         backgroundColor: `${tc.accent}22`,
         pointBackgroundColor: entries.map((e) => colorMap.get(e.s) || tc.accent),
+        pointBorderColor: '#ffffff',
+        pointBorderWidth: 1.5,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+        pointHitRadius: 16,
         spanGaps: false,
         _stats: entries.map((e) => e.st),
         _models: entries.map((e) => e.s),
@@ -171,7 +182,7 @@ export default function RadarView() {
       chartRef.current = makeChart(canvasRef.current, {
         type: 'radar',
         data: { labels: labelsP, datasets },
-        options: radarOptions(metric, tc, labelsP.length),
+        options: radarOptions(metric, tc, labelsP.length, 'problem'),
       })
       return undefined
     }
@@ -183,15 +194,30 @@ export default function RadarView() {
 
     const datasets = shown.map((s) => {
       const stats = statsBySeries.get(s)
+      const isHovered = hoveredSeries === s
+      const hasHover = Boolean(hoveredSeries)
+      const baseColor = colorMap.get(s) || tc.accent
+      const alphaFill = hasHover ? (isHovered ? '35' : '04') : '10'
+
       return {
         label: s,
         data: labels.map((l) => {
           const st = stats.get(l)
           return st ? Number(st.value.toFixed(1)) : null
         }),
-        borderColor: colorMap.get(s),
-        backgroundColor: `${colorMap.get(s)}22`,
-        pointBackgroundColor: colorMap.get(s),
+        borderColor: hasHover && !isHovered ? `${baseColor}30` : baseColor,
+        borderWidth: isHovered ? 3.5 : (hasHover ? 1 : 1.8),
+        backgroundColor: `${baseColor}${alphaFill}`,
+        pointBackgroundColor: hasHover && !isHovered ? `${baseColor}40` : baseColor,
+        pointBorderColor: '#ffffff',
+        pointBorderWidth: isHovered ? 2 : 1.5,
+        pointRadius: isHovered ? 5.5 : (hasHover ? 2.5 : 4),
+        pointHoverRadius: 7,
+        pointHitRadius: 16,
+        pointHoverBackgroundColor: '#ffffff',
+        pointHoverBorderColor: baseColor,
+        pointHoverBorderWidth: 2.5,
+        order: isHovered ? -1 : 1,
         spanGaps: false,
         _stats: labels.map((l) => stats.get(l) || null),
       }
@@ -199,10 +225,30 @@ export default function RadarView() {
     chartRef.current = makeChart(canvasRef.current, {
       type: 'radar',
       data: { labels, datasets },
-      options: radarOptions(metric, tc, labels.length),
+      options: radarOptions(metric, tc, labels.length, dim),
     })
     return undefined
   }, [approved, series, visible, metric, dim, problem, theme, colorMap, stageStyle.width, problemOptions, candidateTags])
+
+  /* 悬停单模高亮：直接以 0ms 动画热更新样式，不触发图表销毁重绘 */
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || dim === 'problem') return
+    const hasHover = Boolean(hoveredSeries)
+    chart.data.datasets.forEach((ds) => {
+      const isHovered = hoveredSeries === ds.label
+      const baseColor = colorMap.get(ds.label) || '#5ad9ff'
+      const alphaFill = hasHover ? (isHovered ? '35' : '04') : '10'
+      ds.borderColor = hasHover && !isHovered ? `${baseColor}30` : baseColor
+      ds.borderWidth = isHovered ? 3.5 : (hasHover ? 1 : 1.8)
+      ds.backgroundColor = `${baseColor}${alphaFill}`
+      ds.pointRadius = isHovered ? 5.5 : (hasHover ? 2.5 : 4)
+      ds.pointBackgroundColor = hasHover && !isHovered ? `${baseColor}40` : baseColor
+      ds.pointBorderWidth = isHovered ? 2 : 1.5
+      ds.order = isHovered ? -1 : 1
+    })
+    chart.update('none')
+  }, [hoveredSeries, colorMap, dim])
 
   useEffect(() => () => { chartRef.current?.destroy() }, [])
 
@@ -267,12 +313,18 @@ export default function RadarView() {
         colorMap={colorMap}
         visible={visible}
         vendorOf={vendorOf}
+        hoveredSeries={hoveredSeries}
         onToggle={(s) => setVisible((v) => {
           const next = new Set(v)
           if (next.has(s)) next.delete(s)
           else next.add(s)
           return next
         })}
+        onHover={setHoveredSeries}
+        onSelectAll={selectAll}
+        onClear={selectNone}
+        onSelectTop={selectTop5}
+        onSolo={soloSeries}
       />
       <div className="chart-wrap radar-box" ref={boxRef}>
         <div className="radar-stage" style={stageStyle}>
@@ -283,24 +335,37 @@ export default function RadarView() {
         {metric === 'avgscore'
           ? '轴值 = 该维度全部有分数轮次的均分（0–100）；未作答的维度空缺不连线。'
           : '轴值 = AC 率（%）；未作答的维度空缺不连线、不按 0% 计。'}
-        {' '}<b>没有任何可见数据的轴已自动隐藏</b>（当前维度共 {candidateCount} 支候选轴），
-        图例点击可显示/隐藏系列；尺寸滑杆与全屏按本机记忆。
+        {' '}<b>没有任何可见数据的轴已自动隐藏</b>（当前维度共 {candidateCount} 支候选轴）。
+        鼠标悬停任意角点可查看<b>各模型得分与作答明细</b>；
+        图例支持<b>全选/清空/前5</b>与<b>悬停高亮单模型</b>（双击可单看）。
       </div>
     </div>
   )
 }
 
-function radarOptions(metric, tc, labelCount) {
+function radarOptions(metric, tc, labelCount, dim) {
   const dense = labelCount > 9
   return {
     animation: { duration: 320 },
+    interaction: {
+      mode: 'index',
+      intersect: false,
+    },
+    onHover: (event, elements, chart) => {
+      if (chart?.canvas) {
+        chart.canvas.style.cursor = elements && elements.length > 0 ? 'pointer' : 'default'
+      }
+    },
     scales: {
       r: {
         min: 0,
         max: 100,
         ticks: {
-          stepSize: 20, color: tc.text, backdropColor: 'transparent',
-          font: { size: 10 }, showLabelBackdrop: false,
+          stepSize: 20,
+          color: tc.text,
+          backdropColor: 'transparent',
+          font: { size: 10 },
+          showLabelBackdrop: false,
           callback: (v) => `${v}${metric === 'avgscore' ? '分' : '%'}`,
         },
         grid: { color: tc.grid },
@@ -314,13 +379,36 @@ function radarOptions(metric, tc, labelCount) {
     plugins: {
       legend: { display: false },
       tooltip: {
+        enabled: true,
+        usePointStyle: true,
+        boxPadding: 4,
+        padding: 10,
+        backgroundColor: 'rgba(15, 23, 42, 0.94)',
+        borderColor: tc.grid || 'rgba(143,162,188,0.25)',
+        borderWidth: 1,
+        titleColor: tc.accent || '#5ad9ff',
+        titleFont: { size: 12, weight: 'bold' },
+        bodyFont: { size: 11, family: '"Chakra Petch", "Microsoft YaHei", sans-serif' },
+        itemSort: (a, b) => (b.raw ?? 0) - (a.raw ?? 0),
+        filter: (item) => item.raw !== null && item.raw !== undefined && !Number.isNaN(item.raw),
         callbacks: {
+          title: (items) => {
+            if (!items.length) return ''
+            const l = items[0].label
+            if (dim === 'problem') return `模型：${l}`
+            const dimName = dim === 'category' ? '算法标签' : dim === 'difficulty' ? '难度' : '维度'
+            return `【${dimName}】${l}`
+          },
           label: (item) => {
-            const st = item.dataset._stats?.[item.dataIndex]
             const val = item.formatted.value
-            if (!st) return `${item.dataset.label}: ${val}`
-            if (metric === 'avgscore') return `${item.dataset.label}: ${val} 分（n=${st.answered}）`
-            return `${item.dataset.label}: ${val}%（${st.passed}/${st.answered}）`
+            if (val === null || val === undefined || item.raw === null) return null
+            const st = item.dataset._stats?.[item.dataIndex]
+            const name = item.dataset.label
+            if (!st) return ` ${name}: ${val}`
+            if (metric === 'avgscore') {
+              return ` ${name}: ${val} 分（作答 ${st.answered} 轮）`
+            }
+            return ` ${name}: ${val}%（通过 ${st.passed}/${st.answered} 题）`
           },
         },
       },
