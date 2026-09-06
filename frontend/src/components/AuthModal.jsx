@@ -95,8 +95,11 @@ export default function AuthModal({ onClose }) {
           </button>
         </div>
         {tab === 'login' && (
-          <div style={{ textAlign: 'center', marginTop: 10, fontSize: 'var(--fs-sm)' }}>
-            还没有账号？<Link to="/register">去注册 →</Link>（注册后需站长审核）
+          <div style={{ textAlign: 'center', marginTop: 12, fontSize: 'var(--fs-sm)' }}>
+            <div>还没有账号？<Link to="/register" onClick={onClose}>去注册 →</Link>（需站长审核）</div>
+            <div style={{ marginTop: 6, fontSize: 'var(--fs-xs)', color: 'var(--text-3)' }}>
+              用户审核 QQ 群：<span style={{ color: 'var(--accent)', userSelect: 'all', fontWeight: 600 }}>1107535292</span>
+            </div>
           </div>
         )}
       </form>

@@ -218,6 +218,8 @@ export default function HomePage() {
           AI vs 洛谷 · 数据仅供参考 · 游客可自由浏览与下载数据
           {' '}·{' '}
           <a href="/api/export/public?format=json">公开数据（JSON）</a>
+          {' '}·{' '}
+          <span>用户审核 QQ 群：<strong style={{ userSelect: 'all', color: 'var(--text)' }}>1107535292</strong></span>
         </footer>
       </main>
 

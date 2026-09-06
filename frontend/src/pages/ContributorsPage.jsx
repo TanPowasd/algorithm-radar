@@ -114,7 +114,7 @@ export default function ContributorsPage() {
           <div className="lb-hint">
             名册按注册时间先后排序（历史导入数据对应的历史账号排在末尾）。贡献数 = 该账号名下已审核的测评记录数；
             待审核记录不计入。点「全站查看」可切换到该贡献者的视角（总览页顶部可退出）。
-            想上榜？<Link to="/register">注册成为贡献者</Link>，提交测评并通过审核即可。
+            想上榜？<Link to="/register">注册成为贡献者</Link>，进审核 QQ 群（<strong>1107535292</strong>）加速审核，提交测评并通过审核即可。
           </div>
         </div>
 

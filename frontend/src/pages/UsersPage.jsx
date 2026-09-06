@@ -182,7 +182,7 @@ export default function UsersPage() {
         <div className="card">
           <div className="card-head">
             <h2>待审核注册</h2>
-            <span className="hint">{pending.length} 个申请</span>
+            <span className="hint">{pending.length} 个申请 · 审核 QQ 群：1107535292</span>
           </div>
           <div className="table-scroll" id="registrations-wrap">
             <table className="data review-table">

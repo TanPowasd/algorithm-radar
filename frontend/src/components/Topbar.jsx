@@ -132,6 +132,10 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
               >
                 {widthMode === 'full' ? '切换为限宽居中' : '切换为全宽铺满'}
               </button>
+              <div className="dropdown-divider" />
+              <div style={{ padding: '6px 12px', fontSize: '11px', color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                用户审核 QQ 群：<strong style={{ color: 'var(--text)', userSelect: 'all' }}>1107535292</strong>
+              </div>
               {hud && <details className="runtime-details"><summary>运行读数</summary><Hud {...hud} /></details>}
             </div>
           )}

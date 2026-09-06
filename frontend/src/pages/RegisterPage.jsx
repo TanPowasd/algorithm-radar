@@ -45,10 +45,44 @@ export default function RegisterPage() {
             注册成为贡献者后即可提交 AI 测评数据。提交后需<strong>站长审核</strong>，批准后才能登录。
           </p>
 
+          <div className="callout" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              👥 <strong>用户审核 QQ 群：1107535292</strong>
+              <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--text-2)', marginTop: 2 }}>
+                注册后请进群联系管理员加速审核并开通测评权限
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={() => {
+                navigator.clipboard?.writeText('1107535292')
+                toast('群号已复制：1107535292')
+              }}
+            >
+              复制群号
+            </button>
+          </div>
+
           {done ? (
-            <div className="callout">
-              ✅ 注册成功！账号当前为「待审核」状态，请等待站长在用户管理中批准后再登录。
-              <div style={{ marginTop: 10 }}><Link className="btn primary block" to="/">回到总览</Link></div>
+            <div className="callout" style={{ borderColor: 'var(--accent)' }}>
+              <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: 6 }}>✅ 注册申请已提交！</div>
+              <p style={{ margin: '4px 0 10px', fontSize: 'var(--fs-sm)', color: 'var(--text)' }}>
+                账号当前处于「待审核」状态。请加入<strong>用户审核 QQ 群：1107535292</strong> 联系站长或管理员审核通过，批准后即可登录提交测评。
+              </p>
+              <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn small primary"
+                  onClick={() => {
+                    navigator.clipboard?.writeText('1107535292')
+                    toast('审核群号已复制：1107535292')
+                  }}
+                >
+                  复制审核群号 (1107535292)
+                </button>
+                <Link className="btn small ghost" to="/">回到总览</Link>
+              </div>
             </div>
           ) : (
             <form onSubmit={submit}>
