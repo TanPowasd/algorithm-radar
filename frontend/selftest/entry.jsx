@@ -57,7 +57,7 @@ globalThis.performance = globalThis.performance || { now: () => Date.now() }
 
 /* ---------- 2. 逻辑口径断言 ---------- */
 const {
-  bestThinkingCell, filterByModels, recordTs, recordLine, fmtDateTime, fmtClock, luoguUrl,
+  axisStats, bestThinkingCell, filterByModels, recordTs, recordLine, fmtDateTime, fmtClock, luoguUrl,
   seriesColorMap, seriesKey, seriesList, matrixCell, roundsAvg, THINKING_LEVELS, isApproved,
 } = await import('../src/aggregate.js')
 const { makeVendorOf, vendorColorMap, levelSwatchStyle } = await import('../src/palette.js')
@@ -149,6 +149,24 @@ check('seriesColorMap 传入 vendorOf 时按厂商上色，不传时保持旧回
   assert.ok(ds.length >= 2)
   const set = new Set(ds.map((k) => a.get(k)))
   assert.equal(set.size, ds.length, '同厂商不同模型颜色不同（明度阶梯）')
+})
+
+check('雷达图轴统计：支持题目多算法标签（数组多轴归属）', () => {
+  const dummyRecs = [
+    { model: 'M1', pid: 'P1', status: 'approved', submissions: [{ score: 100, result: 'AC' }] },
+    { model: 'M1', pid: 'P2', status: 'approved', submissions: [{ score: 0, result: 'WA' }] },
+  ]
+  const tagMap = {
+    P1: ['数学', '树'],
+    P2: ['数学'],
+  }
+  const stats = axisStats(dummyRecs, (r) => tagMap[r.pid], 'final')
+  assert.equal(stats.get('数学').answered, 2)
+  assert.equal(stats.get('数学').passed, 1)
+  assert.equal(stats.get('数学').value, 50)
+  assert.equal(stats.get('树').answered, 1)
+  assert.equal(stats.get('树').passed, 1)
+  assert.equal(stats.get('树').value, 100)
 })
 
 /* 矩阵：最佳思考等级口径 */

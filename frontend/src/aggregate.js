@@ -274,24 +274,28 @@ export function comboAvg(records, series, thinking) {
   return roundsAvg(records.filter((r) => seriesKey(r) === series && r.thinking === thinking))
 }
 
-/** 雷达图轴统计：axisOf(r) 返回该记录所属轴名；metric=first/final 为 AC 率(%)，avgscore 为均分 */
+/** 雷达图轴统计：axisOf(r) 返回该记录所属轴名或轴名数组；metric=first/final 为 AC 率(%)，avgscore 为均分 */
 export function axisStats(records, axisOf, metric) {
   const buckets = new Map()
   for (const r of records) {
-    const axis = axisOf(r)
-    if (axis === null || axis === undefined) continue
-    if (!buckets.has(axis)) buckets.set(axis, { answered: 0, passed: 0, sum: 0, n: 0 })
-    const b = buckets.get(axis)
-    if (metric === 'avgscore') {
-      const scores = roundScores(r)
-      for (const s of scores) {
-        b.sum += s
-        b.n += 1
+    const raw = axisOf(r)
+    if (raw === null || raw === undefined) continue
+    const axes = Array.isArray(raw) ? [...new Set(raw)] : [raw]
+    for (const axis of axes) {
+      if (axis === null || axis === undefined || axis === '') continue
+      if (!buckets.has(axis)) buckets.set(axis, { answered: 0, passed: 0, sum: 0, n: 0 })
+      const b = buckets.get(axis)
+      if (metric === 'avgscore') {
+        const scores = roundScores(r)
+        for (const s of scores) {
+          b.sum += s
+          b.n += 1
+        }
+      } else {
+        b.answered += 1
+        const pass = metric === 'first' ? isFirstPassed(r) : isPassed(r)
+        if (pass) b.passed += 1
       }
-    } else {
-      b.answered += 1
-      const pass = metric === 'first' ? isFirstPassed(r) : isPassed(r)
-      if (pass) b.passed += 1
     }
   }
   const out = new Map()

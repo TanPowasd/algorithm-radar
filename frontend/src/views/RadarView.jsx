@@ -14,7 +14,7 @@ const METRICS = [
   { key: 'avgscore', label: '平均得分' },
 ]
 const DIMS = [
-  { key: 'category', label: '按算法类别' },
+  { key: 'category', label: '按算法标签' },
   { key: 'difficulty', label: '按难度' },
   { key: 'problem', label: '单题对比' },
 ]
@@ -43,6 +43,41 @@ export default function RadarView() {
     const pids = new Set(approved.map((r) => r.pid))
     return Object.values(data.problems || {}).filter((p) => pids.has(p.pid))
   }, [approved, data.problems])
+
+  const candidateTags = useMemo(() => {
+    const tagSet = new Set()
+    for (const p of Object.values(data.problems || {})) {
+      for (const t of (p.tags || [])) {
+        const trimmed = typeof t === 'string' ? t.trim() : String(t || '').trim()
+        if (trimmed) tagSet.add(trimmed)
+      }
+    }
+    for (const r of approved) {
+      const pTags = data.problems?.[r.pid]?.tags
+      if (Array.isArray(pTags) && pTags.length) {
+        for (const t of pTags) {
+          const trimmed = typeof t === 'string' ? t.trim() : String(t || '').trim()
+          if (trimmed) tagSet.add(trimmed)
+        }
+      } else if (Array.isArray(r.categories) && r.categories.length) {
+        for (const t of r.categories) {
+          const trimmed = typeof t === 'string' ? t.trim() : String(t || '').trim()
+          if (trimmed) tagSet.add(trimmed)
+        }
+      }
+    }
+    const list = [...tagSet]
+    const catIndex = (t) => {
+      const idx = CATEGORY_ORDER.indexOf(t)
+      return idx >= 0 ? idx : 9999
+    }
+    return list.sort((a, b) => {
+      const ia = catIndex(a)
+      const ib = catIndex(b)
+      if (ia !== ib) return ia - ib
+      return a.localeCompare(b, 'zh-Hans-CN')
+    })
+  }, [data.problems, approved])
 
   useEffect(() => {
     setVisible(new Set(series))
@@ -83,13 +118,22 @@ export default function RadarView() {
     }
 
     const axisOf = dim === 'category'
-      ? (r) => { const c = (r.categories || []).find((x) => CATEGORY_ORDER.includes(x)); return c || null }
+      ? (r) => {
+          const p = data.problems?.[r.pid]
+          if (p && Array.isArray(p.tags) && p.tags.length > 0) {
+            return p.tags.map((t) => (typeof t === 'string' ? t.trim() : String(t || '').trim())).filter(Boolean)
+          }
+          if (Array.isArray(r.categories) && r.categories.length > 0) {
+            return r.categories.map((t) => (typeof t === 'string' ? t.trim() : String(t || '').trim())).filter(Boolean)
+          }
+          return null
+        }
       : dim === 'difficulty'
         ? (r) => difficultyName(r.difficulty)
         : (r) => (r.pid === problem ? '该题' : null)
 
     let candidates = []
-    if (dim === 'category') candidates = [...CATEGORY_ORDER]
+    if (dim === 'category') candidates = candidateTags.length ? candidateTags : [...CATEGORY_ORDER]
     else if (dim === 'difficulty') candidates = DIFF_LEVELS.map((d) => difficultyName(d))
     else candidates = ['该题']
 
@@ -158,7 +202,7 @@ export default function RadarView() {
       options: radarOptions(metric, tc, labels.length),
     })
     return undefined
-  }, [approved, series, visible, metric, dim, problem, theme, colorMap, stageStyle.width, problemOptions])
+  }, [approved, series, visible, metric, dim, problem, theme, colorMap, stageStyle.width, problemOptions, candidateTags])
 
   useEffect(() => () => { chartRef.current?.destroy() }, [])
 
@@ -173,7 +217,13 @@ export default function RadarView() {
     }
   }, [expanded])
 
-  const hiddenAxes = (dim === 'category' ? CATEGORY_ORDER.length : dim === 'difficulty' ? DIFF_LEVELS.length : 1)
+  const candidateCount = (
+    dim === 'category'
+      ? (candidateTags.length || CATEGORY_ORDER.length)
+      : dim === 'difficulty'
+        ? DIFF_LEVELS.length
+        : 1
+  )
 
   return (
     <div className={`card ${expanded ? 'expanded' : ''}`} id="radar-card">
@@ -233,7 +283,7 @@ export default function RadarView() {
         {metric === 'avgscore'
           ? '轴值 = 该维度全部有分数轮次的均分（0–100）；未作答的维度空缺不连线。'
           : '轴值 = AC 率（%）；未作答的维度空缺不连线、不按 0% 计。'}
-        {' '}<b>没有任何可见数据的轴已自动隐藏</b>（当前维度共 {hiddenAxes} 支候选轴），
+        {' '}<b>没有任何可见数据的轴已自动隐藏</b>（当前维度共 {candidateCount} 支候选轴），
         图例点击可显示/隐藏系列；尺寸滑杆与全屏按本机记忆。
       </div>
     </div>

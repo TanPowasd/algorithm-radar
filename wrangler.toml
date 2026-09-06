@@ -31,18 +31,20 @@ database_id = "709c23c0-9908-40d2-982b-94bcc5e4cfff"
 crons = ["0 21 * * *"]
 
 # 原生限流（跨 isolate 可靠；period 仅支持 10/60 秒，长窗口限流仍由进程内尽力而为叠加）
+# 2026-09-06 小幅放宽：AUTH 10→30/分（登录/注册爆发层）、WRITE 60→200/分（写操作）；
+# 账号级登录失败锁定（5 次锁 15 分钟）与进程内长窗口不受影响
 [[ratelimits]]
 name = "WRITE_LIMIT"
 namespace_id = "1001"
   [ratelimits.simple]
-  limit = 60
+  limit = 200
   period = 60
 
 [[ratelimits]]
 name = "AUTH_LIMIT"
 namespace_id = "1002"
   [ratelimits.simple]
-  limit = 10
+  limit = 30
   period = 60
 
 # 每日数据快照桶（首次部署前需：npx wrangler r2 bucket create ai-vs-luogu-backups）

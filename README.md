@@ -204,7 +204,7 @@ npm --prefix frontend run demo
 
 - PBKDF2-SHA256（100k 迭代）口令哈希（WebCrypto；迭代次数是 Workers CPU 限额与安全的平衡点）。
 - 会话 = HMAC-SHA256 签名令牌存 HttpOnly Cookie（12h，1h 自动续签）；密钥首次启动自动生成存 D1。**会话每次请求回查用户表**：改密（`password_version` 递增）、封禁、降权、删号后旧令牌立即失效；登录用户可在顶栏「账号设置」改昵称/密码。
-- **双层限流**：Cloudflare 原生 ratelimit binding 挡爆发（`WRITE_LIMIT` 60 次/分给写操作与洛谷抓取、`AUTH_LIMIT` 10 次/分给登录/注册/初始化/改密，跨 isolate 可靠）+ 进程内滑动窗口挡长窗（登录 6 次/10 分钟、注册 6 次/小时等，尽力而为）；登录另有 D1 账号级锁定（5 次失败锁 15 分钟）。
+- **双层限流**（2026-09-06 小幅放宽）：Cloudflare 原生 ratelimit binding 挡爆发（`WRITE_LIMIT` 200 次/分给写操作、`AUTH_LIMIT` 30 次/分给登录/注册/初始化/改密，跨 isolate 可靠）+ 进程内滑动窗口挡长窗（登录 20 次/10 分钟、注册 20 次/小时等，尽力而为）；登录另有 D1 账号级锁定（5 次失败锁 15 分钟，未放宽）。
 - CSRF 双提交（`radar_csrf` Cookie + `X-CSRF-Token` 头）；洛谷抓取：目标 host 编译期白名单（www.luogu.com.cn）+ 仅 https + 题号正则白名单 + 302 location 同样校验。
 - 请求体限额：导入 16MB / 测评记录 2MB / 其他 64KB；所有写入经白名单清洗（长度/枚举/正则）。
 - 待审核记录对游客与贡献者不可见；游客导出只含已审核数据。

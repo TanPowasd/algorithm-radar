@@ -226,9 +226,9 @@ const routes: Route[] = [
 
     { method: "POST", path: "/api/login", role: null, handler: async (ctx) => {
         const ip = clientIp(ctx.req);
-        // 原生 binding 挡 60 秒爆发，进程内 6 次/10 分钟挡长窗（配合 D1 账号级锁定）
-        if (!(await burstLimit(ctx.env, ctx.env.AUTH_LIMIT, "login:" + ip, 10))
-            || !tryAcquire("login:" + ip, 6, 600_000)) {
+        // 原生 binding 挡 60 秒爆发，进程内 20 次/10 分钟挡长窗（爆破由账号级 5 次失败锁 15 分钟兜底）
+        if (!(await burstLimit(ctx.env, ctx.env.AUTH_LIMIT, "login:" + ip, 30))
+            || !tryAcquire("login:" + ip, 20, 600_000)) {
             throw tooMany("登录尝试过于频繁，请 10 分钟后再试");
         }
         const user = await authenticate(ctx.env.DB, str(ctx.body?.username), str(ctx.body?.password));
@@ -263,8 +263,9 @@ const routes: Route[] = [
 
     { method: "POST", path: "/api/auth/register", role: null, handler: async (ctx) => {
         const ip = clientIp(ctx.req);
-        if (!(await burstLimit(ctx.env, ctx.env.AUTH_LIMIT, "register:" + ip, 10))
-            || !tryAcquire("register:" + ip, 6, 3_600_000)) {
+        // 2026-09-06 放宽：IP 级 20 次/小时（原 6 次）；注册垃圾仍由站长审核环节兜底
+        if (!(await burstLimit(ctx.env, ctx.env.AUTH_LIMIT, "register:" + ip, 30))
+            || !tryAcquire("register:" + ip, 20, 3_600_000)) {
             throw tooMany("注册尝试过于频繁，请稍后再试");
         }
         await registerUser(ctx.env.DB, str(ctx.body?.username), str(ctx.body?.nickname), str(ctx.body?.password));
@@ -292,7 +293,7 @@ const routes: Route[] = [
     } },
 
     { method: "POST", path: "/api/records", role: "contributor", handler: async (ctx) => {
-        if (!(await burstLimit(ctx.env, ctx.env.WRITE_LIMIT, "write:" + clientIp(ctx.req), 60))) {
+        if (!(await burstLimit(ctx.env, ctx.env.WRITE_LIMIT, "write:" + clientIp(ctx.req), 200))) {
             throw tooMany("操作过于频繁，请稍后再试");
         }
         const user = requireRole(ctx, "contributor");
