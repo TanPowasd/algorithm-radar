@@ -504,6 +504,17 @@ check('渲染抽屉：无专属提示词时也展示标准模板（v3.11）', ()
   assert.ok(html.includes('{模型id}'), '抽屉无模型上下文时应保留占位符')
 })
 
+check('题面补全：编辑模式可重抓 + 管理台批量补全端点（静态源码契约）', () => {
+  const srcAt = (rel) => readFileSync(new URL(`../src/${rel}`, import.meta.url), 'utf8')
+  const modal = srcAt('components/PublishModal.jsx')
+  assert.ok(!/disabled=\{busy \|\| isEdit\}/.test(modal), '编辑模式不得再禁用抓取按钮（旧题无法补全题面）')
+  assert.ok(modal.includes('重新抓取'), '编辑模式抓取按钮应改叫「重新抓取」')
+  const router = readFileSync(new URL('../../worker/router.ts', import.meta.url), 'utf8')
+  assert.ok(router.includes('/api/admin/backfill-content'), '缺批量补全题面端点')
+  const admin = srcAt('pages/AdminPage.jsx')
+  assert.ok(admin.includes("api('/api/admin/backfill-content'"), '管理台缺补全题面入口')
+})
+
 check('渲染后台/注册/贡献者页（全站统一不崩）', () => {
   for (const path of ['/admin', '/users', '/register', '/contributors']) {
     const html = renderAt(path)

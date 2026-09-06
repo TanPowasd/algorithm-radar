@@ -127,7 +127,9 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
           <div style={{ display: 'flex', gap: 8 }}>
             <input value={form.pid} disabled={isEdit}
               onChange={(e) => set({ pid: e.target.value.toUpperCase() })} placeholder="P1001 / B2001 / CF10A" />
-            <button type="button" className="btn" id="pub-fetch" onClick={doFetch} disabled={busy || isEdit}>抓取</button>
+            <button type="button" className="btn" id="pub-fetch" onClick={doFetch} disabled={busy}>
+              {isEdit ? '重新抓取' : '抓取'}
+            </button>
           </div>
         </div>
         {fetchState && <div className={`fetch-status ${fetchState.kind}`} id="fetch-status">{fetchState.text}</div>}

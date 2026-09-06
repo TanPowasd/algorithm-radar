@@ -387,6 +387,23 @@ export default function AdminPage() {
     setPublishOpen(true)
   }
 
+  /** 批量补全题面（v3.11）：为缺题面/限制的旧题目重新抓洛谷，每次最多 20 题，可续跑 */
+  const backfillContent = async () => {
+    try {
+      const r = await api('/api/admin/backfill-content', { method: 'POST' })
+      if (r.remaining > 0) {
+        toast(`已补全 ${r.updated} 题，剩余 ${r.remaining} 题待补（再点一次继续）`)
+      } else if (r.updated > 0) {
+        toast(`已补全 ${r.updated} 题，全部题目题面齐全`)
+      } else {
+        toast('所有题目的题面/限制均已齐全')
+      }
+      if (r.updated) await refreshAll()
+    } catch (e) {
+      toast(e.message, 'err')
+    }
+  }
+
   const collectModel = async (name) => {
     try {
       await api('/api/models', { method: 'POST', body: { name, vendor: '', note: '' } })
@@ -531,6 +548,10 @@ export default function AdminPage() {
           <div className="card-head">
             <h2>题目管理</h2>
             <div className="card-tools">
+              <button className="btn small ghost" id="backfill-content" onClick={backfillContent}
+                title="为缺少题面/限制的旧题目批量重新抓取洛谷（每次最多 20 题，可重复点击续跑）">
+                ⤓ 补全题面
+              </button>
               <button className="btn small primary" onClick={() => { setEditProblem(null); setCollectPid(''); setPublishOpen(true) }}>+ 发布新题</button>
             </div>
           </div>

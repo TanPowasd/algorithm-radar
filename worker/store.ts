@@ -13,6 +13,7 @@ import {
     STATUSES, nowIso, sanitizeProblem, sanitizeRecord, badRequest, notFound, text,
     nameList, intOrNull, forbidden,
 } from "./util";
+import { fetchLuoguProblem } from "./luogu";
 
 export interface Snapshot {
     revision: number;
@@ -418,8 +419,37 @@ export async function updateProblem(db: D1Database, pid: string, info: any): Pro
     return merged;
 }
 
-// ---------------------------------------------------------------- AI 模型目录（收录制下即“已收录模型”）
+/** 批量补全题面（v3.11）：为缺失题面/限制的已发布题目重新抓取洛谷。
+ *  每次最多 limit 题（Workers 请求时长 + 洛谷风控双约束），失败的题号原样返回、
+ *  计入 remaining，管理员再次点击即可续跑。只补 content/限制/附件标记，不碰管理员改过的标题/标签。 */
+export async function backfillProblemContent(
+    db: D1Database,
+    limit = 20,
+): Promise<{ updated: number; remaining: number; failed: string[] }> {
+    const { results } = await db.prepare(
+        "SELECT pid FROM problems WHERE content = '' OR time_limit IS NULL OR memory_limit IS NULL ORDER BY pid",
+    ).all<{ pid: string }>();
+    const missing = results || [];
+    if (!missing.length) return { updated: 0, remaining: 0, failed: [] };
+    const targets = missing.slice(0, limit);
+    const failed: string[] = [];
+    let updated = 0;
+    for (const { pid } of targets) {
+        try {
+            const f = await fetchLuoguProblem(pid);
+            await db.prepare(
+                "UPDATE problems SET content = ?2, time_limit = ?3, memory_limit = ?4, has_attachments = ?5, fetched_at = ?6 WHERE pid = ?1",
+            ).bind(pid, f.content, f.timeLimit, f.memoryLimit, f.hasAttachments ? 1 : 0, f.fetchedAt).run();
+            updated += 1;
+        } catch {
+            failed.push(pid);
+        }
+    }
+    if (updated) await db.batch(bumpMetaStmts(db));
+    return { updated, remaining: missing.length - targets.length + failed.length, failed };
+}
 
+// ---------------------------------------------------------------- AI 模型目录（收录制下即“已收录模型”）
 export interface ModelView { id: number; name: string; vendor: string; note: string; createdAt: string }
 
 export async function listModels(db: D1Database): Promise<ModelView[]> {

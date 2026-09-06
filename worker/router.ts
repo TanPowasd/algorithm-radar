@@ -583,6 +583,17 @@ const routes: Route[] = [
         return { ok: true, ...r };
     } },
 
+    /** 批量补全题面（仅管理员）：为缺失题面/限制的旧题目重新抓取洛谷，每次最多 20 题；写审计 */
+    { method: "POST", path: "/api/admin/backfill-content", role: "admin", handler: async (ctx) => {
+        const actor = requireRole(ctx, "admin");
+        if (!(await burstLimit(ctx.env, ctx.env.WRITE_LIMIT, "write:" + clientIp(ctx.req), 60))) {
+            throw tooMany("操作过于频繁，请稍后再试");
+        }
+        const r = await store.backfillProblemContent(ctx.env.DB, 20);
+        await store.logAudit(ctx.env.DB, actor, "problem.backfill", `补全题面 ${r.updated} 题（剩余 ${r.remaining}）`);
+        return { ok: true, ...r };
+    } },
+
     { method: "GET", path: "/api/export/public", role: null, handler: async (ctx) => {
         const snap = await store.snapshot(ctx.env.DB, null, false);
         const format = ctx.url.searchParams.get("format") || "json";
