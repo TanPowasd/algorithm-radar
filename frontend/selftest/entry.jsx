@@ -474,6 +474,10 @@ check('附件提醒弹窗：复制口统一走 PromptCopyButton（静态源码�
   assert.ok(btn.includes('hasAttachments') && btn.includes('setShowNotice(true)'), '附件题复制后必须触发提醒')
   assert.ok(btn.includes('luoguUrl') && btn.includes('noopener noreferrer'), '提醒窗应给洛谷原题外链（新标签+noopener）')
   assert.ok(/useDialog\(/.test(btn), '提醒弹窗未接入焦点管理')
+  // 复制时选择模型：无模型上下文的复制口先弹选择窗再注入 {模型id}；上次选择要记住
+  assert.ok(btn.includes('选择本次测试的模型'), '缺复制前选模型小窗')
+  assert.ok(btn.includes('radar.prompt.lastModel'), '上次选择的模型应持久化（下次预选）')
+  assert.ok(btn.includes('!modelId'), '带模型上下文时应跳过选择窗直接复制')
   // 四处提示词复制口都必须走 PromptCopyButton，不能再裸用 CopyButton 复制题目提示词
   const spots = ['components/ProblemDrawer.jsx', 'components/RecordFormModal.jsx', 'pages/AdminPage.jsx', 'pages/PromptsPage.jsx']
   for (const f of spots) {

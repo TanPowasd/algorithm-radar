@@ -76,7 +76,9 @@
   也可用「填入标准模板」把拼装结果填进 `prompt` 再手改。提示词展示在**题目详情抽屉 / 提交测评表单 / 审核台题目表 /
   提示词库页**四处，均带统一复制按钮；提交表单内按当前所选模型注入文件夹名，其余复制口保留 `{模型id}` 占位符。
   **附件题**：发布时可勾选「该题在洛谷存在题目附件」（抓取时自动预判），任何复制口复制成功后都会弹窗提醒
-  前往洛谷下载附件并放入工作区。
+  前往洛谷下载附件并放入工作区。**复制时选模型**：无模型上下文的复制口点击后先弹「选择本次测试的模型」
+  小窗（下拉=已收录模型，可留空保留 `{模型id}` 占位符），选中后自动填入文件夹名再复制；上次选择记忆在
+  `radar.prompt.lastModel` 下次预选；提交表单内已选模型则直接复制不再弹窗。
 - **题目信息单一来源**：提交/编辑测评时，**题名与难度由「题目目录」带入并锁死**（虚线只读框 + 🔒 提示），
   提交者与管理员都不能在测评表单里改——要更正请到「题目管理 → 编辑」。算法类别同样在切换题目时按目录重置
   （仍可在其后追加/删除）。仅当目录里确实没有难度（如新抓取的题）时才允许手动选择难度，并提示补全目录。
@@ -292,7 +294,8 @@ npm --prefix frontend run selftest:fixture # 从根目录最新导出快照重�
 - **本地存储键**（改名即破坏兼容，勿随意变更）：`radar.cache.v3` · `radar.theme` · `radar.focusModels` ·
   `radar.focusContributor`（贡献者视角）·
   `radar.widthMode` · `radar.bar.minSamples` · `radar.radarSize` · `radar.bar.excludedPids` · `radar.notice.dismissedDay` ·
-  `radar.records.collapsed`（明细表折叠态，默认折叠）· `radar.filter.collapsed`（模型筛选条折叠态）。
+  `radar.records.collapsed`（明细表折叠态，默认折叠）· `radar.filter.collapsed`（模型筛选条折叠态）·
+  `radar.prompt.lastModel`（复制提示词时上次选的模型，下次预选）。
 - **字体**：Chakra Petch（标题）+ JetBrains Mono（正文）经 `@fontsource` 自托管打进 `dist/assets`，
   满足 CSP 的 `font-src 'self'`，不外链任何第三方资源。
 
