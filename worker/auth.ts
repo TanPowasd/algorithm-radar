@@ -98,18 +98,31 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 // ---------------------------------------------------------------- 会话令牌
 
+/** session_secret 在库建好后不再变化，但旧实现每个请求都要读一次 D1（会话验证 = 2 次读）。
+ *  isolate 内缓存 5 分钟：既省掉一次往返，又保留"密钥被换掉后最终一致"的收敛窗口。 */
+const SECRET_TTL_MS = 5 * 60_000;
+let secretCache: { bytes: Uint8Array; at: number } | null = null;
+
 async function sessionSecret(db: D1Database): Promise<Uint8Array> {
+    if (secretCache && Date.now() - secretCache.at < SECRET_TTL_MS) return secretCache.bytes;
     const row = await db.prepare("SELECT value FROM meta WHERE key = 'session_secret'").first<{ value: string }>();
     if (row?.value) {
         const hex = row.value;
         const out = new Uint8Array(hex.length / 2);
         for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+        secretCache = { bytes: out, at: Date.now() };
         return out;
     }
     const secret = crypto.getRandomValues(new Uint8Array(32));
     await db.prepare("INSERT OR IGNORE INTO meta(key, value) VALUES ('session_secret', ?)")
         .bind(toHex(secret)).run();
+    secretCache = { bytes: secret, at: Date.now() };
     return secret;
+}
+
+/** 密钥轮换/测试用：清掉 isolate 内的缓存 */
+export function resetSecretCache(): void {
+    secretCache = null;
 }
 
 export async function createToken(db: D1Database, user: AuthUser): Promise<string> {

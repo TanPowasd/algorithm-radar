@@ -14,6 +14,18 @@
 > 10/分，跨 isolate 可靠，长窗口限流仍由进程内叠加）；**`/api/data` ETag/304**（revision 单调递增做校验器，
 > 无变更刷新零正文传输；ETag 按游客/管理员口径区分）；前端新增 **「洞察」视图**（模型稳定性 / 题目区分度 /
 > 思考等级收益三张口径表）；`npm run e2e` 权限矩阵端到端自检（57 项，隔离临时环境）。
+> v3.12 · 2026-09-08：**后端修复轮**（详见 [docs/BACKEND_REVIEW.md](docs/BACKEND_REVIEW.md)）——
+> ①**批量写入改造**：导入不再「一条记录一条语句 / 逐条 SELECT」，改走 `INSERT … SELECT … FROM json_each(?1)`
+> 分块执行（D1 每次调用查询数 50 免费/1000 付费、batch 受 30 秒限制，旧实现在 45 条记录就会失败）；
+> 批量审核改 `IN(…)` 分块。②**缓存校验器分代**：`meta.cache_epoch` + `"<epoch>:<revision>"` ETag，
+> 清空目录/覆盖导入不再可能让客户端 304 命中陈旧正文；`/api/data` **先读 meta 判定 304**，命中时完全不扫全库。
+> ③**限流补全**：所有非安全方法统一过 `WRITE_LIMIT`（登录态按 uid 计），binding 异常从静默放行改为退回进程内窗口，
+> 计数表淘汰不再被随机 IP 清空。④**写入语义修正**：题目布尔标记三态合并（`hasAttachments` 可取消）、
+> 贡献者提交的题名/难度由服务端按目录强制覆盖、记录归属只认 `author_id`（同名重注册不能认领他人记录）、
+> `PUT /api/records/:id` 支持 `baseUpdatedAt` 乐观并发（冲突 409）。⑤**运维性**：`ensureSchema` 版本门控
+> （冷启动 D1 语句 ~25 → 1）、`session_secret` isolate 缓存、R2 过期快照批量删、洛谷抓取 6 小时 TTL + single-flight、
+> 审计补齐（发布/编辑题目、收录/改名模型、按模型清记录、回收站恢复）、400/405/413/404 边界与 `X-Request-Id`。
+> `e2e` 自检 57 → **91 项**（新增导入往返与分片、CSRF/方法边界、乐观并发、目录权威、清库后 ETag 分代、导入丢弃数等）。
 > v3.11 · 2026-09：**推荐提示词模板重做**——标准模板从固定文案改为**现场拼装**：
 > ①工作区隔离指令（建立 `{模型id}_{题号}` 文件夹、禁联网/禁搜索抓取/禁读附件外文件/禁背题）；
 > ②嵌入**题面 markdown**（发布时从洛谷抓取 `content` 各节拼接，可编辑，上限 100KB）；
@@ -204,7 +216,7 @@ npm --prefix frontend run demo
 
 - PBKDF2-SHA256（100k 迭代）口令哈希（WebCrypto；迭代次数是 Workers CPU 限额与安全的平衡点）。
 - 会话 = HMAC-SHA256 签名令牌存 HttpOnly Cookie（12h，1h 自动续签）；密钥首次启动自动生成存 D1。**会话每次请求回查用户表**：改密（`password_version` 递增）、封禁、降权、删号后旧令牌立即失效；登录用户可在顶栏「账号设置」改昵称/密码。
-- **双层限流**（2026-09-06 小幅放宽）：Cloudflare 原生 ratelimit binding 挡爆发（`WRITE_LIMIT` 200 次/分给写操作、`AUTH_LIMIT` 30 次/分给登录/注册/初始化/改密，跨 isolate 可靠）+ 进程内滑动窗口挡长窗（登录 20 次/10 分钟、注册 20 次/小时等，尽力而为）；登录另有 D1 账号级锁定（5 次失败锁 15 分钟，未放宽）。
+- **双层限流**（v3.12 起覆盖全部写操作）：Cloudflare 原生 ratelimit binding 挡爆发（`WRITE_LIMIT` 200 次/分——**所有非安全方法统一过这道闸**，登录态按 uid 计、游客按 IP，不再是"每个端点各自一份配额"；`AUTH_LIMIT` 30 次/分给登录/注册/初始化/改密）+ 进程内滑动窗口挡长窗（登录 20 次/10 分钟、注册 20 次/小时等）；binding 异常时**退回进程内窗口并告警**（不静默放行）。登录另有 D1 账号级锁定（5 次失败锁 15 分钟）。
 - CSRF 双提交（`radar_csrf` Cookie + `X-CSRF-Token` 头）；洛谷抓取：目标 host 编译期白名单（www.luogu.com.cn）+ 仅 https + 题号正则白名单 + 302 location 同样校验。
 - 请求体限额：导入 16MB / 测评记录 2MB / 其他 64KB；所有写入经白名单清洗（长度/枚举/正则）。
 - 待审核记录对游客与贡献者不可见；游客导出只含已审核数据。
@@ -218,7 +230,14 @@ npm --prefix frontend run demo
 管理员：`PUT/DELETE /api/records/{id}`（DELETE=软删除入回收站） `POST /api/records/{id}/status` `POST /api/records/bulk`（reject=入回收站） `POST /api/problems`（发布） `PUT /api/problems/{pid}`（编辑） `DELETE /api/problems/{pid}` `POST/PUT/DELETE /api/models*` `GET /api/luogu?pid=` `GET /api/hidden-records` `GET /api/hidden-records/detail` `POST /api/admin/purge-records`（隐藏记录入回收站） `GET /api/trash` `POST /api/trash/restore|purge|empty` `GET /api/export`（全量含 models） `POST /api/import` `DELETE /api/admin/users/{id}`（删账号：管理员删已激活贡献者，站长可删任意非站长） `GET /api/admin/audit`（操作审计，最近 100 条）
 站长：`GET /api/admin/users`（管理员调用时仅返回已激活贡献者） `POST /api/admin/users/{id}/approve|reject|role` `POST /api/catalog/reset` `POST /api/admin/snapshot`（手动数据快照到 R2）
 
-公开数据接口 `GET /api/data` 带 **ETag/304**：revision 单调递增作强校验器，浏览器自动协商缓存——数据没变的刷新零正文传输；ETag 按查看者口径区分（游客 `-g` / 管理员 `-a`，可见集合不同），登录/登出切换不会拿到对方口径的陈旧缓存。
+公开数据接口 `GET /api/data` 带 **ETag/304**：校验器 = `"<cache_epoch>:<revision>-角色"`。revision 单调递增做强校验器，
+浏览器自动协商缓存——数据没变的刷新零正文传输；**命中 `If-None-Match` 时服务端只读一次 `meta` 就回 304，完全不扫 records/problems**。
+`cache_epoch` 只在清空目录 / 覆盖导入这类破坏性操作时更换，避免"revision 归零撞上旧 ETag → 304 回陈旧正文"。
+ETag 按查看者口径区分（游客 `-g` / 管理员 `-a`，可见集合不同），登录/登出切换不会拿到对方口径的陈旧缓存。
+
+写接口错误码：路径存在但方法不对 → **405**；路径参数含非法转义 → **400**；请求体超限（按字节判定）→ **413**；
+删除不存在的记录 → **404**；`PUT /api/records/:id` 带 `baseUpdatedAt` 且与库内不符 → **409**（乐观并发；不带该字段的旧客户端行为不变）。
+响应统一带 `X-Request-Id`（取 `CF-Ray`），500 时可据此在日志里定位。
 
 ## 七、数据模型（records 表核心字段）
 
@@ -231,14 +250,19 @@ npm --prefix frontend run demo
 ## 八、日常开发
 
 ```bash
-./node_modules/.bin/tsc --noEmit          # worker TS 类型检查
+npm run typecheck                         # worker TS 类型检查（= ./node_modules/.bin/tsc --noEmit）
 npm --prefix frontend run build           # 前端构建（wrangler dev 直接读 dist）
 npm --prefix frontend run lint            # oxlint
 npm --prefix frontend run selftest        # 口径断言 + 真实渲染冒烟（Node 内跑，67 项）
 npm --prefix frontend run check-classes   # JSX 类名 vs styles.css 契约检查（防漏样式）
-npm run e2e                               # 构建 + 权限矩阵/ETag/快照端到端自检（57 项，隔离临时环境）
+npm run e2e                               # 构建 + 后端端到端自检（91 项，隔离临时环境）
 npm --prefix frontend run selftest:fixture # 从根目录最新导出快照重裁自检样本
 ```
+
+`e2e` 覆盖：权限矩阵（游客/贡献者/管理员/站长 × 全部端点）、SPA 深链接、**导入往返**（replace 1000 条、大体积记录按字节分片、丢弃数回显、
+merge 的「较新者胜」「回收站找回」、未收录不可见）、回收站删除/恢复、ETag/304 与**清库后校验器分代**、
+题目信息服务端权威、`hasAttachments` 三态合并、乐观并发 409、归属只认 `author_id`、
+CSRF 缺失 403 / 方法不匹配 405 / 非法转义 400、手动快照与权限、审计留痕完整性。
 
 `selftest` 不依赖浏览器：把 `App` 连同 `AppProvider` 在 Node 里 `renderToString`，
 用 `localStorage` 垫片喂入固定样本，逐视图断言 DOM 里确实出现了「最佳等级/最佳分数」口径、

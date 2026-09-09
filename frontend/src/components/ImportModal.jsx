@@ -40,7 +40,13 @@ export default function ImportModal({ onClose }) {
     setError('')
     try {
       const res = await api('/api/import', { method: 'POST', body: { mode, data: bundle } })
-      toast(`导入完成：合并/写入 ${res.imported} 条记录`)
+      const lost = (res.invalid || 0) + (res.duplicate || 0)
+      toast(
+        lost
+          ? `导入 ${res.imported} 条；${res.invalid || 0} 条字段超限/不合法被丢弃，${res.duplicate || 0} 条 id 重复已跳过`
+          : `导入完成：写入 ${res.imported} 条记录（${res.statements || 1} 条批量语句）`,
+        lost ? 'err' : 'ok',
+      )
       await refreshAll()
       onClose()
     } catch (err) {

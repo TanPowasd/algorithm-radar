@@ -88,9 +88,17 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_records_pid    ON records(pid);
 CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
 CREATE INDEX IF NOT EXISTS idx_records_model  ON records(model);
+-- 收录制热查询覆盖索引：id 必须显式入列——records.id 是 TEXT 主键（不是 rowid），
+-- 不会自动出现在二级索引里，缺它 ORDER BY created_at, id 仍要建临时 B-tree
+CREATE INDEX IF NOT EXISTS idx_records_visible ON records(deleted_at, status, created_at, id, pid, model);
+-- 贡献者名册聚合（GROUP BY author）
+CREATE INDEX IF NOT EXISTS idx_records_author  ON records(author, status, deleted_at);
 CREATE INDEX IF NOT EXISTS idx_login_guard_until ON login_guard(locked_until);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(id);
 
--- revision 单调递增（乐观并发）；data_version 对齐旧 data.json 的版本号
+-- revision 单调递增（缓存校验器的一部分）；cache_epoch 在清库/覆盖导入时更换，两者一起构成 ETag 校验器
+-- ⚠️ 不要在这里写 schema_version：它由 worker/ensureSchema.ts 在「建表 + 增量 ALTER 探测」成功后写入。
+--    若把它写进本文件，对**缺列的旧库**执行此文件会把版本标成最新，导致 ensureSchema 跳过补列 → 运行期报"无此列"。
 INSERT OR IGNORE INTO meta(key, value) VALUES ('revision', '0');
+INSERT OR IGNORE INTO meta(key, value) VALUES ('cache_epoch', '0');
 INSERT OR IGNORE INTO meta(key, value) VALUES ('data_version', '3');

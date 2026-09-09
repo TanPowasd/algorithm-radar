@@ -12,7 +12,7 @@ import { ApiError, DIFFICULTY_NAMES, forbidden, tooMany, unauthorized } from "./
 import * as store from "./store";
 import { fetchLuoguProblem } from "./luogu";
 import { ensureSchema } from "./ensureSchema";
-import { runSnapshot } from "./snapshot";
+import { cleanupExpired, runSnapshot } from "./snapshot";
 export interface Env {
     DB: D1Database;
     /** 静态资产绑定：非 /api 请求由入口转交（SPA 回退由 assets.not_found_handling 处理） */
@@ -40,6 +40,8 @@ interface RouteCtx {
     csrf: string;
     /** 是否为 HTTPS（决定 Cookie 是否带 Secure；本地 http://127.0.0.1 开发环境不带） */
     secure: boolean;
+    /** 请求结束后仍可执行的工作（审计写、R2 清理等）；本地/测试环境退化为内联 await */
+    defer: (task: Promise<unknown>) => void;
 }
 
 type Json = Record<string, unknown> | Array<unknown>;
@@ -53,40 +55,86 @@ interface Route {
     handler: (ctx: RouteCtx) => Promise<Json | Response> | Json | Response;
 }
 
-// ---------------------------------------------------------------- 限流（进程内滑动窗口，尽力而为）
+// ---------------------------------------------------------------- 限流
 
+/** 进程内滑动窗口：只挡长窗（尽力而为，跨 isolate 靠原生 binding）。
+ *  旧实现 `buckets.size > 10000 → buckets.clear()` 会被攻击者用随机 IP 撑满后**清空所有人的计数**，
+ *  等价于把限流关掉；现在改成按窗口过期清扫最旧的键。 */
 const buckets = new Map<string, number[]>();
+const BUCKETS_MAX = 10_000;
 
 function tryAcquire(key: string, limit: number, windowMs: number): boolean {
     const now = Date.now();
     const hits = (buckets.get(key) || []).filter((t) => now - t < windowMs);
     if (hits.length >= limit) {
         buckets.set(key, hits);
-        if (buckets.size > 10000) buckets.clear();
+        pruneBuckets(now);
         return false;
     }
     hits.push(now);
     buckets.set(key, hits);
+    pruneBuckets(now);
     return true;
+}
+
+/** 清掉整个窗口都已过期的键（按插入顺序 = 最旧先淘汰，不会误伤活跃键） */
+function pruneBuckets(now: number): void {
+    if (buckets.size <= BUCKETS_MAX) return;
+    const overflow = buckets.size - BUCKETS_MAX;
+    let removed = 0;
+    for (const [k, hits] of buckets) {
+        if (removed >= overflow) break;
+        const newest = hits[hits.length - 1];
+        if (newest === undefined || now - newest >= 3_600_000) {
+            buckets.delete(k);
+            removed += 1;
+        }
+    }
+    // 仍然超量（全是活跃键）时不再处理：宁可占内存也不给攻击者重置计数的机会
 }
 
 function clientIp(req: Request): string {
     return req.headers.get("CF-Connecting-IP") || "local";
 }
 
-/** 原生限流优先（跨 isolate 可靠）；无绑定或服务异常时回退进程内 60 秒窗口（尽力而为） */
-async function burstLimit(env: Env, binding: RateLimit | undefined, key: string, fallbackLimit: number): Promise<boolean> {
+/** 限流键：登录用户按 uid（同 NAT 出口不再互相误伤），游客按 IP */
+function principalKey(req: Request, user: AuthUser | null): string {
+    return user ? `u${user.uid}` : `ip${clientIp(req)}`;
+}
+
+/** 原生限流优先（跨 isolate 可靠）；binding 异常时**退回进程内窗口**（旧实现是 return true 静默放行） */
+async function burstLimit(
+    env: Env,
+    binding: RateLimit | undefined,
+    key: string,
+    fallbackLimit: number,
+    fallbackWindowMs = 60_000,
+): Promise<boolean> {
     if (binding) {
         try {
             return (await binding.limit({ key })).success;
-        } catch {
-            return true;
+        } catch (e) {
+            console.warn("[ratelimit] binding 异常，退回进程内窗口：", e instanceof Error ? e.message : e);
+            return tryAcquire(key, fallbackLimit, fallbackWindowMs);
         }
     }
-    return tryAcquire(key, fallbackLimit, 60_000);
+    return tryAcquire(key, fallbackLimit, fallbackWindowMs);
 }
 
 // ---------------------------------------------------------------- 工具
+
+/** 这些端点在 handler 内已有更严的 AUTH_LIMIT 长窗，不再叠加通用写限流 */
+const AUTH_SCOPED_PATHS = new Set(["/api/setup", "/api/login", "/api/auth/register", "/api/change-password"]);
+
+/** 统一写限流：任何非安全方法都过一遍 WRITE_LIMIT（旧实现只有 3 个写端点接了限流，
+ *  PUT /api/records/:id、发布题目、/api/import、回收站等全部裸奔）。
+ *  键 = 单个主体的全部写操作合计（登录态按 uid，游客按 IP），避免"每个端点各自 200/分"被绕成 N×200。 */
+async function requireWriteBudget(ctx: RouteCtx): Promise<void> {
+    if (AUTH_SCOPED_PATHS.has(ctx.url.pathname)) return;
+    if (!(await burstLimit(ctx.env, ctx.env.WRITE_LIMIT, `w:${principalKey(ctx.req, ctx.user)}`, 200))) {
+        throw tooMany("操作过于频繁，请稍后再试");
+    }
+}
 
 function isLocalHost(url: URL): boolean {
     return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
@@ -111,6 +159,15 @@ function str(value: unknown): string {
     return value === undefined || value === null ? "" : String(value);
 }
 
+/** 路径段解码：非法转义（`%E0%A4%A`）应判 400，而不是抛 URIError 冒泡成 500 */
+function decodeSegment(raw: string): string {
+    try {
+        return decodeURIComponent(raw);
+    } catch {
+        throw new ApiError(400, "请求路径包含非法转义字符");
+    }
+}
+
 function matchRoute(pattern: string, pathname: string): Record<string, string> | null {
     const pp = pattern.split("/").filter(Boolean);
     const up = pathname.split("/").filter(Boolean);
@@ -119,12 +176,26 @@ function matchRoute(pattern: string, pathname: string): Record<string, string> |
     for (let i = 0; i < pp.length; i++) {
         const seg = pp[i];
         if (seg.startsWith(":")) {
-            params[seg.slice(1)] = decodeURIComponent(up[i]);
+            params[seg.slice(1)] = decodeSegment(up[i]);
         } else if (seg !== up[i]) {
             return null;
         }
     }
     return params;
+}
+
+/** 路由匹配结果：null = 404；"method-mismatch" = 路径存在但方法不对（405） */
+export type MatchResult = { r: Route; params: Record<string, string> } | "method-mismatch" | null;
+
+export function matchRoutes(method: string, pathname: string): MatchResult {
+    let pathExists = false;
+    for (const r of routes) {
+        const params = matchRoute(r.path, pathname);
+        if (params === null) continue;
+        pathExists = true;
+        if (r.method === method) return { r, params };
+    }
+    return pathExists ? "method-mismatch" : null;
 }
 
 async function currentRevision(db: D1Database): Promise<number> {
@@ -272,12 +343,18 @@ const routes: Route[] = [
         return { ok: true, message: "注册成功，请等待站长审核" };
     } },
 
-    /** 数据快照（ETag/304）：revision 单调递增，浏览器无变更刷新只回 304（零正文传输）。
-     *  ETag 按查看者口径区分（游客与管理员可见集合不同），避免跨角色拿到陈旧缓存 */
+    /** 数据快照（ETag/304）：先用一次 meta 读做条件请求判定（命中即 304，完全不扫 records/problems），
+     *  校验器 = "<cache_epoch>:<revision>-角色"，破坏性操作会换 epoch，杜绝 revision 归零撞旧 ETag */
     { method: "GET", path: "/api/data", role: null, handler: async (ctx) => {
-        const snap = await store.snapshot(ctx.env.DB, ctx.user?.username ?? null, isAtLeast(ctx.user, "admin"));
-        const etag = `"r${snap.revision}-${isAtLeast(ctx.user, "admin") ? "a" : "g"}"`;
+        const adminLike = isAtLeast(ctx.user, "admin");
+        const suffix = adminLike ? "a" : "g";
         const inm = ctx.req.headers.get("If-None-Match");
+        const preflight = `"${await store.readValidator(ctx.env.DB)}-${suffix}"`;
+        if (inm && inm.split(",").some((t) => t.trim() === preflight)) {
+            return new Response(null, { status: 304, headers: { ETag: preflight, "Cache-Control": "no-cache" } });
+        }
+        const snap = await store.snapshot(ctx.env.DB, ctx.user?.username ?? null, adminLike);
+        const etag = `"${snap.epoch}:${snap.revision}-${suffix}"`;
         if (inm && inm.split(",").some((t) => t.trim() === etag)) {
             return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-cache" } });
         }
@@ -293,9 +370,6 @@ const routes: Route[] = [
     } },
 
     { method: "POST", path: "/api/records", role: "contributor", handler: async (ctx) => {
-        if (!(await burstLimit(ctx.env, ctx.env.WRITE_LIMIT, "write:" + clientIp(ctx.req), 200))) {
-            throw tooMany("操作过于频繁，请稍后再试");
-        }
         const user = requireRole(ctx, "contributor");
         const raw = ctx.body?.record && typeof ctx.body.record === "object" ? ctx.body.record : ctx.body;
         const { rec, revision } = await store.addRecord(ctx.env.DB, raw,
@@ -314,6 +388,9 @@ const routes: Route[] = [
             uid: user.uid,
             username: user.username,
             isAdminLike,
+            // 可选乐观并发基线：客户端带上自己读到的 record.updatedAt，冲突时得到 409
+            baseUpdatedAt: typeof ctx.body?.baseUpdatedAt === "string" ? ctx.body.baseUpdatedAt
+                : (typeof raw?.baseUpdatedAt === "string" ? raw.baseUpdatedAt : null),
         });
         return {
             ok: true,
@@ -337,9 +414,10 @@ const routes: Route[] = [
     } },
 
     { method: "POST", path: "/api/trash/restore", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+        const actor = requireRole(ctx, "admin");
         const ids: string[] = Array.isArray(ctx.body?.ids) ? ctx.body.ids.map(String) : [];
         const restored = await store.restoreTrash(ctx.env.DB, ids);
+        await store.logAudit(ctx.env.DB, actor, "trash.restore", `从回收站恢复 ${restored} 条记录`);
         return { ok: true, restored, revision: await currentRevision(ctx.env.DB) };
     } },
 
@@ -375,19 +453,21 @@ const routes: Route[] = [
     } },
 
     { method: "POST", path: "/api/problems", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+        const actor = requireRole(ctx, "admin");
         const pid = str(ctx.body?.pid);
         const info = ctx.body?.problem && typeof ctx.body.problem === "object" ? { ...ctx.body.problem } : {};
         await maybeFetchLuogu(pid, info);
         const problem = await store.putProblem(ctx.env.DB, pid, info);
+        await store.logAudit(ctx.env.DB, actor, "problem.publish", `发布/更新题目 ${problem.pid}（${problem.title || "无题名"}）`);
         return { ok: true, problem, revision: await currentRevision(ctx.env.DB) };
     } },
 
     /** 编辑题目（题号不变，全量覆盖字段） */
     { method: "PUT", path: "/api/problems/:pid", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+        const actor = requireRole(ctx, "admin");
         const info = ctx.body?.problem && typeof ctx.body.problem === "object" ? { ...ctx.body.problem } : {};
         const problem = await store.updateProblem(ctx.env.DB, ctx.params.pid, info);
+        await store.logAudit(ctx.env.DB, actor, "problem.update", `编辑题目 ${problem.pid}`);
         return { ok: true, problem, revision: await currentRevision(ctx.env.DB) };
     } },
 
@@ -402,20 +482,16 @@ const routes: Route[] = [
         models: await store.listModels(ctx.env.DB),
     }) },
 
-    /** 贡献者名册（公开）：已激活账号 + 各自贡献统计（仅基于已审核记录，游客视角一致） */
+    /** 贡献者名册（公开）：两条聚合 SQL（按 author 分组 + 「全民制作人」整体）出结果，
+     *  旧实现调 store.snapshot() 拉全库再在 JS 里数 —— 公开端点 + 全表读，是个放大面。
+     *  口径与游客视角一致：approved 且题目已收录且模型已收录。 */
     { method: "GET", path: "/api/contributors", role: null, handler: async (ctx) => {
-        const users = await listActiveContributors(ctx.env.DB);
-        const snap = await store.snapshot(ctx.env.DB, null, false);
-        const byAuthor = new Map<string, { total: number; problems: Set<string>; models: Set<string>; lastDate: string }>();
-        for (const r of snap.records) {
-            const key = r.author || "—";
-            if (!byAuthor.has(key)) byAuthor.set(key, { total: 0, problems: new Set(), models: new Set(), lastDate: "" });
-            const b = byAuthor.get(key)!;
-            b.total += 1;
-            b.problems.add(r.pid);
-            b.models.add(r.model);
-            if (r.date > b.lastDate) b.lastDate = r.date;
-        }
+        const [users, stats, legacy] = await Promise.all([
+            listActiveContributors(ctx.env.DB),
+            store.contributorStats(ctx.env.DB),
+            store.legacyContributorStats(ctx.env.DB),
+        ]);
+        const byAuthor = new Map(stats.map((s) => [s.author, s]));
         const contributors: Array<{
             uid: number | null; username: string; nickname: string; role: string; joinedAt: string;
             contributions: number; problems: number; models: number; lastDate: string;
@@ -428,42 +504,36 @@ const routes: Route[] = [
                 role: u.role,
                 joinedAt: u.joinedAt,
                 contributions: b?.total ?? 0,
-                problems: b?.problems.size ?? 0,
-                models: b?.models.size ?? 0,
+                problems: b?.problems ?? 0,
+                models: b?.models ?? 0,
                 lastDate: b?.lastDate ?? "",
             };
         });
-        // 历史导入数据（author 不在活跃用户表）合并为单一「全民制作人」条目
-        const known = new Set(users.map((u) => u.username));
-        const legacy = { total: 0, problems: new Set<string>(), models: new Set<string>(), lastDate: "" };
-        let hasLegacy = false;
-        for (const [author, b] of byAuthor) {
-            if (known.has(author)) continue;
-            hasLegacy = true;
-            legacy.total += b.total;
-            b.problems.forEach((p) => legacy.problems.add(p));
-            b.models.forEach((m) => legacy.models.add(m));
-            if (b.lastDate > legacy.lastDate) legacy.lastDate = b.lastDate;
-        }
-        if (hasLegacy) {
+        if (legacy.total > 0) {
             contributors.push({
                 uid: null, username: "全民制作人", nickname: "", role: "legacy", joinedAt: "",
-                contributions: legacy.total, problems: legacy.problems.size, models: legacy.models.size, lastDate: legacy.lastDate,
+                contributions: legacy.total, problems: legacy.problems, models: legacy.models,
+                lastDate: legacy.lastDate,
             });
         }
         return { contributors };
     } },
 
     { method: "POST", path: "/api/models", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+        const actor = requireRole(ctx, "admin");
         const model = await store.createModel(ctx.env.DB, str(ctx.body?.name), str(ctx.body?.vendor), str(ctx.body?.note));
-        return { ok: true, model };
+        await store.logAudit(ctx.env.DB, actor, "model.create", `收录模型 ${model.name}`);
+        return { ok: true, model, revision: await currentRevision(ctx.env.DB) };
     } },
 
     { method: "PUT", path: "/api/models/:id", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
+        const actor = requireRole(ctx, "admin");
+        const prev = (await store.listModels(ctx.env.DB)).find((m) => m.id === Number(ctx.params.id));
         const model = await store.updateModel(ctx.env.DB, Number(ctx.params.id),
             str(ctx.body?.name), str(ctx.body?.vendor), str(ctx.body?.note));
+        if (prev && prev.name !== model.name) {
+            await store.logAudit(ctx.env.DB, actor, "model.rename", `模型改名：${prev.name} → ${model.name}（历史记录随名迁移）`);
+        }
         return { ok: true, model };
     } },
 
@@ -563,9 +633,11 @@ const routes: Route[] = [
 
     /** 把某个未收录模型名下的全部隐藏历史记录移入回收站（按模型名；可在回收站恢复） */
     { method: "POST", path: "/api/admin/purge-records", role: "admin", handler: async (ctx) => {
-        requireRole(ctx, "admin");
-        const moved = await store.purgeRecordsByModel(ctx.env.DB, str(ctx.body?.model));
-        return { ok: true, moved };
+        const actor = requireRole(ctx, "admin");
+        const model = str(ctx.body?.model);
+        const moved = await store.purgeRecordsByModel(ctx.env.DB, model);
+        await store.logAudit(ctx.env.DB, actor, "records.purgeModel", `模型「${model}」下 ${moved} 条隐藏记录移入回收站`);
+        return { ok: true, moved, revision: await currentRevision(ctx.env.DB) };
     } },
 
     /** 一键清空收录目录（题目 + 模型）与全部记录：清库重建，重新开始收录 */
@@ -576,10 +648,12 @@ const routes: Route[] = [
         return { ok: true, revision: await store.getRevision(ctx.env.DB) };
     } },
 
-    /** 手动触发数据快照（与每日 Cron 同一实现）：全库 JSON 写入 R2，留审计 */
+    /** 手动触发数据快照（与每日 Cron 同一实现）：快照本身要回结果给调用方，90 天过期清理丢给 waitUntil */
     { method: "POST", path: "/api/admin/snapshot", role: "owner", handler: async (ctx) => {
         const owner = requireRole(ctx, "owner");
-        const r = await runSnapshot(ctx.env);
+        const bucket = ctx.env.SNAPSHOT_BUCKET;
+        const r = await runSnapshot(ctx.env, new Date(), { cleanup: false });
+        if (bucket) ctx.defer(cleanupExpired(bucket));
         await store.logAudit(ctx.env.DB, owner, "snapshot", `数据快照 ${r.key}`);
         return { ok: true, ...r };
     } },
@@ -625,9 +699,13 @@ const routes: Route[] = [
         const actor = requireRole(ctx, "admin");
         const mode = str(ctx.body?.mode) || "merge";
         const data = ctx.body?.data && typeof ctx.body.data === "object" ? ctx.body.data : ctx.body;
-        const { imported } = await store.importBundle(ctx.env.DB, data, mode);
-        await store.logAudit(ctx.env.DB, actor, "import", `${mode} 模式导入 ${imported} 条记录`);
-        return { ok: true, imported, revision: await currentRevision(ctx.env.DB) };
+        const r = await store.importBundle(ctx.env.DB, data, mode);
+        // 被白名单丢弃的条数必须回显并留痕：旧实现静默少写，管理员以为导入完整
+        const lost = r.invalid + r.duplicate;
+        await store.logAudit(ctx.env.DB, actor, "import",
+            `${mode} 模式导入 ${r.imported} 条记录（${r.statements} 条批量语句）` +
+            (lost ? `；丢弃 ${r.invalid} 条不合法 + ${r.duplicate} 条重复 id` : ""));
+        return { ok: true, ...r, revision: await currentRevision(ctx.env.DB) };
     } },
 ];
 
@@ -639,7 +717,8 @@ const BODY_LIMITS: Array<[string, number]> = [
 ];
 const DEFAULT_BODY_LIMIT = 64 * 1024;
 
-export async function handleApi(req: Request, env: Env): Promise<Response> {
+/** 非安全方法的统一入口守卫（在角色检查之后、handler 之前） */
+export async function handleApi(req: Request, env: Env, waitUntil?: (task: Promise<unknown>) => void): Promise<Response> {
     const url = new URL(req.url);
     const method = req.method.toUpperCase();
     const baseHeaders: Record<string, string> = {
@@ -648,6 +727,8 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
         "Referrer-Policy": "same-origin",
         "X-Frame-Options": "DENY",
     };
+    const rayId = req.headers.get("CF-Ray") || "";
+    if (rayId) baseHeaders["X-Request-Id"] = rayId;
 
     const json = (payload: unknown, status = 200): Response => {
         const headers = new Headers({
@@ -671,30 +752,38 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
         }
         const csrf = csrfCookieValue ?? newCsrfToken();
         const cookies: string[] = [];
-        const secure = url.protocol === "https:";
+        // 回源协议可能是 http（Flexible SSL），Cookie 的 Secure 以客户端实际协议为准
+        const proto = (req.headers.get("X-Forwarded-Proto") || "").split(",")[0].trim() || url.protocol.replace(":", "");
+        const secure = proto === "https";
         if (!csrfCookieValue) cookies.push(csrfCookie(csrf, secure));
 
         const session = await verifyToken(env.DB, cookieValue(req, SESSION_COOKIE));
         const ctx: RouteCtx = {
             req, url, env, params: {}, user: session?.user ?? null, session,
             body: undefined, cookies, csrf, secure,
+            // 审计写、R2 过期清理这类"不该拖住响应"的工作
+            defer: (task) => {
+                if (waitUntil) waitUntil(task.catch((e) => console.warn("[api] 后台任务失败：", e instanceof Error ? e.message : e)));
+                else task.catch((e) => console.warn("[api] 内联任务失败：", e instanceof Error ? e.message : e));
+            },
         };
 
-        const matched = routes
-            .map((r) => ({ r, params: r.method === method ? matchRoute(r.path, url.pathname) : null }))
-            .find((m) => m.params !== null);
+        const matched = matchRoutes(method, url.pathname);
+        if (matched === "method-mismatch") {
+            return json({ error: "该接口不支持此方法" }, 405);
+        }
         if (!matched) {
             return json({ error: "接口不存在" }, 404);
         }
-        ctx.params = matched.params!;
+        ctx.params = matched.params;
 
-        // 请求体解析（带大小上限）
+        // 请求体解析（带大小上限；按**字节**判定，中文正文用 string.length 会低估）
         if (!methodSafe) {
             const limit = BODY_LIMITS.find(([prefix]) => url.pathname.startsWith(prefix))?.[1] ?? DEFAULT_BODY_LIMIT;
             const len = Number(req.headers.get("Content-Length") || "0");
             if (len > limit) return json({ error: "请求体过大" }, 413);
             const text = await req.text();
-            if (text.length > limit) return json({ error: "请求体过大" }, 413);
+            if (text && new TextEncoder().encode(text).length > limit) return json({ error: "请求体过大" }, 413);
             if (text) {
                 try {
                     ctx.body = JSON.parse(text);
@@ -707,6 +796,10 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
         // 角色检查（路由表声明式）
         if (matched.r.role) {
             requireRole(ctx, matched.r.role);
+        }
+        // 所有写操作统一过 WRITE_LIMIT（登录态按 uid 计），不再逐端点补
+        if (!methodSafe) {
+            await requireWriteBudget(ctx);
         }
 
         const result = await matched.r.handler(ctx);

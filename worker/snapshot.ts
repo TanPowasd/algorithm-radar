@@ -12,8 +12,13 @@ export function snapshotDate(now = new Date()): string {
     return now.toISOString().slice(0, 10);
 }
 
-/** 手动触发（POST /api/admin/snapshot）与 Cron 共用；未配置 R2 绑定时抛错（本地 dev 仍可用模拟桶） */
-export async function runSnapshot(env: Env, now = new Date()): Promise<{ key: string; revision: number }> {
+/** 手动触发（POST /api/admin/snapshot）与 Cron 共用；未配置 R2 绑定时抛错（本地 dev 仍可用模拟桶）。
+ *  `cleanup: false` 只写快照，把 90 天过期清理交给调用方 waitUntil —— 手动触发不必等分页删除。 */
+export async function runSnapshot(
+    env: Env,
+    now = new Date(),
+    opts: { cleanup?: boolean } = {},
+): Promise<{ key: string; revision: number }> {
     const bucket = env.SNAPSHOT_BUCKET;
     if (!bucket) throw new Error("未配置 SNAPSHOT_BUCKET（R2）绑定");
     const snap = await store.exportBundle(env.DB);
@@ -26,22 +31,25 @@ export async function runSnapshot(env: Env, now = new Date()): Promise<{ key: st
     const key = `snapshots/${snapshotDate(now)}/rev-${snap.revision}.json`;
     await bucket.put(key, body);
     await bucket.put("snapshots/latest.json", body);
-    await cleanupExpired(bucket);
+    if (opts.cleanup !== false) await cleanupExpired(bucket);
     return { key, revision: snap.revision };
 }
 
-/** 清理超过保留期的按天快照（latest.json 与当日对象不受影响） */
-async function cleanupExpired(bucket: R2Bucket): Promise<void> {
+/** 清理超过保留期的按天快照（latest.json 与当日对象不受影响）。
+ *  旧实现逐条 `await bucket.delete(key)`；R2 支持批量删除，一次最多 1000 个 key。 */
+export async function cleanupExpired(bucket: R2Bucket): Promise<void> {
     const cutoff = Date.now() - RETENTION_DAYS * 86_400_000;
     let cursor: string | undefined;
     try {
         do {
             const page = await bucket.list({ prefix: "snapshots/", cursor });
+            const doomed: string[] = [];
             for (const obj of page.objects) {
                 const m = obj.key.match(/^snapshots\/(\d{4}-\d{2}-\d{2})\//);
-                if (m && Date.parse(`${m[1]}T00:00:00Z`) < cutoff) {
-                    await bucket.delete(obj.key);
-                }
+                if (m && Date.parse(`${m[1]}T00:00:00Z`) < cutoff) doomed.push(obj.key);
+            }
+            for (let i = 0; i < doomed.length; i += 1000) {
+                await bucket.delete(doomed.slice(i, i + 1000));
             }
             cursor = page.truncated ? page.cursor : undefined;
         } while (cursor);

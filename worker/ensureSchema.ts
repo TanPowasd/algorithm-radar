@@ -1,54 +1,82 @@
 /**
- * 自动建表 + 增量迁移：每个 isolate 生命周期内执行一次（语句全部幂等）。
+ * 自动建表 + 增量迁移：**按 schema 版本门控**，同一份库里版本命中时只做一次廉价探测。
  * 旧库缺新列时按 PRAGMA 探测后 ALTER 补齐（ALTER 重复执行会报错，所以必须先探测）。
  * 建表语句来自 worker/schema.ts（Pages 项目不支持文本导入 .sql）。
+ *
+ * 为什么门控：旧实现每个冷 isolate 的首个请求都要跑 `batch(14 条建表) + 11 次 PRAGMA`
+ * ≈ 25 次 D1 语句才轮到业务查询——D1 免费档「每次调用 ≤ 50 条查询」直接被吃掉一半。
+ * 现在版本命中时只有 1 条 SELECT。
+ *
+ * ⚠️ 长期方案是官方 D1 migrations（wrangler d1 migrations apply）+ 部署脚本，
+ * 这里保留运行时兜底是为了让"零迁移上云/手改库"仍然可用（详见 docs/BACKEND_REVIEW.md P2-1）。
  */
 import { SCHEMA_STATEMENTS } from "./schema";
 
+/** 与下方 MIGRATIONS 一一对应的版本号；改动迁移列表就必须 +1 */
+export const SCHEMA_VERSION = "v3.11";
+
 let ready: Promise<void> | null = null;
 
-async function ensureColumn(db: D1Database, table: string, column: string, ddl: string) {
-    const cols = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
-    if (!(cols.results || []).some((c) => c.name === column)) {
-        await db.prepare(ddl).run();
+/** 新增列的增量迁移：[表, 列, ALTER 语句] */
+const MIGRATIONS: Array<[string, string, string]> = [
+    ["problems", "prompt", "ALTER TABLE problems ADD COLUMN prompt TEXT NOT NULL DEFAULT ''"],
+    ["users", "nickname", "ALTER TABLE users ADD COLUMN nickname TEXT NOT NULL DEFAULT ''"],
+    ["records", "author_id", "ALTER TABLE records ADD COLUMN author_id INTEGER"],
+    ["records", "reviewer_id", "ALTER TABLE records ADD COLUMN reviewer_id INTEGER"],
+    ["records", "reviewed_at", "ALTER TABLE records ADD COLUMN reviewed_at TEXT"],
+    ["users", "password_version", "ALTER TABLE users ADD COLUMN password_version INTEGER NOT NULL DEFAULT 0"],
+    ["records", "deleted_at", "ALTER TABLE records ADD COLUMN deleted_at TEXT"],
+    ["problems", "content", "ALTER TABLE problems ADD COLUMN content TEXT NOT NULL DEFAULT ''"],
+    ["problems", "time_limit", "ALTER TABLE problems ADD COLUMN time_limit INTEGER"],
+    ["problems", "memory_limit", "ALTER TABLE problems ADD COLUMN memory_limit INTEGER"],
+    ["problems", "has_attachments", "ALTER TABLE problems ADD COLUMN has_attachments INTEGER NOT NULL DEFAULT 0"],
+];
+
+async function migrate(db: D1Database): Promise<void> {
+    await db.batch(SCHEMA_STATEMENTS.map((s) => db.prepare(s)));
+    // 一次 batch 拿回全部 PRAGMA 结果（结果顺序与语句顺序一致），避免 11 次串行往返
+    const probes = await db.batch(MIGRATIONS.map(([table]) => db.prepare(`PRAGMA table_info(${table})`)));
+    const missing = new Set<string>();
+    probes.forEach((res, i) => {
+        const [, column] = MIGRATIONS[i];
+        const has = (res?.results || []).some((c: any) => c.name === column);
+        if (!has) missing.add(`${MIGRATIONS[i][0]}.${column}`);
+    });
+    const alters = MIGRATIONS
+        .filter(([table, column]) => missing.has(`${table}.${column}`))
+        .map(([, , ddl]) => db.prepare(ddl));
+    if (alters.length) await db.batch(alters);
+    await db.batch([
+        db.prepare("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)").bind(SCHEMA_VERSION),
+        db.prepare("UPDATE meta SET value = ?1 WHERE key = 'schema_version'").bind(SCHEMA_VERSION),
+    ]);
+}
+
+/** 版本命中即跳过全部 DDL/探测（同库多 isolate、多部署共享同一结论） */
+async function ensure(db: D1Database): Promise<void> {
+    let version: string | null = null;
+    try {
+        const row = await db.prepare("SELECT value FROM meta WHERE key = 'schema_version'")
+            .first<{ value: string }>();
+        version = row?.value ?? null;
+    } catch {
+        version = null; // 全新库连 meta 表都没有 → 走完整建表 + 迁移
     }
+    if (version === SCHEMA_VERSION) return;
+    await migrate(db);
 }
 
 export function ensureSchema(db: D1Database): Promise<void> {
     if (!ready) {
-        ready = (async () => {
-            await db.batch(SCHEMA_STATEMENTS.map((s) => db.prepare(s)));
-            // 迁移 v3.1：problems.prompt（推荐提示词，统一测试口径）
-            await ensureColumn(db, "problems", "prompt",
-                "ALTER TABLE problems ADD COLUMN prompt TEXT NOT NULL DEFAULT ''");
-            // 迁移 v3.2：users.nickname + records 的提供者/审核人审计字段
-            await ensureColumn(db, "users", "nickname",
-                "ALTER TABLE users ADD COLUMN nickname TEXT NOT NULL DEFAULT ''");
-            await ensureColumn(db, "records", "author_id",
-                "ALTER TABLE records ADD COLUMN author_id INTEGER");
-            await ensureColumn(db, "records", "reviewer_id",
-                "ALTER TABLE records ADD COLUMN reviewer_id INTEGER");
-            await ensureColumn(db, "records", "reviewed_at",
-                "ALTER TABLE records ADD COLUMN reviewed_at TEXT");
-            // 迁移 v3.3：users.password_version（改密后旧会话失效）
-            await ensureColumn(db, "users", "password_version",
-                "ALTER TABLE users ADD COLUMN password_version INTEGER NOT NULL DEFAULT 0");
-            // 迁移 v3.5：records.deleted_at（软删除回收站；非空 = 在回收站）
-            await ensureColumn(db, "records", "deleted_at",
-                "ALTER TABLE records ADD COLUMN deleted_at TEXT");
-            // 迁移 v3.11：题面 markdown + 时空限制 + 附件标记（标准提示词模板的数据来源）
-            await ensureColumn(db, "problems", "content",
-                "ALTER TABLE problems ADD COLUMN content TEXT NOT NULL DEFAULT ''");
-            await ensureColumn(db, "problems", "time_limit",
-                "ALTER TABLE problems ADD COLUMN time_limit INTEGER");
-            await ensureColumn(db, "problems", "memory_limit",
-                "ALTER TABLE problems ADD COLUMN memory_limit INTEGER");
-            await ensureColumn(db, "problems", "has_attachments",
-                "ALTER TABLE problems ADD COLUMN has_attachments INTEGER NOT NULL DEFAULT 0");
-        })().catch((e) => {
+        ready = ensure(db).catch((e) => {
             ready = null; // 失败允许下次重试
             throw e;
         });
     }
     return ready;
+}
+
+/** 供测试/运维查看当前 isolate 是否已完成建表 */
+export function schemaReady(): boolean {
+    return ready !== null;
 }

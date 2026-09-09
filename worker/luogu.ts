@@ -134,34 +134,97 @@ export interface LuoguProblem {
     fetchedAt: string;
 }
 
-/** 把 content 各节拼成一份 markdown 题面（name 不重复拼，题目名另有字段） */
-function composeContent(c: any): string {
+/** 样例格式化为 markdown（samples = [[输入, 输出], ...]；空值/缺输出跳过） */
+function formatSamples(samples: unknown): string {
+    if (!Array.isArray(samples) || !samples.length) return "";
+    const blocks: string[] = [];
+    let idx = 0;
+    for (const s of samples) {
+        if (!Array.isArray(s) || s.length < 2) continue;
+        idx += 1;
+        const clean = (v: unknown) => String(v ?? "").replace(/\r\n/g, "\n").replace(/\n+$/, "");
+        blocks.push(
+            `### 输入样例 #${idx}\n\n\`\`\`\n${clean(s[0])}\n\`\`\`\n\n` +
+            `### 输出样例 #${idx}\n\n\`\`\`\n${clean(s[1])}\n\`\`\``,
+        );
+    }
+    if (!blocks.length) return "";
+    return `## 输入输出样例\n\n${blocks.join("\n\n")}`;
+}
+
+/** 把 content 各节拼成一份 markdown 题面（name 不重复拼，题目名另有字段）。
+ *  节序对齐洛谷页面：背景 → 描述 → 输入格式 → 输出格式 → 输入输出样例 → 说明/提示。 */
+function composeContent(c: any, samples: unknown): string {
     if (!c || typeof c !== "object") return "";
     const sections: Array<[string, unknown]> = [
         ["题目背景", c.background],
         ["题目描述", c.description],
         ["输入格式", c.formatI],
         ["输出格式", c.formatO],
-        ["说明/提示", c.hint],
     ];
     const parts: string[] = [];
     for (const [title, body] of sections) {
         const text = cleanName(String(body ?? ""));
         if (text) parts.push(`## ${title}\n\n${text}`);
     }
+    const sampleBlock = formatSamples(samples);
+    if (sampleBlock) parts.push(sampleBlock);
+    const hint = cleanName(String(c.hint ?? ""));
+    if (hint) parts.push(`## 说明/提示\n\n${hint}`);
     return parts.join("\n\n");
 }
 
-const cache = new Map<string, LuoguProblem>();
+/** 洛谷抓取结果缓存：**带 TTL**（旧实现永不过期，洛谷改标题/加附件后本站无限期返回旧数据），
+ *  并带 single-flight（同一 pid 并发只发一次上游请求，避免管理员连点把洛谷打出风控）。 */
+const CACHE_TTL_MS = 6 * 60 * 60_000;   // 6 小时
+const CACHE_MAX = 2000;                 // 超出按"最旧写入"淘汰（旧实现是 size>5000 整体 clear，瞬间全量回源）
+interface CacheEntry { at: number; value: LuoguProblem }
+
+const cache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<LuoguProblem>>();
+
+function cacheGet(pid: string): LuoguProblem | null {
+    const hit = cache.get(pid);
+    if (!hit) return null;
+    if (Date.now() - hit.at > CACHE_TTL_MS) {
+        cache.delete(pid);
+        return null;
+    }
+    return hit.value;
+}
+
+function cacheSet(pid: string, value: LuoguProblem): void {
+    if (cache.size >= CACHE_MAX) {
+        // Map 保持插入顺序：删掉最早写入的一批（近似 LRU，成本 O(1)）
+        for (const k of cache.keys()) {
+            cache.delete(k);
+            if (cache.size < CACHE_MAX * 0.8) break;
+        }
+    }
+    cache.set(pid, { at: Date.now(), value });
+}
 
 export async function fetchLuoguProblem(pidRaw: string): Promise<LuoguProblem> {
     const pid = String(pidRaw ?? "").trim().toUpperCase();
     if (!PID_RE.test(pid)) {
         throw badRequest(`题号格式不正确：${pid}（示例：P1001 / B2001 / CF10A）`);
     }
-    const cached = cache.get(pid);
+    const cached = cacheGet(pid);
     if (cached) return cached;
+    const pending = inflight.get(pid);
+    if (pending) return pending;
+    const task = (async () => {
+        try {
+            return await loadLuoguProblem(pid);
+        } finally {
+            inflight.delete(pid);
+        }
+    })();
+    inflight.set(pid, task);
+    return task;
+}
 
+async function loadLuoguProblem(pid: string): Promise<LuoguProblem> {
     const html = await httpGet(problemUrl(pid));
     const m = html.match(LENTILLE_RE);
     if (!m) {
@@ -208,13 +271,12 @@ export async function fetchLuoguProblem(pidRaw: string): Promise<LuoguProblem> {
         difficulty: Number.isInteger(diff) && diff >= 0 && diff <= 7 ? diff : null,
         tags: tagNames,
         categories: categorize(chainNames),
-        content: composeContent(problem.content),
+        content: composeContent(problem.content, problem.samples),
         timeLimit: timeArr.length ? Math.max(...timeArr) : null,
         memoryLimit: memArr.length ? Math.ceil(Math.max(...memArr) / 1024) : null,
         hasAttachments: Array.isArray(problem.attachments) && problem.attachments.length > 0,
         fetchedAt: nowLocal(),
     };
-    if (cache.size > 5000) cache.clear();
-    cache.set(pid, result);
+    cacheSet(pid, result);
     return result;
 }

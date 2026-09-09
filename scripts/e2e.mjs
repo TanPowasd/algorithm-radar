@@ -237,6 +237,158 @@ try {
   ok('站长手动快照成功（写 R2）', snap.data?.ok === true && String(snap.data?.key || '').startsWith('snapshots/'), JSON.stringify(snap.data))
   ok('管理员触发快照 → 403（仅站长）', (await call(admin, 'POST', '/api/admin/snapshot')).status === 403)
 
+  // 7.8 导入往返（回归 docs/BACKEND_REVIEW.md P0-1 / P0-3：
+  //     「N 条记录 = N+6 条语句」在 D1 每次调用 50(免费)/1000(付费) 条查询的预算下必然失败）
+  const synth = (n, tag) => Array.from({ length: n }, (_, i) => ({
+    id: `${tag}${String(i).padStart(6, '0')}`,
+    model: 'IMP-M1', pid: `P${90000 + i}`, title: `导入题 ${i}`, difficulty: 3, thinking: 'max',
+    categories: [], submissions: [{ score: 100, result: 'AC', note: '' }],
+    minutes: 5, memory: 64, date: '2026-09-01', note: '', author: 'ghost',
+    createdAt: '2026-09-01T00:00:00Z', updatedAt: `2026-09-01T00:${String(i % 60).padStart(2, '0')}:00Z`,
+  }))
+  const bundleOf = (recs, revision = 7) => ({ app: 'AI vs 洛谷', version: 3, revision, records: recs, problems: {}, models: [] })
+  const big = synth(1000, 'imp')
+  const imp = await call(owner, 'POST', '/api/import', { mode: 'replace', data: bundleOf(big) })
+  ok('replace 导入 1000 条成功（旧实现 45/995 条即炸查询预算）', imp.data?.ok === true && imp.data?.imported === 1000, JSON.stringify(imp.data))
+  ok('replace 后目录被清空（题目/模型不再收录）',
+    (await call(owner, 'GET', '/api/models')).data?.models?.length === 0)
+  const guestAfter = await call(tmp, 'GET', '/api/data')
+  ok('导入的历史记录未收录 → 游客不可见', (guestAfter.data?.records ?? []).length === 0,
+    `实际 ${guestAfter.data?.records?.length} 条`)
+  ok('管理员全量导出可见 1000 条',
+    ((await call(owner, 'GET', '/api/export')).data?.records ?? []).length === 1000)
+
+  // 大体积记录：按**字节**预算切成多条 json_each 语句（单条绑定值受 D1「字符串 ≤ 2MB」约束，
+  // 中文 1 字符 = 3 字节，所以预算绝不能按字符数算）。
+  // 体积走合法字段组合：40 轮 × 300 字轮次说明（MAX_SUBMISSIONS / MAX_SUB_NOTE 之内）≈ 38KB/条。
+  const roundNote = '轮次说明中文示例'.slice(0, 8).repeat(37)          // 296 字（MAX_SUB_NOTE = 300 之内）
+  const fatSubs = Array.from({ length: 40 }, (_, k) => ({ score: k, result: 'AC', note: roundNote }))
+  const fat = Array.from({ length: 60 }, (_, i) => ({
+    ...synth(1, 'fat')[0], id: `fat${String(i).padStart(6, '0')}`, submissions: fatSubs,
+    updatedAt: `2026-09-02T00:00:${String(i % 60).padStart(2, '0')}Z`,
+  }))
+  const fatImp = await call(owner, 'POST', '/api/import', { mode: 'merge', data: bundleOf(fat) })
+  ok('大体积导入按字节分片成功（60 条 × ~38KB）', fatImp.data?.ok === true && fatImp.data?.imported === 60,
+    JSON.stringify(fatImp.data))
+  ok('确实切成了多条批量语句（而非 1 条巨语句 / 60 条单行语句）',
+    fatImp.data?.statements > 1 && fatImp.data.statements < 60, `statements=${fatImp.data?.statements}`)
+  const afterFat = ((await call(owner, 'GET', '/api/export')).data?.records ?? [])
+  ok('分片后条数完整落库', afterFat.length === 1060, `实际 ${afterFat.length}`)
+  const fat0 = afterFat.find((r) => r.id === 'fat000000')
+  ok('分片后内容未被截断', fat0?.submissions?.length === 40 && fat0?.submissions?.[39]?.note === roundNote,
+    `实际轮次 ${fat0?.submissions?.length}`)
+  const overImp = await call(owner, 'POST', '/api/import', {
+    mode: 'merge',
+    data: bundleOf([{ ...synth(1, 'over')[0], id: 'over000000', note: '超'.repeat(5000) }]),
+  })
+  ok('超限字段被白名单拦下，并在响应里报出丢弃数（不再静默少写）',
+    overImp.data?.imported === 0 && overImp.data?.invalid === 1, JSON.stringify(overImp.data))
+
+  // merge：来件 updatedAt 较新者胜 + 命中回收站视为找回（一条 upsert 完成，不再逐条 SELECT）
+  const older = bundleOf([{ ...big[0], updatedAt: '2020-01-01T00:00:00Z', note: '不该覆盖' }])
+  ok('merge 忽略更旧的来件', (await call(owner, 'POST', '/api/import', { mode: 'merge', data: older })).data?.ok)
+  const stillClean = ((await call(owner, 'GET', '/api/export')).data?.records ?? [])
+    .find((r) => r.id === 'imp000000')
+  ok('旧数据未被 merge 覆盖', stillClean?.note !== '不该覆盖', `note=${stillClean?.note}`)
+  const newer = bundleOf([{ ...big[0], updatedAt: '2099-01-01T00:00:00Z', note: '较新来件' }])
+  await call(owner, 'POST', '/api/import', { mode: 'merge', data: newer })
+  ok('merge 采纳更新的来件',
+    ((await call(owner, 'GET', '/api/export')).data?.records ?? []).find((r) => r.id === 'imp000000')?.note === '较新来件')
+  await call(owner, 'DELETE', '/api/records/imp000001')
+  ok('记录已进回收站', ((await call(owner, 'GET', '/api/trash')).data?.records ?? []).some((r) => r.id === 'imp000001'))
+  await call(owner, 'POST', '/api/import', { mode: 'merge', data: bundleOf([{ ...big[1], updatedAt: '1999-01-01T00:00:00Z' }]) })
+  ok('merge 命中回收站记录视为找回（即使来件更旧也清 deleted_at）',
+    ((await call(owner, 'GET', '/api/trash')).data?.records ?? []).every((r) => r.id !== 'imp000001'))
+  ok('找回后记录回到全量导出',
+    ((await call(owner, 'GET', '/api/export')).data?.records ?? []).some((r) => r.id === 'imp000001'))
+  ok('删不存在的记录 → 404（不再静默成功）', (await call(owner, 'DELETE', '/api/records/nope000')).status === 404)
+
+  // 7.9 请求边界（回归 P1-9：非法转义冒 500、方法不匹配冒 404）
+  ok('路径含非法转义 → 400（不是 500）', (await call(tmp, 'GET', '/api/records/%E0%A4%A')).status === 400)
+  ok('对 GET 端点发 POST → 405（不是 404）', (await call(tmp, 'POST', '/api/ping', {})).status === 405)
+  const noCsrf = await fetch(apiUrl('/api/models'), {
+    method: 'POST', headers: { Cookie: (await prime(new Jar())).header(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'X' }),
+  })
+  ok('缺 X-CSRF-Token 的写请求 → 403', noCsrf.status === 403, `实际 ${noCsrf.status}`)
+
+  // 7.10 题目信息单一来源（服务端权威，回归 P0-5）+ 布尔三态合并（回归 P0-4）
+  // 注意：contrib 罐里的 eve 已在第 7 步被站长删除，这里另建一个在册贡献者
+  await call(tmp, 'POST', '/api/auth/register', { username: 'gina', nickname: 'Gina', password: 'ginapass12345' })
+  const ginaId = await idOf('gina')
+  ok('站长批准 gina（本题用在册贡献者）', (await call(owner, 'POST', `/api/admin/users/${ginaId}/approve`)).data?.ok)
+  const gina = await prime(new Jar())
+  ok('gina 登录', (await call(gina, 'POST', '/api/login', user('gina', 'ginapass12345'))).data?.role === 'contributor')
+  await call(owner, 'POST', '/api/models', { name: 'CAT-M1', vendor: 'T' })
+  await call(owner, 'POST', '/api/problems', {
+    pid: 'P1001', problem: { title: '目录权威题名', difficulty: 5, tags: [], categories: [], prompt: '', content: '', hasAttachments: true, manual: false },
+  })
+  const forged = await call(gina, 'POST', '/api/records', {
+    record: { model: 'CAT-M1', pid: 'P1001', title: '客户端伪造题名', difficulty: 1, thinking: 'max', submissions: [{ score: 100, result: 'AC' }], date: '2026-09-06' },
+  })
+  ok('贡献者提交的题名/难度被目录值覆盖', forged.data?.record?.title === '目录权威题名' && forged.data?.record?.difficulty === 5,
+    `HTTP ${forged.status} ${JSON.stringify(forged.data?.record ?? forged.data)}`)
+  const forgedId = forged.data?.record?.id
+  const conflict = await call(owner, 'PUT', `/api/records/${forgedId}`, {
+    record: { model: 'CAT-M1', pid: 'P1001', thinking: 'max', difficulty: 5, submissions: [{ score: 100, result: 'AC' }], date: '2026-09-06' },
+    baseUpdatedAt: '1999-01-01T00:00:00Z',
+  })
+  ok('乐观并发：baseUpdatedAt 不符 → 409（不再静默覆盖）', conflict.status === 409, `HTTP ${conflict.status}`)
+  const freshRec = ((await call(owner, 'GET', '/api/data')).data?.records ?? []).find((r) => r.id === forgedId)
+  ok('409 时库里数据未被改写', freshRec?.date === '2026-09-06' && freshRec?.submissions?.[0]?.score === 100,
+    JSON.stringify(freshRec?.date))
+  const okWrite = await call(owner, 'PUT', `/api/records/${forgedId}`, {
+    record: { model: 'CAT-M1', pid: 'P1001', thinking: 'max', difficulty: 5, submissions: [{ score: 80, result: 'WA' }], date: '2026-09-07' },
+    baseUpdatedAt: freshRec?.updatedAt,
+  })
+  ok('乐观并发：基线一致时正常写入', okWrite.data?.ok === true && okWrite.data?.record?.date === '2026-09-07',
+    `HTTP ${okWrite.status} ${JSON.stringify(okWrite.data)}`)
+  // 回归 P1-7：归属只认 author_id。历史导入数据（author_id 为 null）即使 author 用户名与某人相同，
+  // 那个人也不能认领修改——旧实现按 author === username 兜底，删号后同名重注册即可认领他人记录。
+  await call(owner, 'POST', '/api/import', {
+    mode: 'merge',
+    data: bundleOf([{
+      id: 'legacy1', model: 'CAT-M1', pid: 'P1001', title: '历史数据', difficulty: 5, thinking: 'max',
+      submissions: [{ score: 100, result: 'AC', note: '' }], date: '2026-08-01',
+      author: 'gina', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    }]),
+  })
+  const squat = await call(gina, 'PUT', '/api/records/legacy1', {
+    record: { model: 'CAT-M1', pid: 'P1001', thinking: 'max', difficulty: 5, submissions: [{ score: 0, result: 'WA' }], date: '2026-08-01' },
+  })
+  ok('同名贡献者不能认领 author_id 为空的历史记录（403）', squat.status === 403, `HTTP ${squat.status}`)
+  ok('站长可以修改该历史记录', (await call(owner, 'PUT', '/api/records/legacy1', {
+    record: { model: 'CAT-M1', pid: 'P1001', thinking: 'max', difficulty: 5, submissions: [{ score: 100, result: 'AC' }], date: '2026-08-02' },
+  })).data?.ok === true)
+  const otherUser = await call(gina, 'PUT', `/api/records/${forgedId}`, {
+    record: { model: 'CAT-M1', pid: 'P1001', thinking: 'max', difficulty: 5, submissions: [{ score: 1, result: 'WA' }], date: '2026-09-09' },
+  })
+  ok('gina 仍可改自己提交的记录（author_id 匹配）', otherUser.data?.ok === true, `HTTP ${otherUser.status}`)
+  await call(owner, 'POST', '/api/problems', {
+    pid: 'P1001', problem: { title: '', difficulty: null, tags: [], categories: [], prompt: '', content: '', hasAttachments: false, manual: false },
+  })
+  const republished = ((await call(owner, 'GET', '/api/data')).data?.problems?.P1001) ?? {}
+  ok('再次发布传 hasAttachments:false 能清掉标记', republished.hasAttachments === false,
+    `实际 ${JSON.stringify(republished.hasAttachments)}`)
+  await call(owner, 'PUT', '/api/problems/P1001', {
+    problem: { title: '目录权威题名', difficulty: 5, tags: [], categories: [], prompt: '统一口径提示词', content: '题面', hasAttachments: false, manual: false },
+  })
+  await call(owner, 'POST', '/api/problems', {
+    pid: 'P1001', problem: { title: '', difficulty: null, tags: [], categories: [], content: '', hasAttachments: false, manual: false },
+  })
+  const kept = ((await call(owner, 'GET', '/api/data')).data?.problems?.P1001) ?? {}
+  ok('发布请求未提供 prompt 字段 → 不覆盖既有提示词', kept.prompt === '统一口径提示词', `实际 ${JSON.stringify(kept.prompt)}`)
+
+  // 7.11 cache_epoch（回归 P0-2：破坏性操作后旧 ETag 不得再命中 304）
+  const beforeReset = await call(tmp, 'GET', '/api/data')
+  const oldEtag = beforeReset.headers?.get('etag')
+  ok('站长清空收录目录', (await call(owner, 'POST', '/api/catalog/reset')).data?.ok)
+  const afterReset = await call(tmp, 'GET', '/api/data', undefined, oldEtag ? { 'If-None-Match': oldEtag } : {})
+  ok('清库后旧 ETag 不再 304（校验器已换分代）', afterReset.status === 200 && afterReset.headers?.get('etag') !== oldEtag,
+    `实际 ${afterReset.status}`)
+  ok('清库后 revision 未回零', Number(afterReset.data?.revision ?? 0) > 0, `实际 ${afterReset.data?.revision}`)
+  ok('清库后数据确实为空', (afterReset.data?.records ?? []).length === 0)
+
   // 8. 审计日志：破坏性与权限操作全部留痕
   const audit = (await call(admin, 'GET', '/api/admin/audit')).data?.entries ?? []
   const actions = new Set(audit.map((a) => a.action))

@@ -6,10 +6,11 @@ import { handleApi, type Env } from "./router";
 import { runSnapshot } from "./snapshot";
 
 export default {
-    async fetch(req, env): Promise<Response> {
+    async fetch(req, env, ctx): Promise<Response> {
+        // pathname 大小写归一：否则 /API/data 会绕过 API 分支落到静态资产的 SPA 回退（返回 200 HTML）
         const { pathname } = new URL(req.url);
-        if (pathname === "/api" || pathname.startsWith("/api/")) {
-            return handleApi(req, env);
+        if (pathname.toLowerCase() === "/api" || pathname.toLowerCase().startsWith("/api/")) {
+            return handleApi(req, env, (task) => ctx.waitUntil(task));
         }
         return env.ASSETS.fetch(req);
     },
