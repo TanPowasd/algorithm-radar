@@ -707,6 +707,28 @@ const routes: Route[] = [
             (lost ? `；丢弃 ${r.invalid} 条不合法 + ${r.duplicate} 条重复 id` : ""));
         return { ok: true, ...r, revision: await currentRevision(ctx.env.DB) };
     } },
+
+    // ---- 农场对抗赛战绩（只登记谁和谁打、谁赢了、赢了多少）----
+    { method: "GET", path: "/api/arena/matches", role: null, handler: async (ctx) => {
+        const rows = await store.listArenaMatches(ctx.env.DB);
+        return { ok: true, matches: rows, standings: store.arenaStandings(rows) };
+    } },
+
+    { method: "POST", path: "/api/arena/matches", role: "contributor", handler: async (ctx) => {
+        const user = requireRole(ctx, "contributor");
+        const raw = ctx.body?.match && typeof ctx.body.match === "object" ? ctx.body.match : ctx.body;
+        const m = await store.addArenaMatch(ctx.env.DB, raw, { uid: user.uid, username: user.username });
+        return { ok: true, match: m, message: "战绩已登记" };
+    } },
+
+    { method: "DELETE", path: "/api/arena/matches/:id", role: "admin", handler: async (ctx) => {
+        const actor = requireRole(ctx, "admin");
+        const removed = await store.deleteArenaMatch(ctx.env.DB, ctx.params.id);
+        if (!removed) throw new ApiError(404, "没找到这条战绩（可能已被删除）");
+        await store.logAudit(ctx.env.DB, actor, "arena_delete", "删除战绩 " + ctx.params.id);
+        return { ok: true };
+    } },
+
 ];
 
 // ---------------------------------------------------------------- 入口

@@ -14,7 +14,11 @@ const FILTER_KEYS = ['keyword', 'series', 'difficulty', 'category', 'result', 't
 
 function diffClass(d) { return `d-${d ?? 0}` }
 
-export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
+/** 分数文案：v2（decimal）显示 5 位小数；老版保持原样 */
+const scoreText = (score, decimal) => (score === null || score === undefined ? '' : (decimal ? Number(score).toFixed(5) : String(score)))
+const scoreTitle = (score, decimal) => (score === null || score === undefined ? '无分' : (decimal ? Number(score).toFixed(5) : String(score)))
+
+export default function RecordsTable({ onOpenDetail, onEdit, isAdmin, blankEmpty = false, defaultExpanded = false, decimal = false }) {
   const { data, session, nicknameOf, nameByUid, focusModels, focusContributor, toast, refreshAll } = useApp()
   const url = useUrlState('rec')
   const [filters, setFilters] = useState(() => {
@@ -36,6 +40,8 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
   })
   const [page, setPage] = useState(() => Number(url.get('page', '')) || 0)
   const [collapsed, setCollapsed] = useState(() => {
+    // v2 直接在页面里切换视图，进来看就该是展开的
+    if (defaultExpanded) return false
     const hasUrlQuery = Boolean(
       url.get('keyword') || url.get('series') || url.get('difficulty') ||
       url.get('category') || url.get('result') || url.get('thinking') ||
@@ -415,21 +421,21 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
                   </td>
                   <td><span className={`diff-tag ${diffClass(r.difficulty)}`}>{difficultyName(r.difficulty)}</span></td>
                   <td><span className={`think-tag lv-${r.thinking}`}>{THINKING_LABELS[r.thinking] || r.thinking}</span></td>
-                  <td>{r.agent || <span className="chain">—</span>}</td>
-                  <td>{r.tokenSource || <span className="chain">—</span>}</td>
+                  <td>{r.agent || (blankEmpty ? null : <span className="chain">—</span>)}</td>
+                  <td>{r.tokenSource || (blankEmpty ? null : <span className="chain">—</span>)}</td>
                   <td>
                     {(r.submissions || []).map((s, i) => (
-                      <span key={i} className={`sub-badge ${subBadgeClass(s.score)}`} title={`第${i + 1}轮 ${s.result} ${s.score ?? '无分'} ${s.note || ''}`}>
-                        {s.score ?? s.result}
+                      <span key={i} className={`sub-badge ${subBadgeClass(s.score)}`} title={`第${i + 1}轮 ${s.result} ${scoreTitle(s.score, decimal)} ${s.note || ''}`}>
+                        {s.score === null || s.score === undefined ? s.result : scoreText(s.score, decimal)}
                       </span>
                     ))}
                   </td>
-                  <td className="num">{r.minutes ?? '—'}</td>
-                  <td className="num">{r.memory ?? '—'}</td>
+                  <td className="num">{r.minutes ?? (blankEmpty ? '' : '—')}</td>
+                  <td className="num">{r.memory ?? (blankEmpty ? '' : '—')}</td>
                   <td title={`测评日期 ${r.date}\n录入时间 ${fmtDateTime(r.createdAt)}\n更新时间 ${fmtDateTime(r.updatedAt)}`}>
                     <div className="tcell">
                       <span className="t-date">{r.date}</span>
-                      <span className="t-time">{fmtClock(r.createdAt) || '—:—'}</span>
+                      <span className="t-time">{fmtClock(r.createdAt) || (blankEmpty ? '' : '—:—')}</span>
                     </div>
                   </td>
                   <td title={r.authorId ? `提供者 ID #${r.authorId}` : '网站首次录入的历史数据'}>
@@ -439,7 +445,7 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin }) {
                     {reviewerLabel(r, nameByUid) || <span className="chain">待审核</span>}
                     <div className="chain">{r.reviewedAt ? fmtDateTime(r.reviewedAt) : ''}</div>
                   </td>
-                  <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.note}>{r.note || '—'}</td>
+                  <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.note}>{r.note || (blankEmpty ? '' : '—')}</td>
                   {(isAdmin || session.loggedIn) && (
                     <td className="actions">
                       {canEdit && (

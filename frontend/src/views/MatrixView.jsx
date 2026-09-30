@@ -4,6 +4,7 @@ import {
   bestThinkingCell, difficultyName, isApproved, isPassed, matrixCell, metricScore, scoreTierClass,
   seriesColorMap, seriesKey, seriesList, filterByModels, filterByContributor, THINKING_LABELS,
 } from '../aggregate'
+import { arenaRating } from '../score'
 import PidLink from '../components/PidLink'
 import { useUrlState } from '../hooks/useUrlState'
 
@@ -24,9 +25,16 @@ function RankBadge({ rank }) {
   return <span className={`mrank ${cls}`}>{rank}</span>
 }
 
-export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
+/**
+ * v2 的加权分显示 5 位小数；decimal 默认 false → 老版沿用原来的整数口径，显示完全不变。
+ */
+const fmtScore = (v, decimal) => (decimal ? Number(v).toFixed(5) : Math.round(v))
+
+export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decimal = false, blankEmpty = false, onlyWithScore = false, unitScore = false, rawScores = false }) {
   const { data, loaded, focusModels, focusContributor, theme, vendorOf } = useApp()
   const url = useUrlState('mx')
+  /** v2：算不出加权分的格子直接留空（不显示「—」占位、更不出现原始分）；老版 blankEmpty=false → 原样 */
+  const emptyCell = blankEmpty ? '' : '—'
   const [modeLocal, setModeLocal] = useState(() => {
     const fromUrl = url.get('mode', '')
     return MODES.some((m) => m.key === fromUrl) ? fromUrl : 'bestLevel'
@@ -59,6 +67,41 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
     return map
   }, [approved])
 
+  /**
+   * v2 首行「rating」= Chatbot Arena 模式（Bradley-Terry / Elo + 分差加权）：
+   *   1) 每题取各模型的加权分 s（= 该格显示的值）；
+   *   2) 同题两模型比一场，单场胜势积分 = 自身 s ÷（自身 s + 对手 s）（大胜 > 险胜）；
+   *   3) 用 Bradley-Terry 最大似然拟合 P(i 胜 j) = 1 ÷ (1 + 10^(−(Ri−Rj)/400))，MM 迭代，全体锚定 1000；
+   *   4) 自举重采样给 95% 区间；对局 < 10 标「对局少」。
+   * 格子里的加权分不受影响。
+   */
+  const rating = useMemo(() => {
+    const blank = { raw: new Map(), byProblem: new Map(), arena: new Map() }
+    if (!unitScore) return blank
+    const pids = Object.values(data.problems || {})
+    const raw = new Map()
+    const byProblem = new Map()
+    for (const s of seriesList(approved)) {
+      for (const p of pids) {
+        const recs = grouped.get(`${s}\u0000${p.pid}`)
+        if (!recs || !recs.length) continue
+        let v = null
+        if (mode === 'bestLevel' || mode === 'bestScore') {
+          v = bestThinkingCell(recs, mode === 'bestLevel' ? 'level' : 'score', 'avgscore').value
+        } else if (mode !== 'status') {
+          const c = matrixCell(approved, s, p.pid)
+          const info = mode === 'final' ? c.finalInfo : c.scoreInfo
+          v = info ? info.avg : null
+        }
+        if (v === null || v === undefined) continue
+        raw.set(`${s}\u0000${p.pid}`, v)
+        if (!byProblem.has(p.pid)) byProblem.set(p.pid, [])
+        byProblem.get(p.pid).push({ model: s, score: v })
+      }
+    }
+    return { raw, byProblem, arena: arenaRating(byProblem) }
+  }, [approved, grouped, data.problems, mode, unitScore])
+
   // —— 列（AI）：按“每条记录全轮均分再平均”从高到低排 ——
   const series = useMemo(() => {
     const perModel = new Map()
@@ -68,7 +111,12 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
       if (!perModel.has(seriesKey(r))) perModel.set(seriesKey(r), [])
       perModel.get(seriesKey(r)).push(v)
     }
-    const s = seriesList(approved)
+    // v2：只显示「有可显示数据」（至少有一轮算出加权分）的模型列；老版列出口径不变
+    const s = onlyWithScore ? [...perModel.keys()] : seriesList(approved)
+    if (unitScore) {
+      return [...s].sort((a, b) => ((rating.arena.get(b)?.rating ?? -1) - (rating.arena.get(a)?.rating ?? -1))
+        || a.localeCompare(b, 'zh-Hans-CN'))
+    }
     const avgOf = new Map()
     for (const name of s) {
       const arr = perModel.get(name)
@@ -76,7 +124,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
     }
     return [...s].sort((a, b) => (avgOf.get(b) ?? -1) - (avgOf.get(a) ?? -1)
       || a.localeCompare(b, 'zh-Hans-CN'))
-  }, [approved])
+  }, [approved, unitScore, rating])
 
   // —— 行（题目）：按每题整体均分从高到低排 ——
   const problems = useMemo(() => {
@@ -180,7 +228,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
     <div className="card" id="matrix-card">
       <div className="card-head">
         <h2>AI × 题目矩阵</h2>
-        <span className="hint">点击成绩查看原始测评</span>
+        <span className="hint">{blankEmpty ? '点击成绩查看该轮明细' : '点击成绩查看原始测评'}</span>
         <span className="matrix-count">{visibleProblems.length} / {problems.length} 题 · {series.length} 个模型</span>
       </div>
       <div className="matrix-toolbar">
@@ -230,7 +278,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
           </thead>
           <tbody>
             <tr className="sum-row">
-              <th className="row-head" data-r="sum">整体</th>
+              <th className="row-head" data-r="sum">{unitScore ? 'rating' : '整体'}</th>
               {series.map((s, si) => {
                 const info = summary.get(s)
                 if (mode === 'status') {
@@ -240,12 +288,34 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
                     </td>
                   )
                 }
+                if (unitScore) {
+                  const ov = rating.arena.get(s)
+                  if (!ov || ov.rating === null || ov.rating === undefined) {
+                    return (
+                      <td key={s} className="mcell score-na" data-r="sum" data-c={'c' + si} title={info.total + ' 条记录 · 没有可比的对局'}>
+                        {emptyCell}
+                      </td>
+                    )
+                  }
+                  const tip = 'Arena 天梯分 ' + fmtScore(ov.rating, decimal) + '（全体锚定 1000 分）'
+                    + '\n对局 ' + ov.games + ' 局 · 胜势率 ' + (ov.winShare === null ? '-' : (ov.winShare * 100).toFixed(1) + '%')
+                    + '（胜势积分合计 ' + fmtScore(ov.share, decimal) + '）'
+                    + (ov.lo === null || ov.hi === null ? '' : '\n95% 区间 ' + fmtScore(ov.lo, decimal) + ' ~ ' + fmtScore(ov.hi, decimal))
+                    + '\n' + ov.status
+                    + '\n单场胜势积分 = 自身加权分 ÷（自身 + 对手加权分）—— 大胜比险胜拿更多天梯分'
+                    + '\nBradley-Terry：P(i 胜 j) = 1 / (1 + 10^(-(Ri-Rj)/400))'
+                  return (
+                    <td key={s} className="mcell" data-r="sum" data-c={'c' + si} title={tip}>
+                      {fmtScore(ov.rating, decimal)}{ov.status.indexOf('对局少') === 0 ? <span className="lv">对局少</span> : null}
+                    </td>
+                  )
+                }
                 return (
                   <td
                     key={s} className={`mcell ${info.avg === null ? 'score-na' : scoreTierClass(Math.round(info.avg))}`}
                     data-r="sum" data-c={`c${si}`} title={`n=${info.n}`}
                   >
-                    {info.avg === null ? '—' : Math.round(info.avg)}
+                    {info.avg === null ? emptyCell : fmtScore(info.avg, decimal)}
                   </td>
                 )
               })}
@@ -299,17 +369,17 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
                       const cls = c.kind === 'ac' ? 'ac' : c.kind === 'fail' ? 'fail' : 'giveup'
                       return (
                         <td
-                          key={s} className={`mcell ${cls} score-na`} {...cellProps} {...cellKeyboard(p.pid, s)}
-                          title={`${THINKING_LABELS[c.thinking] || c.thinking} 无有效分数`}
+                          key={s} className={`mcell ${blankEmpty ? '' : cls} score-na`} {...cellProps} {...cellKeyboard(p.pid, s)}
+                          title={blankEmpty ? '缺该轮时间/内存，算不出加权分（不显示原始分）' : `${THINKING_LABELS[c.thinking] || c.thinking} 无有效分数`}
                           onClick={() => onOpenDetail && onOpenDetail(p.pid, s)}
-                        >—</td>
+                        >{emptyCell}</td>
                       )
                     }
-                    const v = Math.round(c.value)
+                    const v = fmtScore(c.value, decimal)
                     const lv = THINKING_LABELS[c.thinking] || c.thinking
                     return (
                       <td
-                        key={s} className={`mcell ${scoreTierClass(v)}`} {...cellProps} {...cellKeyboard(p.pid, s)}
+                        key={s} className={`mcell ${scoreTierClass(Math.round(c.value))}`} {...cellProps} {...cellKeyboard(p.pid, s)}
                         title={`${s} · ${p.pid}\n思考等级 ${lv}（${c.n} 条记录 / ${c.rounds} 个有分数轮次）\n同题同模型共 ${c.total} 条记录，本格只取${active.best === 'level' ? '等级最高' : '分数最高'}的那批`}
                         onClick={() => onOpenDetail && onOpenDetail(p.pid, s)}
                       >{v}<span className="lv">{lv}</span></td>
@@ -317,11 +387,11 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
                   }
                   const c = matrixCell(approved, s, p.pid)
                   const info = mode === 'final' ? c.finalInfo : c.scoreInfo
-                  if (!info) return <td key={s} className="mcell score-na" {...cellProps}>—</td>
-                  const avg = Math.round(info.avg)
+                  if (!info) return <td key={s} className="mcell score-na" {...cellProps}>{emptyCell}</td>
+                  const avg = fmtScore(info.avg, decimal)
                   return (
                     <td
-                      key={s} className={`mcell ${scoreTierClass(avg)}`} {...cellProps} {...cellKeyboard(p.pid, s)}
+                      key={s} className={`mcell ${scoreTierClass(Math.round(info.avg))}`} {...cellProps} {...cellKeyboard(p.pid, s)}
                       title={`n=${info.n}（有分数轮次）`}
                       onClick={() => onOpenDetail && onOpenDetail(p.pid, s)}
                     >{avg}</td>
@@ -344,16 +414,35 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit }) {
           <span style={{ color: 'var(--green)' }}><i />80–99</span>
           <span style={{ color: 'var(--orange)' }}><i />60–79</span>
           <span style={{ color: 'var(--red)' }}><i />0–59</span>
-          <span>· 未作答　— 无有效分数</span>
+          <span>· 未作答{blankEmpty ? '' : '　— 无有效分数'}</span>
         </div>}
-        <span>列按模型整体均分排序 · 滚动时题目列与表头固定</span>
+        <span>{(unitScore ? '列按 rating（Chatbot Arena）排序' : rawScores ? '列按模型原始分均分排序' : '列按模型整体均分排序')} · 滚动时题目列与表头固定</span>
       </div>
       <details className="matrix-hint">
         <summary>排序与统计口径</summary>
         列 = AI（<b>颜色按厂商归组</b>，同厂商同色系，列下色条即厂商色），行 = 题目（按整体均分 ↓）。
         默认口径「最佳等级」= 该题该模型只取<b>思考等级最高</b>（Ultra&gt;Max&gt;X-High&gt;High&gt;Medium&gt;Low&gt;关闭）的那条记录分数，
         可切到「最佳分数」改取分数最高的那批；悬停行/列有十字高亮，贡献者可在空格子上用「+」快捷提单。
-        查找题目只缩小可见行，首行「整体」仍为当前模型与贡献者范围的整体统计。
+        查找题目只缩小可见行，首行「{unitScore ? 'rating' : '整体'}」仍为当前模型与贡献者范围的整体统计。
+        {rawScores && (
+          <>
+            <br />
+            <b>这一页显示洛谷原始分</b>（不做原始分/时间/空间加权），并且<b>包含 2026-09-05 21:19 之前的全部历史数据</b>；
+            首行「<b>整体</b>」= 各模型在该题原始分的平均。加权分与 rating 见 <b>rating</b> 页签。
+          </>
+        )}
+        {unitScore && (
+          <>
+            <br />
+            <b>格子里的加权分一个数都不变</b>；只有首行「<b>rating</b>」用 <b>Chatbot Arena 模式</b>：
+            同一道题上两个模型的加权分比一场（同模型不比），<b>分差加权 Margin-of-Victory</b>：
+            单场胜势积分 = <b>自身加权分 ÷（自身 + 对手加权分）</b> —— 「赢 50 分的大胜」比「赢 0.001 分的险胜」加更多天梯分；
+            再用 Bradley-Terry / Elo 做最大似然拟合 <b>P(i 胜 j) = 1 ÷ (1 + 10^(−(Ri−Rj)/400))</b>，
+            MM 迭代收敛后把全体锚定到 <b>1000 分</b>（分差 400 ≈ 胜率 10:1）；悬停可看对局数与 95% 自举区间。
+            对局数 &lt; 10 标「对局少」。
+          </>
+        )}
+
       </details>
     </div>
   )

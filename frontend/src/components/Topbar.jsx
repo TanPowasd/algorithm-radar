@@ -57,7 +57,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
   }
 
   const nextThemeLabel = theme === 'light' ? '切换到暗色' : '切换到亮色'
-  const isSubPage = ['/admin', '/users', '/contributors', '/prompts', '/register'].includes(location.pathname)
+  const isSubPage = ['/admin', '/users', '/contributors', '/prompts', '/register', '/v2'].includes(location.pathname)
 
   return (
     <header className="topbar" ref={topbarRef}>
@@ -81,6 +81,12 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
         </Link>
         <Link className={`btn small ${location.pathname === '/prompts' ? 'primary' : 'ghost'}`} to="/prompts">
           推荐提示词
+        </Link>
+        <Link className={`btn small ${location.pathname === '/arena' ? 'primary' : 'ghost'}`} to="/arena">
+          对抗赛
+        </Link>
+        <Link className={`btn small ${location.pathname === '/v2' ? 'primary' : 'ghost'}`} to="/v2">
+          k4u-V2
         </Link>
         {isSubPage && location.pathname !== '/' && (
           <Link className="btn small ghost" to="/">返回总览</Link>

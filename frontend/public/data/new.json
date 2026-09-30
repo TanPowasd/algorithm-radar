@@ -1,0 +1,9 @@
+{
+  "app": "k4u-V2",
+  "scope": "new-data",
+  "note": "已废弃的数据源占位：v2 的数据现在存在 Cloudflare D1（经 Worker /api/data），提交后重新打开仍然在；本文件不再被页面读取。",
+  "revision": 0,
+  "updatedAt": "",
+  "records": [],
+  "problems": {}
+}

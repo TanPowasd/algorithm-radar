@@ -997,3 +997,151 @@ export async function listAudit(db: D1Database, limit = 100): Promise<AuditEntry
         action: r.action ?? "", detail: r.detail ?? "", createdAt: r.created_at ?? "",
     }));
 }
+
+// ---------------------------------------------------------------- 农场对抗赛战绩
+// 一条记录 = 一轮对抗（谁和谁打、谁赢了、赢了多少）；可选多局用 games 标注。
+export interface ArenaMatch {
+    id: string;
+    aName: string;
+    bName: string;
+    winner: "A" | "B" | "draw";
+    aCash: number | null;
+    bCash: number | null;
+    margin: number;
+    games: number;
+    note: string;
+    playedAt: string;
+    author: string;
+    authorId: number | null;
+    createdAt: string;
+}
+
+export interface ArenaStanding {
+    name: string;
+    matches: number;
+    wins: number;
+    losses: number;
+    draws: number;
+    winRate: number;
+    netTotal: number;
+    netAvg: number;
+    bestWin: number;
+}
+
+const ARENA_NAME_MAX = 40;
+const ARENA_NOTE_MAX = 200;
+const ARENA_MAX_ROWS = 5000;
+
+function arenaName(v: unknown, field: string): string {
+    const s = String(v ?? "").trim().replace(/\s+/g, " ");
+    if (!s) throw badRequest(field + "不能为空");
+    if (s.length > ARENA_NAME_MAX) throw badRequest(field + "过长（最多 " + ARENA_NAME_MAX + " 字）");
+    return s;
+}
+
+function arenaMoney(v: unknown, field: string): number | null {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > 1e9) throw badRequest(field + "需为 0 到 10 亿之间的数字");
+    return Math.round(n * 100) / 100;
+}
+
+function mapArenaRow(r: any): ArenaMatch {
+    return {
+        id: String(r.id), aName: r.a_name, bName: r.b_name,
+        winner: r.winner, aCash: r.a_cash === null || r.a_cash === undefined ? null : Number(r.a_cash),
+        bCash: r.b_cash === null || r.b_cash === undefined ? null : Number(r.b_cash),
+        margin: Number(r.margin) || 0, games: Number(r.games) || 1,
+        note: r.note ?? "", playedAt: r.played_at, author: r.author ?? "",
+        authorId: r.author_id ?? null, createdAt: r.created_at,
+    };
+}
+
+export async function addArenaMatch(db: D1Database, raw: any,
+    user: { uid: number | null; username: string }): Promise<ArenaMatch> {
+    const body = raw && typeof raw === "object" ? raw : {};
+    const aName = arenaName(body.aName ?? body.a_name, "A 方名称");
+    const bName = arenaName(body.bName ?? body.b_name, "B 方名称");
+    if (aName.toLowerCase() === bName.toLowerCase()) throw badRequest("A、B 不能是同一个 agent");
+    const w = String(body.winner ?? "").trim().toUpperCase();
+    let winner: ArenaMatch["winner"];
+    if (w === "A") winner = "A";
+    else if (w === "B") winner = "B";
+    else if (w === "DRAW" || w === "PING" || w === "平" || w === "平局") winner = "draw";
+    else throw badRequest("胜者只能填 A / B / 平局");
+    const aCash = arenaMoney(body.aCash ?? body.a_cash, "A 终局现金");
+    const bCash = arenaMoney(body.bCash ?? body.b_cash, "B 终局现金");
+    let margin = arenaMoney(body.margin, "净胜额");
+    if (margin === null && aCash !== null && bCash !== null) margin = Math.abs(aCash - bCash);
+    if (margin === null) margin = 0;
+    const games = Math.max(1, Math.min(99, Math.round(Number(body.games ?? 1) || 1)));
+    const note = String(body.note ?? "").trim().slice(0, ARENA_NOTE_MAX);
+    const playedRaw = String(body.playedAt ?? body.played_at ?? "").trim();
+    const playedAt = playedRaw ? playedRaw.slice(0, 40) : nowIso();
+    const countRow = await db.prepare("SELECT COUNT(*) AS n FROM arena_matches WHERE deleted_at IS NULL").first<{ n: number }>();
+    if ((countRow?.n ?? 0) >= ARENA_MAX_ROWS) throw badRequest("战绩数量已达上限（" + ARENA_MAX_ROWS + " 条）");
+    const row: ArenaMatch = {
+        id: crypto.randomUUID(), aName, bName, winner, aCash, bCash, margin, games, note,
+        playedAt, author: user.username, authorId: user.uid ?? null, createdAt: nowIso(),
+    };
+    await db.prepare("INSERT INTO arena_matches (id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)")
+        .bind(row.id, row.aName, row.bName, row.winner, row.aCash, row.bCash, row.margin, row.games,
+            row.note, row.playedAt, row.author, row.authorId, row.createdAt)
+        .run();
+    return row;
+}
+
+export async function listArenaMatches(db: D1Database, limit = 300): Promise<ArenaMatch[]> {
+    const size = Math.max(1, Math.min(1000, Math.round(limit) || 300));
+    const { results } = await db.prepare(
+        "SELECT id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at " +
+        "FROM arena_matches WHERE deleted_at IS NULL ORDER BY played_at DESC, created_at DESC LIMIT ?1")
+        .bind(size).all<any>();
+    return (results || []).map(mapArenaRow);
+}
+
+export async function deleteArenaMatch(db: D1Database, id: string): Promise<boolean> {
+    const r = await db.prepare("UPDATE arena_matches SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL")
+        .bind(nowIso(), String(id)).run();
+    return (((r as any).meta?.changes) ?? 0) > 0;
+}
+
+/** 由战绩聚合积分榜（纯函数） */
+export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
+    const map = new Map<string, ArenaStanding>();
+    const bucket = (name: string): ArenaStanding => {
+        const k = name.toLowerCase();
+        let s = map.get(k);
+        if (!s) {
+            s = { name, matches: 0, wins: 0, losses: 0, draws: 0, winRate: 0, netTotal: 0, netAvg: 0, bestWin: 0 };
+            map.set(k, s);
+        }
+        return s;
+    };
+    for (const m of rows) {
+        const a = bucket(m.aName);
+        const b = bucket(m.bName);
+        a.matches += 1;
+        b.matches += 1;
+        if (m.winner === "draw") {
+            a.draws += 1;
+            b.draws += 1;
+            continue;
+        }
+        const win = m.winner === "A" ? a : b;
+        const lose = m.winner === "A" ? b : a;
+        win.wins += 1;
+        lose.losses += 1;
+        win.netTotal += m.margin;
+        lose.netTotal -= m.margin;
+        if (m.margin > win.bestWin) win.bestWin = m.margin;
+    }
+    const out = Array.from(map.values());
+    for (const s of out) {
+        s.winRate = s.matches ? s.wins / s.matches : 0;
+        s.netAvg = s.matches ? s.netTotal / s.matches : 0;
+    }
+    out.sort((x, y) => (y.wins - x.wins) || (y.netAvg - x.netAvg) || x.name.localeCompare(y.name));
+    return out;
+}
+

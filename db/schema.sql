@@ -96,6 +96,25 @@ CREATE INDEX IF NOT EXISTS idx_records_author  ON records(author, status, delete
 CREATE INDEX IF NOT EXISTS idx_login_guard_until ON login_guard(locked_until);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(id);
 
+-- v3.12：农场对抗赛战绩（只登记谁和谁打、谁赢了、赢了多少）
+CREATE TABLE IF NOT EXISTS arena_matches (
+    id         TEXT PRIMARY KEY,
+    a_name     TEXT NOT NULL,
+    b_name     TEXT NOT NULL,
+    winner     TEXT NOT NULL CHECK(winner IN ('A','B','draw')),
+    a_cash     REAL,
+    b_cash     REAL,
+    margin     REAL NOT NULL DEFAULT 0,
+    games      INTEGER NOT NULL DEFAULT 1,
+    note       TEXT NOT NULL DEFAULT '',
+    played_at  TEXT NOT NULL,
+    author     TEXT NOT NULL DEFAULT '',
+    author_id  INTEGER,
+    deleted_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_arena_played ON arena_matches(deleted_at, played_at DESC);
+
 -- revision 单调递增（缓存校验器的一部分）；cache_epoch 在清库/覆盖导入时更换，两者一起构成 ETag 校验器
 -- ⚠️ 不要在这里写 schema_version：它由 worker/ensureSchema.ts 在「建表 + 增量 ALTER 探测」成功后写入。
 --    若把它写进本文件，对**缺列的旧库**执行此文件会把版本标成最新，导致 ensureSchema 跳过补列 → 运行期报"无此列"。

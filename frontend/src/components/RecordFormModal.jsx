@@ -19,7 +19,7 @@ function Field({ label, children }) {
   )
 }
 
-export default function RecordFormModal({ editRecord, lockPid, onClose }) {
+export default function RecordFormModal({ editRecord, lockPid, onClose, perfFields = false }) {
   const dialogRef = useDialog(onClose)
   const { data, models, toast, refreshAll, isAdmin } = useApp()
   const isEdit = !!editRecord
@@ -59,8 +59,24 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
   const [catInput, setCatInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  /** v2：每轮的「时间消耗(ms)/内存使用量(MB)」就地校验提示，下标与 submissions 对齐 */
+  const [perfErrors, setPerfErrors] = useState([])
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }))
+
+  const updateSub = (i, patch) => {
+    setForm((f) => ({ ...f, submissions: f.submissions.map((x, j) => (j === i ? { ...x, ...patch } : x)) }))
+    setPerfErrors((list) => list.map((row, j) => (j === i ? { ...row, ...Object.fromEntries(Object.keys(patch).map((k) => [k, ''])) } : row)))
+  }
+
+  /** v2 必填校验：空 / 非数字 / ≤0 都不允许提交 */
+  const perfError = (v) => {
+    const s = String(v ?? '').trim()
+    if (s === '') return '必填，不能为空'
+    if (!/^\d+(\.\d+)?$/.test(s)) return '必须填数字'
+    if (Number(s) <= 0) return '必须大于 0'
+    return ''
+  }
 
   const selectedProblem = catalogOf(form.pid)
   const diffLocked = hasCatalogDiff(selectedProblem)
@@ -123,6 +139,12 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
       return setError(`题目 ${form.pid} 在目录里没有难度信息：请联系管理员在「题目管理 → 编辑」补全`)
     }
     if (!form.submissions.length) return setError('至少需要一次提交记录')
+    if (perfFields) {
+      const rows = form.submissions.map((s) => ({ timeMs: perfError(s.timeMs), memoryMb: perfError(s.memoryMb) }))
+      setPerfErrors(rows)
+      const bad = rows.findIndex((r) => r.timeMs || r.memoryMb)
+      if (bad >= 0) return setError(`第 ${bad + 1} 轮：时间消耗（ms）与内存使用量（MB）都必须填写且大于 0`)
+    }
     setBusy(true)
     try {
       const payload = {
@@ -135,7 +157,11 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
         title: finalTitle,
         difficulty: finalDifficulty,
         categories: form.categories,
-        submissions: form.submissions.map(normalizeSub),
+        submissions: form.submissions.map((s) => {
+          const base = normalizeSub(s)
+          if (!perfFields) return base
+          return { ...base, timeMs: Number(s.timeMs), memoryMb: Number(s.memoryMb) }
+        }),
         minutes: form.minutes === '' ? null : Number(form.minutes),
         memory: form.memory === '' ? null : Number(form.memory),
         date: form.date,
@@ -281,7 +307,9 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
           </div>
         </Field>
 
-        <Field label="提交轮次（每轮：判定 / 得分 0–100 / 说明；无分数留空则不计入均分）">
+        <Field label={perfFields
+            ? '提交轮次（每轮：判定 / 得分 0–100 / 说明；另必填 时间消耗（ms）与 内存使用量（MB），都须 > 0）'
+            : '提交轮次（每轮：判定 / 得分 0–100 / 说明；无分数留空则不计入均分）'}>
           <div className="sub-rows">
             {form.submissions.map((s, i) => (
               <div className="sub-row" key={i}>
@@ -301,6 +329,24 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
                   value={s.note || ''}
                   onChange={(e) => set({ submissions: form.submissions.map((x, j) => j === i ? { ...x, note: e.target.value } : x) })}
                 />
+                {perfFields && (
+                  <div className="perf-box">
+                    <label className="perf-field">
+                      <span className="perf-label">内存使用量（MB，可填小数）</span>
+                      <input type="number" min="0" step="any" inputMode="decimal" placeholder="必填，>0，可小数"
+                        value={s.memoryMb ?? ''}
+                        onChange={(e) => updateSub(i, { memoryMb: e.target.value })} />
+                      {perfErrors[i]?.memoryMb && <span className="perf-err">{perfErrors[i].memoryMb}</span>}
+                    </label>
+                    <label className="perf-field">
+                      <span className="perf-label">时间消耗（ms）</span>
+                      <input type="number" min="1" inputMode="numeric" placeholder="必填，>0"
+                        value={s.timeMs ?? ''}
+                        onChange={(e) => updateSub(i, { timeMs: e.target.value })} />
+                      {perfErrors[i]?.timeMs && <span className="perf-err">{perfErrors[i].timeMs}</span>}
+                    </label>
+                  </div>
+                )}
                 <button type="button" className="icon-btn del" title="删除本轮"
                   onClick={() => set({ submissions: form.submissions.filter((_, j) => j !== i) })}
                   disabled={form.submissions.length <= 1}
@@ -309,7 +355,7 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
             ))}
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button type="button" className="btn small" onClick={() => set({ submissions: [...form.submissions, { score: '', result: 'WA', note: '' }] })}>
+            <button type="button" className="btn small" onClick={() => set({ submissions: [...form.submissions, perfFields ? { score: '', result: 'WA', note: '', timeMs: '', memoryMb: '' } : { score: '', result: 'WA', note: '' }] })}>
               + 添加一轮
             </button>
             <span className="sub-summary">
@@ -323,7 +369,7 @@ export default function RecordFormModal({ editRecord, lockPid, onClose }) {
             <input type="number" min="0" value={form.minutes ?? ''} onChange={(e) => set({ minutes: e.target.value })} />
           </Field>
           <Field label="内存（MB）">
-            <input type="number" min="0" value={form.memory ?? ''} onChange={(e) => set({ memory: e.target.value })} />
+            <input type="number" min="0" step="any" value={form.memory ?? ''} onChange={(e) => set({ memory: e.target.value })} />
           </Field>
           <Field label="备注">
             <input value={form.note} onChange={(e) => set({ note: e.target.value })} />

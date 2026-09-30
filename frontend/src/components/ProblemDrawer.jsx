@@ -7,8 +7,11 @@ import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLa
 import { THINKING_LABELS } from '../aggregate'
 import { useDialog } from '../hooks/useDialog'
 
+/** 分数文案：v2（decimal）显示 5 位小数；老版保持原样 */
+const scoreText = (score, decimal) => (score === null || score === undefined ? '' : (decimal ? Number(score).toFixed(5) : String(score)))
+
 /** 题目详情抽屉：题目信息 + 推荐提示词（一键复制）+ 该题全部记录 + 三个统计 */
-export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitClick, onEditRecord }) {
+export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitClick, onEditRecord, blankEmpty = false, decimal = false }) {
   const dialogRef = useDialog(onClose)
   const { data, toast, nicknameOf, nameByUid, isAdmin, session } = useApp()
   const problem = data.problems?.[pid]
@@ -31,10 +34,14 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
     const passed = recs.filter(isPassed).length
     return {
       count: recs.length,
-      firstAvg: firstScores.length ? Math.round(firstScores.reduce((a, b) => a + b, 0) / firstScores.length) : null,
+      firstAvg: firstScores.length
+        ? (decimal
+          ? Math.round((firstScores.reduce((a, b) => a + b, 0) / firstScores.length) * 1e5) / 1e5
+          : Math.round(firstScores.reduce((a, b) => a + b, 0) / firstScores.length))
+        : null,
       passRate: Math.round((passed / recs.length) * 100),
     }
-  }, [recs])
+  }, [recs, decimal])
 
   return (
     <>
@@ -64,7 +71,7 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
           {stats && (
             <div className="drawer-stats">
               <div className="stat"><div className="s-label">测试数</div><div className="s-value">{stats.count}</div></div>
-              <div className="stat"><div className="s-label">首轮均分</div><div className="s-value">{stats.firstAvg ?? '—'}</div></div>
+              <div className="stat"><div className="s-label">首轮均分</div><div className="s-value">{stats.firstAvg === null || stats.firstAvg === undefined ? (blankEmpty ? '' : '—') : (decimal ? Number(stats.firstAvg).toFixed(5) : stats.firstAvg)}</div></div>
               <div className="stat"><div className="s-label">最终通过率</div><div className="s-value">{stats.passRate}%</div></div>
             </div>
           )}
@@ -79,7 +86,7 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
                   <span className="m">{seriesKey(r)}</span>
                   <span className={`think-tag lv-${r.thinking}`}>{THINKING_LABELS[r.thinking] || r.thinking}</span>
                   <span className={`sub-badge ${last ? subBadgeClass(last.score) : 'b-na'}`}>
-                    {last ? `${last.result} ${last.score ?? ''}` : '无提交'}
+                    {last ? `${last.result} ${scoreText(last.score, decimal)}` : '无提交'}
                   </span>
                   {r.status === 'pending' && <span className="status-tag pending">待审</span>}
                   <span className="meta" title={`录入 ${fmtDateTime(r.createdAt)} · 更新 ${fmtDateTime(r.updatedAt)}`}>
@@ -100,7 +107,7 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
                 </div>
                 {(r.submissions || []).map((s, i) => (
                   <div key={i} className="chain">
-                    第{i + 1}轮：{s.result} {s.score !== null && s.score !== undefined ? `· ${s.score} 分` : ''} {s.note ? `· ${s.note}` : ''}
+                    第{i + 1}轮：{s.result} {s.score !== null && s.score !== undefined ? `· ${scoreText(s.score, decimal)} 分` : ''} {s.note ? `· ${s.note}` : ''}
                   </div>
                 ))}
                 {r.note && <div className="chain">备注：{r.note}</div>}

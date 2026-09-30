@@ -7,6 +7,10 @@ export interface Sub {
     score: number | null;
     result: string;
     note: string;
+    /** v2：本轮洛谷实测时间消耗（ms）。老数据/老表单没有这一项 */
+    timeMs?: number | null;
+    /** v2：本轮内存使用量（MB）。老数据/老表单没有这一项 */
+    memoryMb?: number | null;
 }
 
 export interface Rec {
@@ -124,6 +128,17 @@ export function intOrNull(value: unknown, lo: number, hi: number, label: string)
     return n;
 }
 
+/** 同 intOrNull，但保留小数（内存这类支持浮点的字段）；精度截到 3 位小数 */
+export function numOrNull(value: unknown, lo: number, hi: number, label: string): number | null {
+    if (value === undefined || value === null || (typeof value === "string" && value.trim() === "")) {
+        return null;
+    }
+    const n = Number(value);
+    if (!Number.isFinite(n)) throw badRequest(`${label} 必须是数字`);
+    if (n < lo || n > hi) throw badRequest(`${label} 超出范围（${lo}–${hi}）`);
+    return Math.round(n * 1000) / 1000;
+}
+
 export function nameList(value: unknown, maxCount: number, maxLen: number, label: string): string[] {
     const out: string[] = [];
     if (value === undefined || value === null) return out;
@@ -158,11 +173,25 @@ export function sanitizeSubmission(raw: any): Sub {
     if (!(RESULTS as readonly string[]).includes(result)) {
         throw badRequest(`提交结果必须是 ${RESULTS.join("/")} 之一`);
     }
-    return {
+    const sub: Sub = {
         score: intOrNull(raw.score, 0, 100, "得分"),
         result,
         note: text(raw.note, MAX_SUB_NOTE, "提交说明"),
     };
+    // v2：每轮的时间消耗(ms)/内存使用量(MB)。给了就必须 >0，否则 400；
+    // 时间 = 整数毫秒，内存 = 支持小数（MB，服务端截到 3 位小数）。
+    // 不提供时保持缺省（老版表单不带这两项，行为完全不变）。
+    if (raw.timeMs !== undefined && raw.timeMs !== null) {
+        const t = intOrNull(raw.timeMs, 1, 3600000, "时间消耗(ms)");
+        if (t === null) throw badRequest("时间消耗（ms）必填，且必须大于 0");
+        sub.timeMs = t;
+    }
+    if (raw.memoryMb !== undefined && raw.memoryMb !== null) {
+        const m = numOrNull(raw.memoryMb, 0.001, 1048576, "内存使用量(MB)");
+        if (m === null) throw badRequest("内存使用量（MB）必填，且必须大于 0");
+        sub.memoryMb = m;
+    }
+    return sub;
 }
 
 /** 把前端传入的记录清洗为白名单结构。existing 非空表示更新（保留 id/创建时间/作者） */
@@ -204,7 +233,7 @@ export function sanitizeRecord(raw: any, existing?: Partial<Rec> | null, status?
         categories: nameList(raw.categories, MAX_CATEGORIES, MAX_CATEGORY, "算法类别"),
         submissions,
         minutes: intOrNull(raw.minutes, 0, 100000, "用时"),
-        memory: intOrNull(raw.memory, 0, 1000000, "内存"),
+        memory: numOrNull(raw.memory, 0, 1000000, "内存"),
         date,
         note: text(raw.note, MAX_NOTE, "备注"),
         status: st,

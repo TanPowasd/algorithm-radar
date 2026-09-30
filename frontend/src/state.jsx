@@ -122,6 +122,12 @@ export function AppProvider({ children }) {
     }
   }, [])
 
+  /**
+   * 数据源：线上 D1 的 /api/data —— 唯一真源（记录、题目目录、修订号都来自这里）。
+   * 旧数据页（v1，/old）与其冻结快照 frontend/public/data/old.json 已下线，
+   * 不再做「冻结快照 + D1」合并：删除过的历史记录不再被快照复活。
+   * 接口失败时保留现有数据（或本地缓存）只读展示，交由上层判定离线。
+   */
   const refreshData = useCallback(async () => {
     try {
       const d = await api('/api/data')

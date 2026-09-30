@@ -35,3 +35,7 @@ opencode.jsonc
 # 系统/编辑器
 Thumbs.db
 .DS_Store
+
+# 本地临时目录（不入库）
+.dsh-tmp/
+.pt-tmp/

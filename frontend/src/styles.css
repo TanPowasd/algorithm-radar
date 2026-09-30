@@ -1171,3 +1171,51 @@ table.data.has-check td.sticky-col, table.data.has-check th.sticky-col { left: 3
   .analysis-filters, .analysis-nav, .matrix-toolbar, .matrix-guide { display: none !important; }
   .matrix-wrap { max-height: none; overflow: visible; }
 }
+
+/* ============================================================
+   k4u-V2 升级版页面（本轮新增；只用 v2- 前缀，不动既有任何规则）
+   ============================================================ */
+.v2-layout { display: flex; flex-direction: column; gap: var(--sp-4); max-width: 100%; }
+.v2-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+.v2-head h2 { margin: 0; }
+.v2-badge {
+  display: inline-block; padding: 3px 10px; border: 1px solid var(--accent);
+  border-radius: var(--r-sm); background: var(--accent-soft); color: var(--accent);
+  font-family: var(--font-head); font-size: var(--fs-xs); letter-spacing: 0.08em;
+  text-transform: uppercase; white-space: nowrap;
+}
+.v2-sub { color: var(--text-2); font-size: var(--fs-sm); }
+.v2-panel {
+  border: 1px dashed var(--border); border-radius: var(--r-md); background: var(--surface);
+  padding: var(--sp-5); min-height: 180px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: var(--sp-2); max-width: 100%;
+}
+.v2-empty { text-align: center; max-width: 100%; }
+.v2-empty-title { margin: 0 0 var(--sp-2); font-family: var(--font-head); font-size: var(--fs-2xl); color: var(--text); }
+.v2-empty-sub { margin: 0; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.7; overflow-wrap: anywhere; }
+.v2-count { display: flex; align-items: baseline; gap: var(--sp-2); }
+.v2-count-num { font-family: var(--font-mono); font-size: 40px; color: var(--accent); }
+.v2-count-label { color: var(--text-2); font-size: var(--fs-sm); }
+.v2-meta { margin: var(--sp-2) 0 0; color: var(--muted); font-size: var(--fs-xs); font-family: var(--font-mono); overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .v2-panel { padding: var(--sp-4); min-height: 150px; }
+  .v2-count-num { font-size: 32px; }
+  .v2-empty-title { font-size: var(--fs-xl); }
+}
+
+/* v2：提交工具栏 + 每轮「时间消耗(ms)/内存使用量(MB)」就地校验（375px 不溢出、不遮挡） */
+.v2-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); max-width: 100%; }
+.v2-seg { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.v2-hint { color: var(--text-2); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.perf-box {
+  grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  align-items: flex-start; max-width: 100%; min-width: 0;
+}
+.perf-field { display: flex; flex-direction: column; gap: 2px; flex: 1 1 150px; min-width: 0; max-width: 100%; }
+.perf-field input { width: 100%; min-width: 0; }
+.perf-label { font-family: var(--font-head); font-size: var(--fs-xs); letter-spacing: 0.02em; color: var(--text-2); }
+.perf-err { color: var(--red); font-size: var(--fs-xs); line-height: 1.35; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .perf-field { flex: 1 1 100%; }
+  .v2-toolbar .btn { width: 100%; }
+}

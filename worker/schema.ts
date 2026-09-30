@@ -92,6 +92,24 @@ export const SCHEMA_STATEMENTS: string[] = [
     `CREATE INDEX IF NOT EXISTS idx_records_author  ON records(author, status, deleted_at)`,
     `CREATE INDEX IF NOT EXISTS idx_login_guard_until ON login_guard(locked_until)`,
     `CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(id)`,
+    // v3.12：农场对抗赛战绩（只登记谁和谁打、谁赢了、赢了多少）
+    `CREATE TABLE IF NOT EXISTS arena_matches (
+    id         TEXT PRIMARY KEY,
+    a_name     TEXT NOT NULL,
+    b_name     TEXT NOT NULL,
+    winner     TEXT NOT NULL CHECK(winner IN ('A','B','draw')),
+    a_cash     REAL,
+    b_cash     REAL,
+    margin     REAL NOT NULL DEFAULT 0,
+    games      INTEGER NOT NULL DEFAULT 1,
+    note       TEXT NOT NULL DEFAULT '',
+    played_at  TEXT NOT NULL,
+    author     TEXT NOT NULL DEFAULT '',
+    author_id  INTEGER,
+    deleted_at TEXT,
+    created_at TEXT NOT NULL
+)`,
+    `CREATE INDEX IF NOT EXISTS idx_arena_played ON arena_matches(deleted_at, played_at DESC)`,
     // revision 单调递增（缓存校验器的一部分）；data_version 对齐旧 data.json 的版本号；
     // cache_epoch 在清库/覆盖导入时更换，保证校验器不会「回到旧值」
     `INSERT OR IGNORE INTO meta(key, value) VALUES ('revision', '0')`,
