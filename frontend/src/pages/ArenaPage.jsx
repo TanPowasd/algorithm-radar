@@ -44,6 +44,7 @@ export default function ArenaPage() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
+  const [replays, setReplays] = useState([])
 
   // 对抗赛数据只有站长可写（admin/contributor 均只读）
   const canWrite = session?.role === 'owner'
@@ -53,6 +54,9 @@ export default function ArenaPage() {
     api('/api/arena/matches')
       .then((d) => { setData(d); setError('') })
       .catch((e) => setError(e.message))
+    api('/api/arena/replays')
+      .then((d) => setReplays(d.replays || []))
+      .catch(() => setReplays([]))
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -101,6 +105,37 @@ export default function ArenaPage() {
       setError(err.message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  // 上传回放：本地对局录出来的 JSON 直接推进 R2（只有站长能传）
+  const uploadReplay = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setError('')
+    if (file.size > 8 * 1024 * 1024) { setError('回放文件超过 8 MB 上限'); return }
+    setBusy(true)
+    try {
+      const replay = JSON.parse(await file.text())
+      const d = await api('/api/arena/replays', { method: 'POST', body: { replay } })
+      toast('回放已上传：' + (d.replay?.aName || '?') + ' vs ' + (d.replay?.bName || '?'))
+      load()
+    } catch (err) {
+      setError(err instanceof SyntaxError ? '这个文件不是合法 JSON' : err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeReplay = async (r) => {
+    if (!window.confirm('删除这份回放？R2 里的文件也会一起删掉。')) return
+    try {
+      await api('/api/arena/replays/' + r.id, { method: 'DELETE' })
+      toast('回放已删除')
+      load()
+    } catch (err) {
+      setError(err.message)
     }
   }
 
@@ -257,6 +292,54 @@ export default function ArenaPage() {
                       <td>{m.note || <span className="chain">—</span>}</td>
                       <td>{m.author || <span className="chain">—</span>}</td>
                       {isAdmin && <td className="actions"><button className="btn small ghost" onClick={() => remove(m)}>删除</button></td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="card-head">
+            <h3>对局回放</h3>
+            <span className="chain" style={{ marginLeft: 'auto' }}>棋盘动画 + 现金曲线 + 每步动作</span>
+          </div>
+          {canWrite && (
+            <div className="filters">
+              <label className="btn small">
+                上传回放 JSON
+                <input type="file" accept=".json,application/json" hidden onChange={uploadReplay} />
+              </label>
+              <span className="chain">把 scripts/record_replay.py 录出来的 replays/*.json 传上来（≤ 8 MB），全站可看</span>
+            </div>
+          )}
+          {!replays.length && <div className="empty">还没有回放{canWrite ? '，先传一份试试' : ''}</div>}
+          {!!replays.length && (
+            <div className="table-scroll">
+              <table className="data lb-table">
+                <thead>
+                  <tr>
+                    <th>上传时间</th><th>A 方</th><th>B 方</th><th className="num">种子</th>
+                    <th>结果</th><th className="num">步数</th><th className="num">大小</th>
+                    <th>上传人</th><th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {replays.map((r) => (
+                    <tr key={r.id}>
+                      <td><TimeCell iso={r.createdAt} /></td>
+                      <td className="lb-model">{r.aName}</td>
+                      <td className="lb-model">{r.bName}</td>
+                      <td className="num">{r.seed ?? '—'}</td>
+                      <td>{r.winner === 'draw' ? '平局' : (r.winner ? r.winner + ' 胜' : (r.endReason || '—'))}</td>
+                      <td className="num">{r.steps || r.frames}</td>
+                      <td className="num">{Math.round((r.bytes || 0) / 1024)} KB</td>
+                      <td>{r.author || <span className="chain">—</span>}</td>
+                      <td className="actions">
+                        <a className="btn small" href={'/replay#src=/api/arena/replays/' + r.id} target="_blank" rel="noreferrer">看回放</a>
+                        {canWrite && <button className="btn small ghost" onClick={() => removeReplay(r)}>删除</button>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

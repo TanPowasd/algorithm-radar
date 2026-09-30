@@ -1144,4 +1144,120 @@ export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
     out.sort((x, y) => (y.wins - x.wins) || (y.netAvg - x.netAvg) || x.name.localeCompare(y.name));
     return out;
 }
+// ---------------------------------------------------------------- 农场对抗赛回放
+// 元数据入 D1，回放 blob 入 R2（键 replays/<id>.json）。只有站长可上传/删除。
+export interface ArenaReplay {
+    id: string;
+    aName: string;
+    bName: string;
+    seed: number | null;
+    winner: string;
+    endReason: string;
+    steps: number;
+    frames: number;
+    bytes: number;
+    sha256: string;
+    engineSha: string;
+    matchId: string | null;
+    author: string;
+    authorId: number | null;
+    createdAt: string;
+}
+
+export const REPLAY_FORMAT = "k4u-arena-replay/1";
+export const ARENA_REPLAY_MAX_BYTES = 8 * 1024 * 1024;
+export const ARENA_REPLAY_MAX_FRAMES = 4000;
+export const ARENA_REPLAY_MAX_ROWS = 500;
+
+export function replayObjectKey(id: string): string {
+    return "replays/" + id + ".json";
+}
+
+async function sha256Hex(text: string): Promise<string> {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function mapArenaReplayRow(r: any): ArenaReplay {
+    return {
+        id: String(r.id), aName: r.a_name, bName: r.b_name,
+        seed: r.seed === null || r.seed === undefined ? null : Number(r.seed),
+        winner: r.winner ?? "", endReason: r.end_reason ?? "",
+        steps: Number(r.steps) || 0, frames: Number(r.frames) || 0,
+        bytes: Number(r.bytes) || 0, sha256: r.sha256 ?? "", engineSha: r.engine_sha ?? "",
+        matchId: r.match_id ?? null, author: r.author ?? "",
+        authorId: r.author_id ?? null, createdAt: r.created_at,
+    };
+}
+
+/** 校验回放骨架 → 写 R2 → 写 D1（D1 失败回收 R2） */
+export async function addArenaReplay(db: D1Database, bucket: R2Bucket, raw: any,
+    user: { uid: number | null; username: string }): Promise<ArenaReplay> {
+    const body = raw && typeof raw === "object" ? raw : {};
+    if (String(body.format || "") !== REPLAY_FORMAT) {
+        throw badRequest("不是回放文件：format 必须为 " + REPLAY_FORMAT);
+    }
+    const meta = body.meta && typeof body.meta === "object" ? body.meta : {};
+    const frames = Array.isArray(body.frames) ? body.frames : null;
+    if (!frames || !frames.length) throw badRequest("回放缺少 frames");
+    if (frames.length > ARENA_REPLAY_MAX_FRAMES) throw badRequest("帧数过多（最多 " + ARENA_REPLAY_MAX_FRAMES + " 帧）");
+    const labels = Array.isArray(meta.labels) ? meta.labels.map((x: unknown) => String(x)) : [];
+    const aName = arenaName(meta.aName ?? labels[0] ?? "", "A 方名称");
+    const bName = arenaName(meta.bName ?? labels[1] ?? "", "B 方名称");
+    const text = JSON.stringify(body);
+    const bytes = new TextEncoder().encode(text).length;
+    if (bytes > ARENA_REPLAY_MAX_BYTES) {
+        throw badRequest("回放过大（" + Math.round(bytes / 1024) + " KB；上限 " + (ARENA_REPLAY_MAX_BYTES / 1024 / 1024) + " MB）");
+    }
+    const countRow = await db.prepare("SELECT COUNT(*) AS n FROM arena_replays WHERE deleted_at IS NULL").first<{ n: number }>();
+    if ((countRow?.n ?? 0) >= ARENA_REPLAY_MAX_ROWS) throw badRequest("回放数量已达上限（" + ARENA_REPLAY_MAX_ROWS + " 份），请先删除旧的");
+    const id = crypto.randomUUID();
+    const row: ArenaReplay = {
+        id, aName, bName,
+        seed: meta.seed === null || meta.seed === undefined ? null : Math.round(Number(meta.seed) || 0),
+        winner: String(meta.winner ?? "").slice(0, 12),
+        endReason: String(meta.end_reason ?? "").slice(0, 24),
+        steps: Math.round(Number(meta.steps_done ?? meta.steps ?? frames.length) || 0),
+        frames: frames.length, bytes, sha256: await sha256Hex(text),
+        engineSha: String(meta.engine_sha256 ?? "").slice(0, 64),
+        matchId: body.matchId ? String(body.matchId).slice(0, 64) : null,
+        author: user.username, authorId: user.uid ?? null, createdAt: nowIso(),
+    };
+    await bucket.put(replayObjectKey(id), text, {
+        httpMetadata: { contentType: "application/json; charset=utf-8" },
+    });
+    try {
+        await db.prepare("INSERT INTO arena_replays (id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at) " +
+            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)")
+            .bind(row.id, row.aName, row.bName, row.seed, row.winner, row.endReason, row.steps, row.frames,
+                row.bytes, row.sha256, row.engineSha, row.matchId, row.author, row.authorId, row.createdAt)
+            .run();
+    } catch (e) {
+        await bucket.delete(replayObjectKey(id));   // D1 写失败则回收 R2，避免留下孤儿对象
+        throw e;
+    }
+    return row;
+}
+
+export async function listArenaReplays(db: D1Database, limit = 200): Promise<ArenaReplay[]> {
+    const size = Math.max(1, Math.min(500, Math.round(limit) || 200));
+    const { results } = await db.prepare(
+        "SELECT id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at " +
+        "FROM arena_replays WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?1")
+        .bind(size).all<any>();
+    return (results || []).map(mapArenaReplayRow);
+}
+
+export async function getArenaReplay(db: D1Database, id: string): Promise<ArenaReplay | null> {
+    const row = await db.prepare(
+        "SELECT id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at " +
+        "FROM arena_replays WHERE id = ?1 AND deleted_at IS NULL").bind(String(id)).first<any>();
+    return row ? mapArenaReplayRow(row) : null;
+}
+
+export async function deleteArenaReplay(db: D1Database, id: string): Promise<boolean> {
+    const r = await db.prepare("UPDATE arena_replays SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL")
+        .bind(nowIso(), String(id)).run();
+    return (((r as any).meta?.changes) ?? 0) > 0;
+}
 

@@ -420,6 +420,49 @@ try {
   ok('站长删战绩 → ok', arenaDelOwner.data?.ok === true)
   const arenaAfter = await call(owner, 'GET', '/api/arena/matches')
   ok('软删除后榜单重算（dsf 消失）', !(arenaAfter.data?.standings || []).some((s) => s.name === 'dsf'), JSON.stringify(arenaAfter.data?.standings))
+  // 18. 对抗赛回放：只有站长可上传/删除，GET 公开可读（blob 在 R2）
+  const tinyReplay = {
+    format: 'k4u-arena-replay/1',
+    meta: { seed: 11, labels: ['dsf4.1', 'qwen4'], winner: 'A', end_reason: 'cash', steps_done: 1 },
+    legend: { crops: {}, animals: {}, items: [] },
+    frames: [{
+      t: 1,
+      p: [
+        { pos: [4, 4], hands: [], money: 3000, tiles: '0'.repeat(100), extra: {}, shed: {}, seeds: {}, inv: [] },
+        { pos: [4, 5], hands: [], money: 3000, tiles: '0'.repeat(100), extra: {}, shed: {}, seeds: {}, inv: [] },
+      ],
+      act: [{ farmer: ['PASS'] }, { farmer: ['PASS'] }],
+    }],
+  }
+  const upOwner = await call(owner, 'POST', '/api/arena/replays', { replay: tinyReplay })
+  ok('站长上传回放 → ok', upOwner.data?.ok === true, 'HTTP ' + upOwner.status + ' ' + JSON.stringify(upOwner.data && upOwner.data.replay))
+  const repId = upOwner.data?.replay?.id
+  ok('回放元数据记录了字节/步数/种子', upOwner.data?.replay?.bytes > 0 && upOwner.data?.replay?.steps === 1 && upOwner.data?.replay?.seed === 11, JSON.stringify(upOwner.data?.replay))
+  const upContrib = await call(gina, 'POST', '/api/arena/replays', { replay: tinyReplay })
+  ok('贡献者上传回放 → 403', upContrib.status === 403, 'HTTP ' + upContrib.status)
+  const upAdmin = await call(admin, 'POST', '/api/arena/replays', { replay: tinyReplay })
+  ok('管理员上传回放 → 403（只有站长可写）', upAdmin.status === 403, 'HTTP ' + upAdmin.status)
+  const listRep = await call(gina, 'GET', '/api/arena/replays')
+  ok('回放列表公开可读且不含 blob', (listRep.data?.replays || []).some((r) => r.id === repId)
+    && listRep.data.replays.every((r) => !('legend' in r) && typeof r.frames === 'number')
+    && JSON.stringify(listRep.data).length < 20000, JSON.stringify(listRep.data?.replays))
+  const getRep = await fetch(apiUrl('/api/arena/replays/' + repId))
+  const repText = await getRep.text()
+  const repEtag = getRep.headers.get('etag')
+  const repParsed = JSON.parse(repText)
+  ok('回放文件可从 R2 取回且内容一致', getRep.ok && repParsed.frames.length === 1 && repParsed.meta.seed === 11, 'HTTP ' + getRep.status)
+  ok('回放带 ETag 与不可变缓存', !!repEtag && (getRep.headers.get('cache-control') || '').includes('immutable'), String(repEtag))
+  const notMod = await fetch(apiUrl('/api/arena/replays/' + repId), { headers: { 'If-None-Match': repEtag } })
+  ok('If-None-Match 命中 → 304', notMod.status === 304, 'HTTP ' + notMod.status)
+  const badRep = await call(owner, 'POST', '/api/arena/replays', { replay: { format: 'nope', frames: [] } })
+  ok('非法回放格式 → 400', badRep.status === 400, 'HTTP ' + badRep.status)
+  const delRepContrib = await call(gina, 'DELETE', '/api/arena/replays/' + repId)
+  ok('贡献者删回放 → 403', delRepContrib.status === 403, 'HTTP ' + delRepContrib.status)
+  const delRepOwner = await call(owner, 'DELETE', '/api/arena/replays/' + repId)
+  ok('站长删回放 → ok', delRepOwner.data?.ok === true)
+  const afterDel = await fetch(apiUrl('/api/arena/replays/' + repId))
+  ok('删除后取回 → 404', afterDel.status === 404, 'HTTP ' + afterDel.status)
+
 } catch (e) {
   failures.push(`流程异常：${e.message}`)
   console.error('[e2e] 异常：', e)

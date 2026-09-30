@@ -729,6 +729,49 @@ const routes: Route[] = [
         return { ok: true };
     } },
 
+    // ---- 对抗赛回放（blob 存 R2，元数据存 D1；只有站长可写）----
+    { method: "GET", path: "/api/arena/replays", role: null, handler: async (ctx) => {
+        return { ok: true, replays: await store.listArenaReplays(ctx.env.DB) };
+    } },
+
+    { method: "POST", path: "/api/arena/replays", role: "owner", handler: async (ctx) => {
+        const user = requireRole(ctx, "owner");
+        const bucket = ctx.env.SNAPSHOT_BUCKET;
+        if (!bucket) throw new ApiError(503, "回放存储（R2）未配置，暂时无法上传");
+        const body = ctx.body?.replay && typeof ctx.body.replay === "object" ? ctx.body.replay : ctx.body;
+        const info = await store.addArenaReplay(ctx.env.DB, bucket, body, { uid: user.uid, username: user.username });
+        await store.logAudit(ctx.env.DB, user, "arena_replay_add",
+            "上传回放 " + info.id + "（" + Math.round(info.bytes / 1024) + " KB，种子 " + (info.seed ?? "-") + "）");
+        return { ok: true, replay: info, message: "回放已上传" };
+    } },
+
+    { method: "GET", path: "/api/arena/replays/:id", role: null, handler: async (ctx) => {
+        const meta = await store.getArenaReplay(ctx.env.DB, ctx.params.id);
+        if (!meta) throw new ApiError(404, "没找到这份回放（可能已被删除）");
+        const bucket = ctx.env.SNAPSHOT_BUCKET;
+        if (!bucket) throw new ApiError(503, "回放存储（R2）未配置");
+        const etag = "\"" + meta.sha256 + "\"";
+        const cache = { ETag: etag, "Cache-Control": "public, max-age=31536000, immutable" };
+        if (ctx.req.headers.get("If-None-Match") === etag) {
+            return new Response(null, { status: 304, headers: cache });
+        }
+        const obj = await bucket.get(store.replayObjectKey(meta.id));
+        if (!obj) throw new ApiError(404, "回放文件已不存在（可能已被清理）");
+        return new Response(obj.body, {
+            headers: { "Content-Type": "application/json; charset=utf-8", ...cache },
+        });
+    } },
+
+    { method: "DELETE", path: "/api/arena/replays/:id", role: "owner", handler: async (ctx) => {
+        const user = requireRole(ctx, "owner");
+        const meta = await store.getArenaReplay(ctx.env.DB, ctx.params.id);
+        if (!meta) throw new ApiError(404, "没找到这份回放（可能已被删除）");
+        await store.deleteArenaReplay(ctx.env.DB, meta.id);
+        const bucket = ctx.env.SNAPSHOT_BUCKET;
+        if (bucket) await bucket.delete(store.replayObjectKey(meta.id));
+        await store.logAudit(ctx.env.DB, user, "arena_replay_delete", "删除回放 " + meta.id);
+        return { ok: true };
+    } },
 ];
 
 // ---------------------------------------------------------------- 入口
@@ -736,6 +779,7 @@ const routes: Route[] = [
 const BODY_LIMITS: Array<[string, number]> = [
     ["/api/import", 16 * 1024 * 1024],
     ["/api/records", 2 * 1024 * 1024],
+    ["/api/arena/replays", 8 * 1024 * 1024],
 ];
 const DEFAULT_BODY_LIMIT = 64 * 1024;
 

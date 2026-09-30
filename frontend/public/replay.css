@@ -1,0 +1,65 @@
+/* 由 sync_web_player.py 从 viz/player.html 生成；源文件 sha256=d5842aeae4a5189d5b3914af9096a3fbd300cdbba63a041aeebe55ce2c04384a；请勿直接改 */
+  :root{
+    --bg:#12151c; --panel:#1b1f28; --panel2:#222735; --border:#2c3344; --text:#e6e9ef;
+    --muted:#98a2b3; --a:#5aa9ff; --b:#ffb347; --soil:#3a3227; --soil2:#463c2e;
+    --locked:#232833; --weed:#4c7a3a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  a{color:var(--a)}
+  #wrap{max-width:1500px;margin:0 auto;padding:14px}
+  header#top{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;
+             border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:12px}
+  h1{font-size:17px;margin:0}
+  .tag{font-size:12px;color:var(--muted);border:1px solid var(--border);
+       border-radius:999px;padding:1px 8px}
+  .nm{font-weight:700}
+  .nmA{color:var(--a)} .nmB{color:var(--b)}
+  #drop{border:1px dashed var(--border);border-radius:10px;padding:26px;text-align:center;color:var(--muted)}
+  #drop.hot{border-color:var(--a);color:var(--text)}
+  #loadbox{margin:8px 0 0;font-size:12px;color:var(--muted)}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:14px}
+  @media (max-width:1150px){main{grid-template-columns:1fr}}
+  .boards{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:760px){.boards{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px}
+  .card h2{font-size:13px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:baseline}
+  .money{font-variant-numeric:tabular-nums;font-size:15px;font-weight:700}
+  .board{display:grid;grid-template-columns:repeat(10,1fr);gap:2px}
+  .cell{position:relative;aspect-ratio:1/1;border-radius:3px;background:var(--soil);
+        display:flex;align-items:center;justify-content:center;font-size:11px;color:#0008;
+        overflow:hidden}
+  .cell.locked{background:repeating-linear-gradient(45deg,#1c212b,#1c212b 4px,#242a36 4px,#242a36 8px)}
+  .cell.weed{background:var(--weed);color:#dfe9d5}
+  .cell.plant{color:#0e1117;font-weight:700}
+  .cell.animal{background:var(--soil2);color:#f0e6d2}
+  .cell .u{position:absolute;border-radius:50%;border:1px solid #0007}
+  .cell .f{width:60%;height:60%;background:#fff;box-shadow:0 0 0 2px #0006}
+  .cell .f.a{background:var(--a)} .cell .f.b{background:var(--b)}
+  .cell .h{width:38%;height:38%;background:#cbd5e1;right:2px;top:2px}
+  .cell .y{position:absolute;right:1px;bottom:0;font-size:9px;background:#0009;color:#fff;
+           border-radius:3px;padding:0 2px}
+  .cell .wet{position:absolute;left:1px;top:1px;width:6px;height:6px;border-radius:50%;background:#4da3ff}
+  .cell .fert{position:absolute;left:9px;top:1px;width:6px;height:6px;border-radius:50%;background:#c084fc}
+  .legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:11px;color:var(--muted)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+  #controls{position:sticky;bottom:0;background:linear-gradient(#12151ccc,#12151c);padding:10px 0;margin-top:12px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  button{background:var(--panel2);color:var(--text);border:1px solid var(--border);
+         border-radius:8px;padding:5px 10px;cursor:pointer;font-size:13px}
+  button:hover{border-color:var(--a)}
+  button.on{background:var(--a);color:#08111c;border-color:var(--a);font-weight:700}
+  input[type=range]{flex:1;min-width:220px;accent-color:var(--a)}
+  .mono{font-variant-numeric:tabular-nums}
+  table.mkt{width:100%;border-collapse:collapse;font-size:12px}
+  table.mkt td{padding:2px 4px;border-bottom:1px solid var(--border)}
+  table.mkt td.n{text-align:right;font-variant-numeric:tabular-nums}
+  .up{color:#6fd3a1} .down{color:#ff7b72}
+  #acts{font-size:12px;max-height:320px;overflow:auto}
+  #acts .side{padding:6px 0;border-bottom:1px dashed var(--border)}
+  #acts .op{font-family:ui-monospace,Consolas,monospace}
+  #acts .k{color:var(--muted)}
+  canvas{width:100%;height:130px;display:block}
+  .hint{color:var(--muted);font-size:12px}
+  #err{color:#ff7b72;white-space:pre-wrap;font-size:12px}

@@ -110,6 +110,26 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL
 )`,
     `CREATE INDEX IF NOT EXISTS idx_arena_played ON arena_matches(deleted_at, played_at DESC)`,
+    // v3.13：对抗赛回放（D1 存元数据，blob 存 R2 的 replays/<id>.json）
+    `CREATE TABLE IF NOT EXISTS arena_replays (
+    id          TEXT PRIMARY KEY,
+    a_name      TEXT NOT NULL,
+    b_name      TEXT NOT NULL,
+    seed        INTEGER,
+    winner      TEXT NOT NULL DEFAULT '',
+    end_reason  TEXT NOT NULL DEFAULT '',
+    steps       INTEGER NOT NULL DEFAULT 0,
+    frames      INTEGER NOT NULL DEFAULT 0,
+    bytes       INTEGER NOT NULL DEFAULT 0,
+    sha256      TEXT NOT NULL DEFAULT '',
+    engine_sha  TEXT NOT NULL DEFAULT '',
+    match_id    TEXT,
+    author      TEXT NOT NULL DEFAULT '',
+    author_id   INTEGER,
+    deleted_at  TEXT,
+    created_at  TEXT NOT NULL
+)`,
+    `CREATE INDEX IF NOT EXISTS idx_arena_replay_created ON arena_replays(deleted_at, created_at DESC)`,
     // revision 单调递增（缓存校验器的一部分）；data_version 对齐旧 data.json 的版本号；
     // cache_epoch 在清库/覆盖导入时更换，保证校验器不会「回到旧值」
     `INSERT OR IGNORE INTO meta(key, value) VALUES ('revision', '0')`,

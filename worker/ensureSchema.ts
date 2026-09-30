@@ -13,7 +13,7 @@
 import { SCHEMA_STATEMENTS } from "./schema";
 
 /** 与下方 MIGRATIONS 一一对应的版本号；改动迁移列表就必须 +1 */
-export const SCHEMA_VERSION = "v3.12";
+export const SCHEMA_VERSION = "v3.13";
 
 let ready: Promise<void> | null = null;
 

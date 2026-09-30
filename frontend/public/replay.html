@@ -1,0 +1,80 @@
+<!-- 由 F:\AIkaggle对抗赛\scripts\sync_web_player.py 从 viz/player.html 生成；源文件 sha256=d5842aeae4a5189d5b3914af9096a3fbd300cdbba63a041aeebe55ce2c04384a；请改源文件后重新同步，勿直接改这里 -->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>农场对抗赛 · 回放播放器</title>
+<link rel="stylesheet" href="/replay.css">
+</head>
+<body>
+<div id="wrap">
+  <header id="top">
+    <h1>农场对抗赛 · 回放</h1>
+    <span class="tag" id="tSeed">seed –</span>
+    <span class="tag" id="tStep">step –</span>
+    <span id="tPlayers"></span>
+    <span class="tag" id="tWinner">–</span>
+    <span class="tag" id="tEngine">–</span>
+  </header>
+
+  <div id="drop">
+    把回放 JSON 拖到这里，或
+    <label style="cursor:pointer;text-decoration:underline">
+      选择文件<input id="file" type="file" accept=".json,application/json" hidden>
+    </label>
+    <div id="loadbox">也支持用 #src=/replays/xxx.json 直接打开（配合 record_replay.py --serve）</div>
+    <div id="err"></div>
+  </div>
+
+  <main id="main" hidden>
+    <section>
+      <div class="boards">
+        <div class="card" id="cardA">
+          <h2><span class="nm nmA" id="nameA">A</span><span class="money" id="moneyA">–</span></h2>
+          <div class="board" id="boardA"></div>
+          <div class="legend" id="legA"></div>
+        </div>
+        <div class="card" id="cardB">
+          <h2><span class="nm nmB" id="nameB">B</span><span class="money" id="moneyB">–</span></h2>
+          <div class="board" id="boardB"></div>
+          <div class="legend" id="legB"></div>
+        </div>
+      </div>
+    </section>
+    <aside>
+      <div class="card">
+        <h2>现金曲线</h2>
+        <canvas id="cvMoney" width="720" height="260"></canvas>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h2>市场（当前价 / 库存）</h2>
+        <table class="mkt" id="mkt"></table>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h2>本步动作</h2>
+        <div id="acts"></div>
+      </div>
+    </aside>
+  </main>
+
+  <div id="controls" hidden>
+    <div class="row" style="margin-bottom:6px">
+      <button id="play">▶ 播放</button>
+      <button id="spd">速度 1×</button>
+      <button id="b1">−1 步</button>
+      <button id="f1">+1 步</button>
+      <button id="bd">−1 天</button>
+      <button id="fd">+1 天</button>
+      <button id="end">跳到结束</button>
+      <span class="hint" id="clock">–</span>
+    </div>
+    <div class="row">
+      <input id="seek" type="range" min="0" max="0" value="0" step="1">
+    </div>
+  </div>
+</div>
+
+<script src="/replay.js"></script>
+</body>
+</html>
