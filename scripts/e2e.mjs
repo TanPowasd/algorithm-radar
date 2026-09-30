@@ -396,6 +396,30 @@ try {
   ok('审计含 删记录/删题目/删模型', ['record.delete', 'problem.delete', 'model.delete'].every((a) => actions.has(a)))
   ok('审计 user.delete 条目详情含被删用户名', audit.some((a) => a.action === 'user.delete' && a.detail.includes('bob')))
   ok('审计条目带操作人', audit.every((a) => a.actor && a.createdAt))
+
+  // 17. 农场对抗赛战绩：只有站长可写（admin/contributor 只读）
+  const arenaContrib = gina   // gina 是在册贡献者（eve/carl 已在中途被删号，不能复用）
+  const arenaBad = await call(arenaContrib, 'POST', '/api/arena/matches', { match: { aName: 'a1', bName: 'b1', winner: 'A', margin: 1 } })
+  ok('贡献者登记战绩 → 403', arenaBad.status === 403, `HTTP ${arenaBad.status} ${JSON.stringify(arenaBad.data)}`)
+  const arenaAdmin = await prime(new Jar())
+  await call(arenaAdmin, 'POST', '/api/login', user('alice', 'alicepass12345'))
+  const arenaAdminPost = await call(arenaAdmin, 'POST', '/api/arena/matches', { match: { aName: 'a1', bName: 'b1', winner: 'A', margin: 1 } })
+  ok('管理员登记战绩 → 403（只有站长可写）', arenaAdminPost.status === 403, `HTTP ${arenaAdminPost.status}`)
+  const arenaOwner = await call(owner, 'POST', '/api/arena/matches', { match: { aName: 'dsf', bName: 'qwen', winner: 'A', aCash: 24302, bCash: 2660, note: 'e2e' } })
+  ok('站长登记战绩 → ok 且自动算净胜 21642', arenaOwner.data?.ok === true && arenaOwner.data?.match?.margin === 21642, JSON.stringify(arenaOwner.data))
+  const arenaSelf = await call(owner, 'POST', '/api/arena/matches', { match: { aName: 'dsf', bName: 'DSF', winner: 'A', margin: 1 } })
+  ok('A/B 同名被拒 → 400', arenaSelf.status === 400, `HTTP ${arenaSelf.status}`)
+  const arenaBadWinner = await call(owner, 'POST', '/api/arena/matches', { match: { aName: 'a1', bName: 'b1', winner: 'C', margin: 1 } })
+  ok('胜者字段非法被拒 → 400', arenaBadWinner.status === 400, `HTTP ${arenaBadWinner.status}`)
+  const arenaList = await call(arenaContrib, 'GET', '/api/arena/matches')
+  ok('榜单公开可读且 dsf 记 1 胜', (arenaList.data?.ok === true) && (arenaList.data?.standings || []).some((s) => s.name === 'dsf' && s.wins === 1 && s.netTotal === 21642), JSON.stringify(arenaList.data?.standings))
+  const arenaId = arenaOwner.data?.match?.id
+  const arenaDelContrib = await call(arenaContrib, 'DELETE', `/api/arena/matches/${arenaId}`)
+  ok('贡献者删战绩 → 403', arenaDelContrib.status === 403, `HTTP ${arenaDelContrib.status}`)
+  const arenaDelOwner = await call(owner, 'DELETE', `/api/arena/matches/${arenaId}`)
+  ok('站长删战绩 → ok', arenaDelOwner.data?.ok === true)
+  const arenaAfter = await call(owner, 'GET', '/api/arena/matches')
+  ok('软删除后榜单重算（dsf 消失）', !(arenaAfter.data?.standings || []).some((s) => s.name === 'dsf'), JSON.stringify(arenaAfter.data?.standings))
 } catch (e) {
   failures.push(`流程异常：${e.message}`)
   console.error('[e2e] 异常：', e)

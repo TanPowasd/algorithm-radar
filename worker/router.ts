@@ -714,8 +714,8 @@ const routes: Route[] = [
         return { ok: true, matches: rows, standings: store.arenaStandings(rows) };
     } },
 
-    { method: "POST", path: "/api/arena/matches", role: "contributor", handler: async (ctx) => {
-        const user = requireRole(ctx, "contributor");
+    { method: "POST", path: "/api/arena/matches", role: "owner", handler: async (ctx) => {
+        const user = requireRole(ctx, "owner");
         const raw = ctx.body?.match && typeof ctx.body.match === "object" ? ctx.body.match : ctx.body;
         const m = await store.addArenaMatch(ctx.env.DB, raw, { uid: user.uid, username: user.username });
         return { ok: true, match: m, message: "战绩已登记" };

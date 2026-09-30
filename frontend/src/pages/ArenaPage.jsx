@@ -45,7 +45,8 @@ export default function ArenaPage() {
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
 
-  const canWrite = !!session?.loggedIn && ['owner', 'admin', 'contributor'].includes(session.role)
+  // 对抗赛数据只有站长可写（admin/contributor 均只读）
+  const canWrite = session?.role === 'owner'
   const isAdmin = session?.role === 'owner' || session?.role === 'admin'
 
   const load = useCallback(() => {
@@ -124,7 +125,7 @@ export default function ArenaPage() {
       <main className="layout">
         <div className="page-head">
           <h2>农场对抗赛 · 战绩</h2>
-          <span className="desc">登记"谁和谁打、谁赢了、赢了多少" · 积分榜自动聚合</span>
+          <span className="desc">登记"谁和谁打、谁赢了、赢了多少" · 积分榜自动聚合 · 仅站长可写</span>
         </div>
 
         <div className="stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
@@ -188,7 +189,7 @@ export default function ArenaPage() {
             </form>
           </div>
         ) : (
-          <div className="card"><div className="empty">登录后即可登记战绩（贡献者及以上权限）</div></div>
+          <div className="card"><div className="empty">对抗赛战绩只有站长可以登记与修改；其他账号为只读视图</div></div>
         )}
 
         <div className="card">
