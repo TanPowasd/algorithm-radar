@@ -7,7 +7,7 @@ import MatrixView from '../views/MatrixView'
 import RecordsTable from '../views/RecordsTable'
 import ProblemDrawer from '../components/ProblemDrawer'
 import RecordFormModal from '../components/RecordFormModal'
-import CompetitionRankPanel from '../components/CompetitionRankPanel'
+import ArenaView from '../views/ArenaView'
 import { AppContext, useApp } from '../state'
 import { api } from '../api/client'
 import { toV2Dataset, V2_EMPTY } from '../v2data'
@@ -34,6 +34,7 @@ export default function K4uV2Page() {
   // 'rating' = rating（只用 v2 时间线，每格加权分，首行 Chatbot Arena 天梯分）
   // 'table' = 测评明细
   const [view, setView] = useState('rating') // 默认打开 rating
+  const [arenaSlug, setArenaSlug] = useState('kaggriculture')
 
   const load = useCallback(async () => {
     try {
@@ -79,15 +80,15 @@ export default function K4uV2Page() {
       <main className="layout v2-layout">
         <div className="v2-head">
           <span className="v2-badge">k4u-V2 升级版</span>
-          <h2>新数据落点</h2>
+          {view === 'arena' ? <h2>比赛</h2> : <h2>新数据落点</h2>}
           <span className="v2-sub">
-            {view === 'score'
-              ? '全部历史数据（含 2026-09-05 之前）· 分数为洛谷原始分'
-              : '2026-09-05 21:19 之后的数据 · 分数为加权分'}
+            {view === 'arena'
+              ? '多比赛：局级 ELO 实力榜 · 对战记录 · 回放 · 仅站长可登记'
+              : view === 'score'
+                ? '全部历史数据（含 2026-09-05 之前）· 分数为洛谷原始分'
+                : '2026-09-05 21:19 之后的数据 · 分数为加权分'}
           </span>
         </div>
-        <CompetitionRankPanel />
-
         <div className="v2-toolbar">
           <div className="v2-seg" role="tablist" aria-label="v2 视图">
             <button
@@ -105,22 +106,27 @@ export default function K4uV2Page() {
               className={'btn small ' + (view === 'table' ? 'primary' : 'ghost')}
               onClick={() => setView('table')}
             >测评明细{loaded && count > 0 ? '（' + count + '）' : ''}</button>
+            <button
+              type="button" role="tab" aria-selected={view === 'arena'}
+              className={'btn small ' + (view === 'arena' ? 'primary' : 'ghost')}
+              onClick={() => setView('arena')}
+            >比赛</button>
           </div>
-          {app.isContributor && (
+          {app.isContributor && view !== 'arena' && (
             <button type="button" className="btn primary" onClick={() => setFormState({ edit: null, lockPid: null })}>
               + 提交测评
             </button>
           )}
-          {app.isContributor && <span className="v2-hint">每轮必填：时间消耗（ms）与 内存使用量（MB），都须大于 0</span>}
+          {app.isContributor && view !== 'arena' && <span className="v2-hint">每轮必填：时间消耗（ms）与 内存使用量（MB），都须大于 0</span>}
         </div>
 
-        {!loaded && (
+        {view !== 'arena' && !loaded && (
           <section className="v2-panel" aria-live="polite">
             <p className="v2-empty-title">加载中…</p>
           </section>
         )}
 
-        {loaded && ((view === 'score' && rawRecords.length === 0) || (view !== 'score' && count === 0)) && (
+        {view !== 'arena' && loaded && ((view === 'score' && rawRecords.length === 0) || (view !== 'score' && count === 0)) && (
           <section className="v2-panel" aria-live="polite">
             <div className="v2-empty" role="status">
               <p className="v2-empty-title">{failed ? '数据加载失败' : '暂无数据'}</p>
@@ -145,6 +151,9 @@ export default function K4uV2Page() {
             </div>
           </section>
         )}
+
+        {/* 比赛：整页复用 views/ArenaView（同一个比赛视图，主界面内直接切比赛） */}
+        {view === 'arena' && <ArenaView slug={arenaSlug} onSelect={setArenaSlug} />}
 
         {/* AI 分数：实时原始数据 + 洛谷原始分，首行是平均分 */}
         {loaded && view === 'score' && rawScoreable && (
