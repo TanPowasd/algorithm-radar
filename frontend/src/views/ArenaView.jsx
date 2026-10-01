@@ -41,7 +41,7 @@ const EMPTY_FORM = { aName: '', bName: '', winner: 'A', aCash: '', bCash: '', ma
  * 农场对抗赛战绩：登记"谁和谁打、谁赢了、赢了多少"，并自动聚合积分榜。
  * 只做登记与展示——对局本身在本地裁判引擎里跑，这里不执行代码。
  */
-export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect = null }) {
+export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect = null, showAdmin = true }) {
   const { session, toast } = useApp()
   const slug = slugProp
   const navigate = useNavigate()
@@ -210,8 +210,17 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
         <div className="page-head">
           <h2>{comp?.name || '比赛'} · 战绩</h2>
           {!onSelect && <Link className="btn small ghost" style={{ marginLeft: 'auto' }} to="/arena">← 全部比赛</Link>}
-          <span className="desc">登记"谁和谁打、谁赢了、赢了多少" · 局级 ELO 实力榜自动聚合 · 仅站长可写</span>
+          <span className="desc">{showAdmin
+            ? '登记"谁和谁打、谁赢了、赢了多少" · 局级 ELO 实力榜自动聚合 · 仅站长可写'
+            : '局级 ELO 实力榜 · 任选两个模型看历史交锋 · 对战记录 · 回放'}</span>
         </div>
+
+        {!showAdmin && (canWrite || isAdmin) && (
+          <div className="chain" style={{ marginBottom: 'var(--sp-3)' }}>
+            当前是游客视图（只展示排名与回放）。登记战绩、上传回放、批量改名请到
+            <Link to={'/arena/' + slug}>比赛管理页</Link>。
+          </div>
+        )}
 
         {comps.length > 1 && (
           <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap', marginBottom: 'var(--sp-3)' }}>
@@ -227,12 +236,12 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
           <div className="stat"><div className="s-label"><span className="tone-dot tone-accent" />已登记对局</div><div className="s-value">{matches.length}</div></div>
           <div className="stat"><div className="s-label"><span className="tone-dot tone-green" />参战 agent</div><div className="s-value">{standings.length}</div></div>
           <div className="stat"><div className="s-label"><span className="tone-dot tone-purple" />战绩总净胜</div><div className="s-value">{num(totalMargin)}</div></div>
-          <div className="stat"><div className="s-label"><span className="tone-dot tone-orange" />登记人</div><div className="s-value" style={{ fontSize: 'var(--fs-lg)', paddingTop: 6 }}>{canWrite ? (session.nickname || session.username) : '未登录（只读）'}</div></div>
+          <div className="stat"><div className="s-label"><span className="tone-dot tone-orange" />登记人</div><div className="s-value" style={{ fontSize: 'var(--fs-lg)', paddingTop: 6 }}>{!showAdmin ? '游客视图（只读）' : canWrite ? (session.nickname || session.username) : '未登录（只读）'}</div></div>
         </div>
 
         {error && <div className="form-error">{error}</div>}
 
-        {canWrite ? (
+        {showAdmin && canWrite ? (
           <div className="card">
             <div className="card-head"><h3>登记一场对战</h3></div>
             <form onSubmit={submit} style={{ padding: '0 var(--sp-4) var(--sp-4)' }}>
@@ -303,13 +312,13 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
               </div>
             </form>
           </div>
-        ) : (
+        ) : showAdmin ? (
           <div className="card"><div className="empty">对抗赛战绩只有站长可以登记与修改；其他账号为只读视图</div></div>
-        )}
+        ) : null}
 
-        <ArenaImportCard slug={slug} canWrite={canWrite} toast={toast} onDone={load} />
+        {showAdmin && <ArenaImportCard slug={slug} canWrite={canWrite} toast={toast} onDone={load} />}
 
-        <ArenaRenameCard slug={slug} standings={standings} canWrite={canWrite} toast={toast} onDone={load} />
+        {showAdmin && <ArenaRenameCard slug={slug} standings={standings} canWrite={canWrite} toast={toast} onDone={load} />}
 
         <div className="card">
           <div className="card-head"><h3>实力榜（局级 ELO）</h3><span className="chain" style={{ marginLeft: 'auto' }}>按局级 ELO 排序 · 每轮 16 局逐局计入，赢强对手涨得多</span></div>
@@ -416,7 +425,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                   <tr>
                     <th>时间</th><th>A 方</th><th className="num">A 现金</th><th>B 方</th><th className="num">B 现金</th>
                     <th>结果</th><th className="num">赢了多少</th><th className="num">局数</th><th>备注</th><th>登记人</th>
-                    {isAdmin && <th>操作</th>}
+                    {showAdmin && isAdmin && <th>操作</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -436,7 +445,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                       <td className="num">{m.games}</td>
                       <td>{m.note || <span className="chain">—</span>}</td>
                       <td>{m.author || <span className="chain">—</span>}</td>
-                      {isAdmin && <td className="actions"><button className="btn small ghost" onClick={() => remove(m)}>删除</button></td>}
+                      {showAdmin && isAdmin && <td className="actions"><button className="btn small ghost" onClick={() => remove(m)}>删除</button></td>}
                     </tr>
                   ))}
                 </tbody>
@@ -450,7 +459,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
             <h3>对局回放</h3>
             <span className="chain" style={{ marginLeft: 'auto' }}>棋盘动画 + 现金曲线 + 每步动作</span>
           </div>
-          {canWrite && (
+          {showAdmin && canWrite && (
             <div className="filters">
               <label className="btn small">
                 上传回放 JSON
@@ -459,7 +468,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
               <span className="chain">把 scripts/record_replay.py 录出来的 replays/*.json 传上来（≤ 8 MB），全站可看</span>
             </div>
           )}
-          {!replays.length && <div className="empty">还没有回放{canWrite ? '，先传一份试试' : ''}</div>}
+          {!replays.length && <div className="empty">还没有回放{showAdmin && canWrite ? '，先传一份试试' : ''}</div>}
           {!!replays.length && (
             <div className="table-scroll">
               <table className="data lb-table">
@@ -483,7 +492,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                       <td>{r.author || <span className="chain">—</span>}</td>
                       <td className="actions">
                         <a className="btn small" href={'/replay#src=/api/arena/replays/' + r.id} target="_blank" rel="noreferrer">看回放</a>
-                        {canWrite && <button className="btn small ghost" onClick={() => removeReplay(r)}>删除</button>}
+                        {showAdmin && canWrite && <button className="btn small ghost" onClick={() => removeReplay(r)}>删除</button>}
                       </td>
                     </tr>
                   ))}

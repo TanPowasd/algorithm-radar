@@ -153,7 +153,7 @@ export default function K4uV2Page() {
         )}
 
         {/* 比赛：整页复用 views/ArenaView（同一个比赛视图，主界面内直接切比赛） */}
-        {view === 'arena' && <ArenaView slug={arenaSlug} onSelect={setArenaSlug} />}
+        {view === 'arena' && <ArenaView slug={arenaSlug} onSelect={setArenaSlug} showAdmin={false} />}
 
         {/* AI 分数：实时原始数据 + 洛谷原始分，首行是平均分 */}
         {loaded && view === 'score' && rawScoreable && (
