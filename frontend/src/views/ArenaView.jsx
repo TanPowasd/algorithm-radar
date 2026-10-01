@@ -181,6 +181,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
   const [h2hB, setH2hB] = useState('')
   const [h2h, setH2h] = useState(null)
   const [h2hError, setH2hError] = useState('')
+  const [replayQuery, setReplayQuery] = useState('')
 
   // 默认选实力榜前两名
   useEffect(() => {
@@ -204,6 +205,14 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
   }, [h2hA, h2hB, slug, matches])
 
   const h2hGames = (h2h?.series || []).reduce((acc, s) => ({ a: acc.a + s.aWins, b: acc.b + s.bWins }), { a: 0, b: 0 })
+
+  // 回放卡片：按选手名 / 上传人筛选（访客常用）
+  const shownReplays = useMemo(() => {
+    const q = replayQuery.trim().toLowerCase()
+    if (!q) return replays
+    return replays.filter((r) => [r.aName, r.bName, r.author, r.winner]
+      .some((v) => String(v || '').toLowerCase().includes(q)))
+  }, [replays, replayQuery])
 
   return (
     <>
@@ -457,7 +466,9 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
         <div className="card">
           <div className="card-head">
             <h3>对局回放</h3>
-            <span className="chain" style={{ marginLeft: 'auto' }}>棋盘动画 + 现金曲线 + 每步动作</span>
+            <span className="chain" style={{ marginLeft: 'auto' }}>
+              棋盘动画 + 现金曲线 + 每步动作{replays.length ? ' · 共 ' + replays.length + ' 份' : ''}
+            </span>
           </div>
           {showAdmin && canWrite && (
             <div className="filters">
@@ -465,39 +476,43 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                 上传回放 JSON
                 <input type="file" accept=".json,application/json" hidden onChange={uploadReplay} />
               </label>
-              <span className="chain">把 scripts/record_replay.py 录出来的 replays/*.json 传上来（≤ 8 MB），全站可看</span>
+              <span className="chain">把 kaggriculture/organizer/scripts/record_replay.py 录出来的 replays/*.json 传上来（≤ 8 MB），全站可看</span>
+            </div>
+          )}
+          {!!replays.length && (
+            <div style={{ padding: '0 var(--sp-4) var(--sp-3)' }}>
+              <input value={replayQuery} onChange={(e) => setReplayQuery(e.target.value)}
+                placeholder="按选手名 / 上传人筛选（例如 qwen、gptsol）" style={{ width: '100%', maxWidth: 340 }} />
             </div>
           )}
           {!replays.length && <div className="empty">还没有回放{showAdmin && canWrite ? '，先传一份试试' : ''}</div>}
-          {!!replays.length && (
-            <div className="table-scroll">
-              <table className="data lb-table">
-                <thead>
-                  <tr>
-                    <th>上传时间</th><th>A 方</th><th>B 方</th><th className="num">种子</th>
-                    <th>结果</th><th className="num">步数</th><th className="num">大小</th>
-                    <th>上传人</th><th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {replays.map((r) => (
-                    <tr key={r.id}>
-                      <td><TimeCell iso={r.createdAt} /></td>
-                      <td className="lb-model">{r.aName}</td>
-                      <td className="lb-model">{r.bName}</td>
-                      <td className="num">{r.seed ?? '—'}</td>
-                      <td>{r.winner === 'draw' ? '平局' : (r.winner ? r.winner + ' 胜' : (r.endReason || '—'))}</td>
-                      <td className="num">{r.steps || r.frames}</td>
-                      <td className="num">{Math.round((r.bytes || 0) / 1024)} KB</td>
-                      <td>{r.author || <span className="chain">—</span>}</td>
-                      <td className="actions">
-                        <a className="btn small" href={'/replay#src=/api/arena/replays/' + r.id} target="_blank" rel="noreferrer">看回放</a>
-                        {showAdmin && canWrite && <button className="btn small ghost" onClick={() => removeReplay(r)}>删除</button>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {!!replays.length && !shownReplays.length && (
+            <div className="empty">没有匹配「{replayQuery}」的回放</div>
+          )}
+          {!!shownReplays.length && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(272px, 1fr))', gap: 'var(--sp-3)', padding: '0 var(--sp-4) var(--sp-4)' }}>
+              {shownReplays.map((r) => (
+                <div key={r.id} style={{ border: '1px solid var(--line, rgba(255,255,255,.15))', borderRadius: 10, padding: 'var(--sp-3)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                    <strong className="lb-model">{r.aName}</strong>
+                    <span className="chain">vs</span>
+                    <strong className="lb-model">{r.bName}</strong>
+                  </div>
+                  <div className="chain">
+                    {r.winner === 'draw' ? '平局' : r.winner ? '胜者：' + (r.winner === 'A' ? r.aName : r.bName) : (r.endReason || '结果未知')}
+                    {r.seed !== null && r.seed !== undefined ? ' · 种子 ' + r.seed : ''}
+                  </div>
+                  <div className="chain">
+                    {(r.steps || r.frames || 0) + ' 步'} · {Math.round((r.bytes || 0) / 1024) + ' KB'}
+                    {r.engineSha ? ' · 引擎 ' + String(r.engineSha).slice(0, 8) : ''}
+                  </div>
+                  <div className="chain"><TimeCell iso={r.createdAt} />{r.author ? ' · ' + r.author : ''}</div>
+                  <div style={{ marginTop: 'auto', display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', paddingTop: 6 }}>
+                    <a className="btn small primary" href={'/replay#src=/api/arena/replays/' + r.id} target="_blank" rel="noreferrer">看回放</a>
+                    {showAdmin && canWrite && <button className="btn small ghost" onClick={() => removeReplay(r)}>删除</button>}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
