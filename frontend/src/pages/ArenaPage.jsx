@@ -3,6 +3,9 @@ import { Link, useParams } from 'react-router-dom'
 import Topbar from '../components/Topbar'
 import { useApp } from '../state'
 import { api } from '../api/client'
+import ArenaImportCard from '../components/ArenaImportCard'
+import ArenaRenameCard from '../components/ArenaRenameCard'
+import { THINKING_LEVELS, thinkingLabel, entityLabel, packEntity, unpackEntity } from '../arenaMeta'
 
 /** 数字展示：空值显示破折号，千分位 */
 function num(v, digits = 0) {
@@ -33,7 +36,7 @@ function TimeCell({ iso }) {
 
 const WINNER_LABEL = { A: 'A 胜', B: 'B 胜', draw: '平局' }
 
-const EMPTY_FORM = { aName: '', bName: '', winner: 'A', aCash: '', bCash: '', margin: '', games: '1', aWins: '', bWins: '', note: '' }
+const EMPTY_FORM = { aName: '', bName: '', winner: 'A', aCash: '', bCash: '', margin: '', games: '1', aWins: '', bWins: '', aThinking: '', bThinking: '', note: '' }
 
 /**
  * 农场对抗赛战绩：登记"谁和谁打、谁赢了、赢了多少"，并自动聚合积分榜。
@@ -103,6 +106,8 @@ export default function ArenaPage() {
             games: form.games === '' ? null : Number(form.games),
             aWins: form.aWins === '' ? null : Number(form.aWins),
             bWins: form.bWins === '' ? null : Number(form.bWins),
+            aThinking: form.aThinking,
+            bThinking: form.bThinking,
             note: form.note,
           },
         },
@@ -171,16 +176,20 @@ export default function ArenaPage() {
 
   // 默认选实力榜前两名
   useEffect(() => {
-    const names = standings.map((s) => s.name)
-    if (!h2hA && names[0]) setH2hA(names[0])
-    if (!h2hB && names[1]) setH2hB(names[1])
+    const ents = standings.map((s) => packEntity(s.name, s.thinking))
+    if (!h2hA && ents[0]) setH2hA(ents[0])
+    if (!h2hB && ents[1]) setH2hB(ents[1])
   }, [standings, h2hA, h2hB])
 
   useEffect(() => {
     if (!h2hA || !h2hB || h2hA === h2hB) { setH2h(null); return }
+    const ea = unpackEntity(h2hA)
+    const eb = unpackEntity(h2hB)
     let alive = true
     api('/api/arena/h2h?competition=' + encodeURIComponent(slug)
-      + '&a=' + encodeURIComponent(h2hA) + '&b=' + encodeURIComponent(h2hB))
+      + '&a=' + encodeURIComponent(ea.name) + '&aThinking=' + encodeURIComponent(ea.thinking)
+      + '&b=' + encodeURIComponent(eb.name) + '&bThinking=' + encodeURIComponent(eb.thinking)
+      + '&strict=1')
       .then((d) => { if (alive) { setH2h(d); setH2hError('') } })
       .catch((e) => { if (alive) { setH2h(null); setH2hError(e.message) } })
     return () => { alive = false }
@@ -241,6 +250,18 @@ export default function ArenaPage() {
                   <input value={form.bCash} onChange={set('bCash')} inputMode="decimal" placeholder="例：2660" />
                 </div>
                 <div className="field">
+                  <label>A 方思考强度</label>
+                  <select value={form.aThinking} onChange={set('aThinking')}>
+                    {THINKING_LEVELS.map((t) => <option key={t.code} value={t.code}>{t.label}</option>)}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>B 方思考强度</label>
+                  <select value={form.bThinking} onChange={set('bThinking')}>
+                    {THINKING_LEVELS.map((t) => <option key={t.code} value={t.code}>{t.label}</option>)}
+                  </select>
+                </div>
+                <div className="field">
                   <label>局比分：A 胜局（可选）</label>
                   <input value={form.aWins} onChange={set('aWins')} inputMode="numeric" placeholder="例：16" />
                 </div>
@@ -270,6 +291,10 @@ export default function ArenaPage() {
           <div className="card"><div className="empty">对抗赛战绩只有站长可以登记与修改；其他账号为只读视图</div></div>
         )}
 
+        <ArenaImportCard slug={slug} canWrite={canWrite} toast={toast} onDone={load} />
+
+        <ArenaRenameCard slug={slug} standings={standings} canWrite={canWrite} toast={toast} onDone={load} />
+
         <div className="card">
           <div className="card-head"><h3>实力榜（局级 ELO）</h3><span className="chain" style={{ marginLeft: 'auto' }}>按局级 ELO 排序 · 每轮 16 局逐局计入，赢强对手涨得多</span></div>
           {!standings.length && <div className="empty">还没有战绩，先登记一场</div>}
@@ -278,7 +303,7 @@ export default function ArenaPage() {
               <table className="data lb-table">
                 <thead>
                   <tr>
-                    <th>#</th><th>Agent</th>
+                    <th>#</th><th>Agent</th><th>思考强度</th>
                     <th className="num">ELO</th><th className="num">局数</th><th className="num">局胜-负</th><th className="num">局胜率</th>
                     <th className="num">轮次</th><th className="num">轮胜率</th><th className="num">场均净胜</th><th className="num">累计净胜</th>
                   </tr>
@@ -288,6 +313,7 @@ export default function ArenaPage() {
                     <tr key={s.name}>
                       <td className="lb-rank">{i + 1}</td>
                       <td className="lb-model">{s.name}</td>
+                      <td>{thinkingLabel(s.thinking)}</td>
                       <td className="num" style={{ fontWeight: 700 }}>{num(s.elo)}</td>
                       <td className="num">{s.games}</td>
                       <td className="num">{s.gameWins}-{s.gameLosses}</td>
@@ -311,14 +337,14 @@ export default function ArenaPage() {
               <label>模型 A</label>
               <select value={h2hA} onChange={(e) => setH2hA(e.target.value)}>
                 <option value="">（请选择）</option>
-                {standings.map((s) => <option key={s.name} value={s.name}>{s.name}（ELO {num(s.elo)}）</option>)}
+                {standings.map((s) => <option key={packEntity(s.name, s.thinking)} value={packEntity(s.name, s.thinking)}>{entityLabel(s.name, s.thinking)}（ELO {num(s.elo)}）</option>)}
               </select>
             </div>
             <div className="field">
               <label>模型 B</label>
               <select value={h2hB} onChange={(e) => setH2hB(e.target.value)}>
                 <option value="">（请选择）</option>
-                {standings.map((s) => <option key={s.name} value={s.name}>{s.name}（ELO {num(s.elo)}）</option>)}
+                {standings.map((s) => <option key={packEntity(s.name, s.thinking)} value={packEntity(s.name, s.thinking)}>{entityLabel(s.name, s.thinking)}（ELO {num(s.elo)}）</option>)}
               </select>
             </div>
           </div>
@@ -327,7 +353,7 @@ export default function ArenaPage() {
             <>
               <div className="stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)', padding: '0 var(--sp-4)' }}>
                 <div className="stat"><div className="s-label">交手轮次</div><div className="s-value">{h2h.series.length}</div></div>
-                <div className="stat"><div className="s-label">{h2h.a.name} 轮次战绩</div><div className="s-value" style={{ fontSize: 16 }}>{h2h.a.seriesWins} 胜 {h2h.a.seriesLosses} 负</div></div>
+                <div className="stat"><div className="s-label">{entityLabel(h2h.a.name, h2h.a.thinking)} 轮次战绩</div><div className="s-value" style={{ fontSize: 16 }}>{h2h.a.seriesWins} 胜 {h2h.a.seriesLosses} 负</div></div>
                 <div className="stat"><div className="s-label">局比分合计</div><div className="s-value">{h2hGames.a} : {h2hGames.b}</div></div>
                 <div className="stat"><div className="s-label">场均现金（A / B）</div><div className="s-value" style={{ fontSize: 16 }}>{num(h2h.a.cashAvg)} / {num(h2h.b.cashAvg)}</div></div>
               </div>

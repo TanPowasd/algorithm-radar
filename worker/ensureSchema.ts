@@ -13,7 +13,7 @@
 import { SCHEMA_STATEMENTS } from "./schema";
 
 /** 与下方 MIGRATIONS 一一对应的版本号；改动迁移列表就必须 +1 */
-export const SCHEMA_VERSION = "v3.15";
+export const SCHEMA_VERSION = "v3.16";
 
 let ready: Promise<void> | null = null;
 
@@ -36,6 +36,10 @@ const MIGRATIONS: Array<[string, string, string]> = [
     // v3.15：一轮（系列赛）的局比分，用于局级 ELO；空值表示"胜者全胜"（16:0）
     ["arena_matches", "a_wins", "ALTER TABLE arena_matches ADD COLUMN a_wins INTEGER"],
     ["arena_matches", "b_wins", "ALTER TABLE arena_matches ADD COLUMN b_wins INTEGER"],
+    // v3.16：思考强度（模型档案的一部分）+ 导入来源键（去重用，避免同一轮重复登记）
+    ["arena_matches", "a_thinking", "ALTER TABLE arena_matches ADD COLUMN a_thinking TEXT NOT NULL DEFAULT ''"],
+    ["arena_matches", "b_thinking", "ALTER TABLE arena_matches ADD COLUMN b_thinking TEXT NOT NULL DEFAULT ''"],
+    ["arena_matches", "source_key", "ALTER TABLE arena_matches ADD COLUMN source_key TEXT NOT NULL DEFAULT ''"],
 ];
 
 async function migrate(db: D1Database): Promise<void> {

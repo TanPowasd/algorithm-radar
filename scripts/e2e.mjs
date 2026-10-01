@@ -587,6 +587,70 @@ try {
   const h2hMissing = await call(gina, 'GET', '/api/arena/h2h?a=dsf')
   ok('两两对比缺参数 → 400', h2hMissing.status === 400, 'HTTP ' + h2hMissing.status)
   const h2hNone = await call(gina, 'GET', '/api/arena/h2h?a=nobody-a&b=nobody-b')
+  // 21. 登记自动化（来源键去重）+ 思考强度 + 批量改名（v3.16）
+  await call(owner, 'POST', '/api/competitions', { competition: { slug: 'think-lab', name: '思考强度试验场' } })
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'think-lab', match: {
+    aName: 'M', bName: 'N', winner: 'A', games: 16, aWins: 16, bWins: 0,
+    aThinking: 'high', bThinking: 'low', playedAt: '2026-02-01T00:00:01Z' } })
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'think-lab', match: {
+    aName: 'M', bName: 'N', winner: 'B', games: 16, aWins: 0, bWins: 16,
+    aThinking: 'max', bThinking: 'low', playedAt: '2026-02-01T00:00:02Z' } })
+  const thinkBoard = await boardOf('think-lab')
+  ok('同一名字不同思考强度算两个选手',
+    thinkBoard.filter((s) => s.name === 'M').length === 2
+    && thinkBoard.some((s) => s.name === 'M' && s.thinking === 'high')
+    && thinkBoard.some((s) => s.name === 'M' && s.thinking === 'max'),
+    JSON.stringify(thinkBoard.map((s) => s.name + '/' + s.thinking)))
+  const badThink = await call(owner, 'POST', '/api/arena/matches', { competition: 'think-lab', match: {
+    aName: 'M', bName: 'N', winner: 'A', aThinking: 'ultra' } })
+  ok('非法思考强度 → 400', badThink.status === 400, 'HTTP ' + badThink.status)
+  const thinkH2h = await call(owner, 'GET', '/api/arena/h2h?competition=think-lab&a=M&b=N&aThinking=high&bThinking=low&strict=1')
+  ok('两两对比可按思考强度精确匹配（只算 M·high）',
+    thinkH2h.data?.a?.seriesWins === 1 && thinkH2h.data?.a?.thinking === 'high'
+    && (thinkH2h.data?.series || []).length === 1, JSON.stringify(thinkH2h.data?.a || null))
+  const thinkH2hLoose = await call(owner, 'GET', '/api/arena/h2h?competition=think-lab&a=M&b=N')
+  ok('不带思考强度时汇总该名字的全部对局', (thinkH2hLoose.data?.series || []).length === 2,
+    '实际 ' + (thinkH2hLoose.data?.series || []).length)
+  const impBody = { competition: 'think-lab', match: {
+    aName: 'M', bName: 'N', winner: 'A', games: 16, aWins: 16, bWins: 0,
+    sourceKey: 'league:11-23:import-test', note: '导入测试', playedAt: '2026-02-01T00:00:03Z' } }
+  const imp1 = await call(owner, 'POST', '/api/arena/matches', impBody)
+  ok('导入登记 → ok 且带来源键', imp1.data?.match?.sourceKey === 'league:11-23:import-test',
+    JSON.stringify(imp1.data?.match || null))
+  const imp2 = await call(owner, 'POST', '/api/arena/matches', impBody)
+  ok('同一来源重复导入 → 400（不会重复登记同一轮）', imp2.status === 400, 'HTTP ' + imp2.status)
+  const impBad = await call(owner, 'POST', '/api/arena/matches', { competition: 'think-lab', match: {
+    aName: 'M', bName: 'N', winner: 'A', aWins: 3, bWins: 5, sourceKey: 'league:bad' } })
+  ok('导入数据自相矛盾（胜者与局比分不符）→ 400', impBad.status === 400, 'HTTP ' + impBad.status)
+  const renContrib = await call(gina, 'POST', '/api/arena/agents/rename',
+    { competition: 'think-lab', fromName: 'M', toName: 'MM' })
+  ok('贡献者批量改名 → 403', renContrib.status === 403, 'HTTP ' + renContrib.status)
+  const renDry = await call(owner, 'POST', '/api/arena/agents/rename',
+    { competition: 'think-lab', fromName: 'M', fromThinking: 'high', toName: 'M', toThinking: 'xhigh', dryRun: true })
+  ok('预览影响（dryRun）只统计不改数据',
+    renDry.data?.dryRun === true && (renDry.data?.asA + renDry.data?.asB) === 1, JSON.stringify(renDry.data))
+  const before = (await boardOf('think-lab')).find((s) => s.name === 'M' && s.thinking === 'high')
+  const renDo = await call(owner, 'POST', '/api/arena/agents/rename',
+    { competition: 'think-lab', fromName: 'M', fromThinking: 'high', toName: 'M', toThinking: 'xhigh' })
+  const after = await boardOf('think-lab')
+  const moved = after.find((s) => s.name === 'M' && s.thinking === 'xhigh')
+  ok('批量改名后身份带着原有战绩（ELO/局数/胜负不变）',
+    renDo.data?.ok === true && !!moved && moved.games === before.games && moved.elo === before.elo
+    && moved.gameWins === before.gameWins, JSON.stringify({ before, moved }))
+  ok('改名后旧身份消失', !after.some((s) => s.name === 'M' && s.thinking === 'high'))
+  const renMissing = await call(owner, 'POST', '/api/arena/agents/rename',
+    { competition: 'think-lab', fromName: 'M', fromThinking: 'low', toName: 'M', toThinking: 'medium' })
+  ok('改一个没有记录的选手 → 404', renMissing.status === 404, 'HTTP ' + renMissing.status)
+  const renSame = await call(owner, 'POST', '/api/arena/agents/rename',
+    { competition: 'think-lab', fromName: 'M', fromThinking: 'high', toName: 'M', toThinking: 'high' })
+  ok('新旧完全一样 → 400', renSame.status === 400, 'HTTP ' + renSame.status)
+  const renBadThink = await call(owner, 'POST', '/api/arena/agents/rename',
+    { competition: 'think-lab', fromName: 'M', toName: 'M', toThinking: 'ultra' })
+  ok('改名的思考强度非法 → 400', renBadThink.status === 400, 'HTTP ' + renBadThink.status)
+  const renMerge = await call(owner, 'POST', '/api/arena/agents/rename',
+    { competition: 'think-lab', fromName: 'M', fromThinking: 'max', toName: 'M', toThinking: 'xhigh' })
+  ok('把两个身份合并成一个（M·max → M·xhigh）→ 改到记录数 > 1',
+    renMerge.data?.ok === true && (renMerge.data?.asA + renMerge.data?.asB) === 1, JSON.stringify(renMerge.data))
   ok('没有交手的两个模型 → 200 且空列表', h2hNone.status === 200 && (h2hNone.data?.series || []).length === 0,
     'HTTP ' + h2hNone.status + ' ' + JSON.stringify(h2hNone.data?.series || null))
 

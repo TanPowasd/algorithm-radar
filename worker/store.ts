@@ -1094,6 +1094,11 @@ export interface ArenaMatch {
     /** 一轮里的局比分（可空：空 = 胜者全胜，即 16:0） */
     aWins: number | null;
     bWins: number | null;
+    /** 思考强度（'' = 未标注）：与名字一起构成"选手"身份 */
+    aThinking: string;
+    bThinking: string;
+    /** 导入来源键（'' = 手工登记）；同一个来源重复导入会被拒 */
+    sourceKey: string;
     note: string;
     playedAt: string;
     author: string;
@@ -1111,6 +1116,8 @@ export interface ArenaStanding {
     netTotal: number;
     netAvg: number;
     bestWin: number;
+    /** 思考强度（'' = 未标注）；同一名字不同思考强度算两个选手 */
+    thinking: string;
     /** 局级统计 + ELO（排名主键）：一轮 16 局全部计入 */
     games: number;
     gameWins: number;
@@ -1138,6 +1145,17 @@ function arenaMoney(v: unknown, field: string): number | null {
     return Math.round(n * 100) / 100;
 }
 
+/** 思考强度取值（'' = 未标注）；展示用的中文标签在前端映射 */
+export const ARENA_THINKING_LEVELS = ["", "low", "medium", "high", "xhigh", "max"];
+
+function arenaThinking(v: unknown, field: string): string {
+    const s = String(v ?? "").trim().toLowerCase();
+    if (!ARENA_THINKING_LEVELS.includes(s)) {
+        throw badRequest(field + "只能是 " + ARENA_THINKING_LEVELS.filter(Boolean).join(" / ") + "（留空 = 未标注）");
+    }
+    return s;
+}
+
 function arenaCount(v: unknown, field: string): number | null {
     if (v === null || v === undefined || v === "") return null;
     const n = Number(v);
@@ -1154,6 +1172,7 @@ function mapArenaRow(r: any): ArenaMatch {
         margin: Number(r.margin) || 0, games: Number(r.games) || 1,
         aWins: r.a_wins === null || r.a_wins === undefined ? null : Number(r.a_wins),
         bWins: r.b_wins === null || r.b_wins === undefined ? null : Number(r.b_wins),
+        aThinking: r.a_thinking ?? "", bThinking: r.b_thinking ?? "", sourceKey: r.source_key ?? "",
         note: r.note ?? "", playedAt: r.played_at, author: r.author ?? "",
         authorId: r.author_id ?? null, createdAt: r.created_at,
     };
@@ -1194,16 +1213,27 @@ export async function addArenaMatch(db: D1Database, raw: any,
     const note = String(body.note ?? "").trim().slice(0, ARENA_NOTE_MAX);
     const playedRaw = String(body.playedAt ?? body.played_at ?? "").trim();
     const playedAt = playedRaw ? playedRaw.slice(0, 40) : nowIso();
+    const aThinking = arenaThinking(body.aThinking ?? body.a_thinking, "A 方思考强度");
+    const bThinking = arenaThinking(body.bThinking ?? body.b_thinking, "B 方思考强度");
+    const sourceKey = String(body.sourceKey ?? body.source_key ?? "").trim().slice(0, 120);
+    if (sourceKey) {
+        // 同一个来源（例如同一轮裁判产物）只允许登记一次，避免重复导入
+        const dup = await db.prepare(
+            "SELECT id FROM arena_matches WHERE deleted_at IS NULL AND competition_id = ?1 AND source_key = ?2")
+            .bind(competitionId, sourceKey).first<{ id: string }>();
+        if (dup) throw badRequest("这个来源已经登记过（来源键 " + sourceKey + "），如需覆盖请先删除原记录");
+    }
     const countRow = await db.prepare("SELECT COUNT(*) AS n FROM arena_matches WHERE deleted_at IS NULL").first<{ n: number }>();
     if ((countRow?.n ?? 0) >= ARENA_MAX_ROWS) throw badRequest("战绩数量已达上限（" + ARENA_MAX_ROWS + " 条）");
     const row: ArenaMatch = {
-        id: crypto.randomUUID(), competitionId, aName, bName, winner, aCash, bCash, margin, games, aWins, bWins, note,
+        id: crypto.randomUUID(), competitionId, aName, bName, winner, aCash, bCash, margin, games, aWins, bWins,
+        aThinking, bThinking, sourceKey, note,
         playedAt, author: user.username, authorId: user.uid ?? null, createdAt: nowIso(),
     };
-    await db.prepare("INSERT INTO arena_matches (id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id, a_wins, b_wins) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)")
+    await db.prepare("INSERT INTO arena_matches (id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id, a_wins, b_wins, a_thinking, b_thinking, source_key) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)")
         .bind(row.id, row.aName, row.bName, row.winner, row.aCash, row.bCash, row.margin, row.games,
             row.note, row.playedAt, row.author, row.authorId, row.createdAt, row.competitionId,
-            row.aWins, row.bWins)
+            row.aWins, row.bWins, row.aThinking, row.bThinking, row.sourceKey)
         .run();
     return row;
 }
@@ -1212,7 +1242,7 @@ export async function listArenaMatches(db: D1Database, limit = 300,
     competitionId: string = DEFAULT_COMPETITION): Promise<ArenaMatch[]> {
     const size = Math.max(1, Math.min(1000, Math.round(limit) || 300));
     const { results } = await db.prepare(
-        "SELECT id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id, a_wins, b_wins " +
+        "SELECT id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id, a_wins, b_wins, a_thinking, b_thinking, source_key " +
         "FROM arena_matches WHERE deleted_at IS NULL AND competition_id = ?2 ORDER BY played_at DESC, created_at DESC LIMIT ?1")
         .bind(size, competitionId).all<any>();
     return (results || []).map(mapArenaRow);
@@ -1249,12 +1279,13 @@ function eloExpect(ra: number, rb: number): number {
  */
 export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
     const map = new Map<string, ArenaStanding>();
-    const bucket = (name: string): ArenaStanding => {
-        const k = name.toLowerCase();
+    // 选手身份 = 名字 + 思考强度（同名不同思考强度算两个人）
+    const bucket = (name: string, thinking: string): ArenaStanding => {
+        const k = name.toLowerCase() + "\u0000" + thinking;
         let s = map.get(k);
         if (!s) {
             s = {
-                name, matches: 0, wins: 0, losses: 0, draws: 0, winRate: 0,
+                name, thinking, matches: 0, wins: 0, losses: 0, draws: 0, winRate: 0,
                 netTotal: 0, netAvg: 0, bestWin: 0,
                 games: 0, gameWins: 0, gameLosses: 0, gameWinRate: 0,
                 elo: ARENA_ELO_START, lastPlayedAt: null,
@@ -1268,8 +1299,8 @@ export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
         String(x.playedAt).localeCompare(String(y.playedAt))
         || String(x.createdAt).localeCompare(String(y.createdAt)));
     for (const m of ordered) {
-        const a = bucket(m.aName);
-        const b = bucket(m.bName);
+        const a = bucket(m.aName, m.aThinking);
+        const b = bucket(m.bName, m.bThinking);
         const { aWins, bWins } = seriesScore(m);
         const games = aWins + bWins;
         a.matches += 1;
@@ -1309,12 +1340,13 @@ export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
         s.elo = Math.round(s.elo);
     }
     out.sort((x, y) => (y.elo - x.elo) || (y.gameWinRate - x.gameWinRate)
-        || (y.netAvg - x.netAvg) || x.name.localeCompare(y.name));
+        || (y.netAvg - x.netAvg) || x.name.localeCompare(y.name) || x.thinking.localeCompare(y.thinking));
     return out;
 }
 
 export interface ArenaH2hSide {
     name: string;
+    thinking: string;
     seriesWins: number;
     seriesLosses: number;
     seriesDraws: number;
@@ -1347,26 +1379,36 @@ export interface ArenaHeadToHead {
     series: ArenaH2hSeries[];
 }
 
-/** 任选两个模型看历史交锋（返回结果里 a/b 按调用方给的顺序，与登记时的先后手无关） */
-export function arenaHeadToHead(rows: ArenaMatch[], nameA: string, nameB: string): ArenaHeadToHead {
+/**
+ * 任选两个模型看历史交锋（返回结果里 a/b 按调用方给的顺序，与登记时的先后手无关）。
+ * strictThinking = true 时思考强度必须完全一致（含"未标注"）；否则按名字汇总所有思考强度。
+ */
+export function arenaHeadToHead(rows: ArenaMatch[], nameA: string, nameB: string,
+    thinkingA = "", thinkingB = "", strictThinking = false): ArenaHeadToHead {
     const ka = nameA.trim().toLowerCase();
     const kb = nameB.trim().toLowerCase();
-    const side = (name: string): ArenaH2hSide => ({
-        name, seriesWins: 0, seriesLosses: 0, seriesDraws: 0,
+    const ta = String(thinkingA ?? "").trim().toLowerCase();
+    const tb = String(thinkingB ?? "").trim().toLowerCase();
+    const hit = (nm: string, th: string, key: string, tk: string) =>
+        nm.toLowerCase() === key && (!strictThinking || th === tk);
+    const side = (name: string, thinking: string): ArenaH2hSide => ({
+        name, thinking, seriesWins: 0, seriesLosses: 0, seriesDraws: 0,
         gameWins: 0, gameLosses: 0, cashTotal: 0, cashAvg: 0, netTotal: 0, netAvg: 0, bestWin: 0,
     });
-    const a = side(nameA.trim());
-    const b = side(nameB.trim());
+    const a = side(nameA.trim(), strictThinking ? ta : "");
+    const b = side(nameB.trim(), strictThinking ? tb : "");
     let aCashN = 0;
     let bCashN = 0;
     const series: ArenaH2hSeries[] = [];
     const matched = rows.filter((m) => {
-        const an = m.aName.toLowerCase();
-        const bn = m.bName.toLowerCase();
-        return (an === ka && bn === kb) || (an === kb && bn === ka);
+        const aAsA = hit(m.aName, m.aThinking, ka, ta);
+        const bAsB = hit(m.bName, m.bThinking, kb, tb);
+        const aAsB = hit(m.aName, m.aThinking, kb, tb);
+        const bAsA = hit(m.bName, m.bThinking, ka, ta);
+        return (aAsA && bAsB) || (aAsB && bAsA);
     }).sort((x, y) => String(x.playedAt).localeCompare(String(y.playedAt)));
     for (const m of matched) {
-        const aIsLeft = m.aName.toLowerCase() === ka;
+        const aIsLeft = hit(m.aName, m.aThinking, ka, ta);
         const { aWins, bWins } = seriesScore(m);
         const myWins = aIsLeft ? aWins : bWins;
         const oppWins = aIsLeft ? bWins : aWins;
@@ -1406,6 +1448,47 @@ export function arenaHeadToHead(rows: ArenaMatch[], nameA: string, nameB: string
     a.netAvg = a.seriesWins + a.seriesLosses ? a.netTotal / (a.seriesWins + a.seriesLosses) : 0;
     b.netAvg = b.seriesWins + b.seriesLosses ? b.netTotal / (b.seriesWins + b.seriesLosses) : 0;
     return { a, b, series };
+}
+
+export interface ArenaRenameScope {
+    asA: number;
+    asB: number;
+}
+
+/**
+ * 批量改选手名 / 思考强度：把 (名字, 思考强度) 这个选手的**所有**登记记录一次改掉（A、B 两侧都改）。
+ * dryRun = true 时只返回会影响多少条，不改数据。
+ */
+export async function renameArenaAgent(db: D1Database, competitionId: string,
+    from: { name: string; thinking: string }, to: { name: string; thinking: string },
+    dryRun = false): Promise<ArenaRenameScope> {
+    const fromName = String(from.name ?? "").trim();
+    const toName = String(to.name ?? "").trim();
+    if (!fromName) throw badRequest("请选择要改的选手");
+    if (!toName) throw badRequest("新名字不能为空");
+    if (toName.length > ARENA_NAME_MAX) throw badRequest("新名字过长（最多 " + ARENA_NAME_MAX + " 字）");
+    const fromThinking = arenaThinking(from.thinking, "原思考强度");
+    const toThinking = arenaThinking(to.thinking, "新思考强度");
+    if (fromName.toLowerCase() === toName.toLowerCase() && fromThinking === toThinking) {
+        throw badRequest("新旧完全一样，没有需要改的内容");
+    }
+    const countSide = async (side: "a" | "b"): Promise<number> => {
+        const row = await db.prepare(
+            "SELECT COUNT(*) AS n FROM arena_matches WHERE deleted_at IS NULL AND competition_id = ?1 " +
+            "AND lower(" + side + "_name) = lower(?2) AND " + side + "_thinking = ?3")
+            .bind(competitionId, fromName, fromThinking).first<{ n: number }>();
+        return row?.n ?? 0;
+    };
+    const asA = await countSide("a");
+    const asB = await countSide("b");
+    if (dryRun || asA + asB === 0) return { asA, asB };
+    for (const side of ["a", "b"] as const) {
+        await db.prepare(
+            "UPDATE arena_matches SET " + side + "_name = ?1, " + side + "_thinking = ?2 " +
+            "WHERE deleted_at IS NULL AND competition_id = ?3 AND lower(" + side + "_name) = lower(?4) AND " + side + "_thinking = ?5")
+            .bind(toName, toThinking, competitionId, fromName, fromThinking).run();
+    }
+    return { asA, asB };
 }
 // ---------------------------------------------------------------- 农场对抗赛回放
 // 元数据入 D1，回放 blob 入 R2（键 replays/<id>.json）。只有站长可上传/删除。

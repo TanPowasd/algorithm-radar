@@ -768,11 +768,37 @@ const routes: Route[] = [
         const b = String(ctx.url.searchParams.get("b") ?? "").trim();
         if (!a || !b) throw new ApiError(400, "请提供 a 与 b 两个模型名");
         if (a.toLowerCase() === b.toLowerCase()) throw new ApiError(400, "两侧不能是同一个模型");
+        const strict = ctx.url.searchParams.get("strict") === "1";
+        const ta = String(ctx.url.searchParams.get("aThinking") ?? "").trim().toLowerCase();
+        const tb = String(ctx.url.searchParams.get("bThinking") ?? "").trim().toLowerCase();
         const rows = await store.listArenaMatches(ctx.env.DB, 1000, cid);
-        const h2h = store.arenaHeadToHead(rows, a, b);
+        const h2h = store.arenaHeadToHead(rows, a, b, ta, tb, strict);
         const boards = store.arenaStandings(rows);
         const eloOf = (n: string) => boards.find((s) => s.name.toLowerCase() === n.toLowerCase())?.elo ?? null;
         return { ok: true, competitionId: cid, a: h2h.a, b: h2h.b, series: h2h.series, eloA: eloOf(a), eloB: eloOf(b) };
+    } },
+
+    // ---- 批量改选手名 / 思考强度（只有站长；dryRun 只预览影响条数）----
+    { method: "POST", path: "/api/arena/agents/rename", role: "owner", handler: async (ctx) => {
+        const user = requireRole(ctx, "owner");
+        const cid = await resolveCompetitionId(ctx, ctx.body?.competition);
+        const body = ctx.body?.rename && typeof ctx.body.rename === "object" ? ctx.body.rename : ctx.body;
+        const from = {
+            name: String(body.fromName ?? body.from?.name ?? ""),
+            thinking: String(body.fromThinking ?? body.from?.thinking ?? ""),
+        };
+        const to = {
+            name: String(body.toName ?? body.to?.name ?? ""),
+            thinking: String(body.toThinking ?? body.to?.thinking ?? ""),
+        };
+        const dryRun = body.dryRun === true || ctx.body?.dryRun === true;
+        const scope = await store.renameArenaAgent(ctx.env.DB, cid, from, to, dryRun);
+        if (dryRun) return { ok: true, dryRun: true, asA: scope.asA, asB: scope.asB };
+        if (scope.asA + scope.asB === 0) throw new ApiError(404, "没有找到这个选手的登记记录");
+        await store.logAudit(ctx.env.DB, user, "arena_rename",
+            "改选手 " + from.name + "/" + (from.thinking || "未标注") + " → " + to.name + "/" + (to.thinking || "未标注")
+            + "（A 侧 " + scope.asA + " 条、B 侧 " + scope.asB + " 条）");
+        return { ok: true, asA: scope.asA, asB: scope.asB, message: "已改 " + (scope.asA + scope.asB) + " 条记录" };
     } },
 
     // ---- 对抗赛回放（blob 存 R2，元数据存 D1；只有站长可写）----
