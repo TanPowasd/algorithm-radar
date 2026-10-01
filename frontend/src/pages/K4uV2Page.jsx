@@ -7,6 +7,7 @@ import MatrixView from '../views/MatrixView'
 import RecordsTable from '../views/RecordsTable'
 import ProblemDrawer from '../components/ProblemDrawer'
 import RecordFormModal from '../components/RecordFormModal'
+import CompetitionRankPanel from '../components/CompetitionRankPanel'
 import { AppContext, useApp } from '../state'
 import { api } from '../api/client'
 import { toV2Dataset, V2_EMPTY } from '../v2data'
@@ -85,6 +86,8 @@ export default function K4uV2Page() {
               : '2026-09-05 21:19 之后的数据 · 分数为加权分'}
           </span>
         </div>
+        <CompetitionRankPanel />
+
         <div className="v2-toolbar">
           <div className="v2-seg" role="tablist" aria-label="v2 视图">
             <button

@@ -651,6 +651,21 @@ try {
     { competition: 'think-lab', fromName: 'M', fromThinking: 'max', toName: 'M', toThinking: 'xhigh' })
   ok('把两个身份合并成一个（M·max → M·xhigh）→ 改到记录数 > 1',
     renMerge.data?.ok === true && (renMerge.data?.asA + renMerge.data?.asB) === 1, JSON.stringify(renMerge.data))
+  // 22. 主界面排名板块依赖的公开数据（未登录也要能读）
+  const homeList = await call(gina, 'GET', '/api/competitions')
+  ok('主界面板块：比赛列表公开可读且带场次/回放/最近时间',
+    (homeList.data?.competitions || []).length > 0
+    && homeList.data.competitions.every((c) => typeof c.matches === 'number' && typeof c.replays === 'number' && 'lastPlayedAt' in c),
+    JSON.stringify(homeList.data?.competitions?.[0] || null))
+  const homeDetail = await call(gina, 'GET', '/api/competitions/elo-lab')
+  const topStanding = (homeDetail.data?.standings || [])[0]
+  ok('主界面板块：实力榜字段齐全（ELO/局数/局胜率/轮次/场均净胜/思考强度）',
+    !!topStanding && typeof topStanding.elo === 'number' && typeof topStanding.games === 'number'
+    && typeof topStanding.gameWinRate === 'number' && typeof topStanding.matches === 'number'
+    && typeof topStanding.netAvg === 'number' && 'thinking' in topStanding,
+    JSON.stringify(topStanding || null))
+  const homePage = await fetch(apiUrl('/'))
+  ok('主界面可打开', homePage.status === 200, 'HTTP ' + homePage.status)
   ok('没有交手的两个模型 → 200 且空列表', h2hNone.status === 200 && (h2hNone.data?.series || []).length === 0,
     'HTTP ' + h2hNone.status + ' ' + JSON.stringify(h2hNone.data?.series || null))
 
