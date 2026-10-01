@@ -33,7 +33,7 @@ function TimeCell({ iso }) {
 
 const WINNER_LABEL = { A: 'A 胜', B: 'B 胜', draw: '平局' }
 
-const EMPTY_FORM = { aName: '', bName: '', winner: 'A', aCash: '', bCash: '', margin: '', games: '1', note: '' }
+const EMPTY_FORM = { aName: '', bName: '', winner: 'A', aCash: '', bCash: '', margin: '', games: '1', aWins: '', bWins: '', note: '' }
 
 /**
  * 农场对抗赛战绩：登记"谁和谁打、谁赢了、赢了多少"，并自动聚合积分榜。
@@ -100,7 +100,9 @@ export default function ArenaPage() {
             aCash: form.aCash === '' ? null : Number(form.aCash),
             bCash: form.bCash === '' ? null : Number(form.bCash),
             margin: form.margin === '' ? null : Number(form.margin),
-            games: Number(form.games) || 1,
+            games: form.games === '' ? null : Number(form.games),
+            aWins: form.aWins === '' ? null : Number(form.aWins),
+            bWins: form.bWins === '' ? null : Number(form.bWins),
             note: form.note,
           },
         },
@@ -161,6 +163,31 @@ export default function ArenaPage() {
   const standings = data?.standings || []
   const totalMargin = useMemo(() => matches.reduce((a, m) => a + (Number(m.margin) || 0), 0), [matches])
 
+  // 两两对比：任选两个模型看历史交锋
+  const [h2hA, setH2hA] = useState('')
+  const [h2hB, setH2hB] = useState('')
+  const [h2h, setH2h] = useState(null)
+  const [h2hError, setH2hError] = useState('')
+
+  // 默认选实力榜前两名
+  useEffect(() => {
+    const names = standings.map((s) => s.name)
+    if (!h2hA && names[0]) setH2hA(names[0])
+    if (!h2hB && names[1]) setH2hB(names[1])
+  }, [standings, h2hA, h2hB])
+
+  useEffect(() => {
+    if (!h2hA || !h2hB || h2hA === h2hB) { setH2h(null); return }
+    let alive = true
+    api('/api/arena/h2h?competition=' + encodeURIComponent(slug)
+      + '&a=' + encodeURIComponent(h2hA) + '&b=' + encodeURIComponent(h2hB))
+      .then((d) => { if (alive) { setH2h(d); setH2hError('') } })
+      .catch((e) => { if (alive) { setH2h(null); setH2hError(e.message) } })
+    return () => { alive = false }
+  }, [h2hA, h2hB, slug, matches])
+
+  const h2hGames = (h2h?.series || []).reduce((acc, s) => ({ a: acc.a + s.aWins, b: acc.b + s.bWins }), { a: 0, b: 0 })
+
   return (
     <>
       <Topbar />
@@ -214,7 +241,15 @@ export default function ArenaPage() {
                   <input value={form.bCash} onChange={set('bCash')} inputMode="decimal" placeholder="例：2660" />
                 </div>
                 <div className="field">
-                  <label>局数（可选）</label>
+                  <label>局比分：A 胜局（可选）</label>
+                  <input value={form.aWins} onChange={set('aWins')} inputMode="numeric" placeholder="例：16" />
+                </div>
+                <div className="field">
+                  <label>局比分：B 胜局（可选）</label>
+                  <input value={form.bWins} onChange={set('bWins')} inputMode="numeric" placeholder="例：0" />
+                </div>
+                <div className="field">
+                  <label>局数（可选，填了局比分可留空）</label>
                   <input value={form.games} onChange={set('games')} inputMode="numeric" placeholder="1" />
                 </div>
                 <div className="field" style={{ gridColumn: 'span 2' }}>
@@ -236,7 +271,7 @@ export default function ArenaPage() {
         )}
 
         <div className="card">
-          <div className="card-head"><h3>积分榜</h3><span className="chain" style={{ marginLeft: 'auto' }}>按胜场 → 场均净胜排序</span></div>
+          <div className="card-head"><h3>实力榜（局级 ELO）</h3><span className="chain" style={{ marginLeft: 'auto' }}>按局级 ELO 排序 · 每轮 16 局逐局计入，赢强对手涨得多</span></div>
           {!standings.length && <div className="empty">还没有战绩，先登记一场</div>}
           {!!standings.length && (
             <div className="table-scroll">
@@ -244,8 +279,8 @@ export default function ArenaPage() {
                 <thead>
                   <tr>
                     <th>#</th><th>Agent</th>
-                    <th className="num">场</th><th className="num">胜</th><th className="num">负</th><th className="num">平</th>
-                    <th className="num">胜率</th><th className="num">场均净胜</th><th className="num">累计净胜</th><th className="num">最大净胜</th>
+                    <th className="num">ELO</th><th className="num">局数</th><th className="num">局胜-负</th><th className="num">局胜率</th>
+                    <th className="num">轮次</th><th className="num">轮胜率</th><th className="num">场均净胜</th><th className="num">累计净胜</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -253,20 +288,80 @@ export default function ArenaPage() {
                     <tr key={s.name}>
                       <td className="lb-rank">{i + 1}</td>
                       <td className="lb-model">{s.name}</td>
+                      <td className="num" style={{ fontWeight: 700 }}>{num(s.elo)}</td>
+                      <td className="num">{s.games}</td>
+                      <td className="num">{s.gameWins}-{s.gameLosses}</td>
+                      <td className="num">{pct(s.gameWinRate)}</td>
                       <td className="num">{s.matches}</td>
-                      <td className="num" style={{ fontWeight: 700 }}>{s.wins}</td>
-                      <td className="num">{s.losses}</td>
-                      <td className="num">{s.draws}</td>
                       <td className="num">{pct(s.winRate)}</td>
                       <td className="num">{num(s.netAvg)}</td>
                       <td className="num">{num(s.netTotal)}</td>
-                      <td className="num">{num(s.bestWin)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
+        </div>
+
+        <div className="card">
+          <div className="card-head"><h3>两两对比（历史交锋）</h3><span className="chain" style={{ marginLeft: 'auto' }}>任选两个模型，看他们的全部交手记录</span></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 'var(--sp-3)', padding: '0 var(--sp-4)' }}>
+            <div className="field">
+              <label>模型 A</label>
+              <select value={h2hA} onChange={(e) => setH2hA(e.target.value)}>
+                <option value="">（请选择）</option>
+                {standings.map((s) => <option key={s.name} value={s.name}>{s.name}（ELO {num(s.elo)}）</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label>模型 B</label>
+              <select value={h2hB} onChange={(e) => setH2hB(e.target.value)}>
+                <option value="">（请选择）</option>
+                {standings.map((s) => <option key={s.name} value={s.name}>{s.name}（ELO {num(s.elo)}）</option>)}
+              </select>
+            </div>
+          </div>
+          {h2hError && <div className="form-error">{h2hError}</div>}
+          {h2h && (
+            <>
+              <div className="stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)', padding: '0 var(--sp-4)' }}>
+                <div className="stat"><div className="s-label">交手轮次</div><div className="s-value">{h2h.series.length}</div></div>
+                <div className="stat"><div className="s-label">{h2h.a.name} 轮次战绩</div><div className="s-value" style={{ fontSize: 16 }}>{h2h.a.seriesWins} 胜 {h2h.a.seriesLosses} 负</div></div>
+                <div className="stat"><div className="s-label">局比分合计</div><div className="s-value">{h2hGames.a} : {h2hGames.b}</div></div>
+                <div className="stat"><div className="s-label">场均现金（A / B）</div><div className="s-value" style={{ fontSize: 16 }}>{num(h2h.a.cashAvg)} / {num(h2h.b.cashAvg)}</div></div>
+              </div>
+              {!!h2h.series.length && (
+                <div className="table-scroll">
+                  <table className="data lb-table">
+                    <thead>
+                      <tr>
+                        <th>时间</th><th>A 方</th><th className="num">A 现金</th><th>B 方</th><th className="num">B 现金</th>
+                        <th>结果</th><th className="num">局比分</th><th className="num">净胜额</th><th>备注</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {h2h.series.map((s, i) => (
+                        <tr key={i}>
+                          <td><TimeCell iso={s.playedAt} /></td>
+                          <td className="lb-model">{s.aName}</td>
+                          <td className="num">{num(s.aCash)}</td>
+                          <td className="lb-model">{s.bName}</td>
+                          <td className="num">{num(s.bCash)}</td>
+                          <td>{s.winner === 'draw' ? '平局' : (s.winner === 'A' ? s.aName + ' 胜' : s.bName + ' 胜')}</td>
+                          <td className="num">{s.aWins} : {s.bWins}</td>
+                          <td className="num">{num(s.margin)}</td>
+                          <td className="chain">{s.note || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!h2h.series.length && <div className="empty">这两个模型还没有交手记录</div>}
+            </>
+          )}
+          {!h2h && !h2hError && <div className="empty">选择两个不同的模型后显示历史交锋</div>}
         </div>
 
         <div className="card">

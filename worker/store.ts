@@ -1091,6 +1091,9 @@ export interface ArenaMatch {
     bCash: number | null;
     margin: number;
     games: number;
+    /** 一轮里的局比分（可空：空 = 胜者全胜，即 16:0） */
+    aWins: number | null;
+    bWins: number | null;
     note: string;
     playedAt: string;
     author: string;
@@ -1108,6 +1111,13 @@ export interface ArenaStanding {
     netTotal: number;
     netAvg: number;
     bestWin: number;
+    /** 局级统计 + ELO（排名主键）：一轮 16 局全部计入 */
+    games: number;
+    gameWins: number;
+    gameLosses: number;
+    gameWinRate: number;
+    elo: number;
+    lastPlayedAt: string | null;
 }
 
 const ARENA_NAME_MAX = 40;
@@ -1128,6 +1138,13 @@ function arenaMoney(v: unknown, field: string): number | null {
     return Math.round(n * 100) / 100;
 }
 
+function arenaCount(v: unknown, field: string): number | null {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0 || n > 99) throw badRequest(field + "需为 0 到 99 的整数");
+    return n;
+}
+
 function mapArenaRow(r: any): ArenaMatch {
     return {
         id: String(r.id), competitionId: r.competition_id ?? DEFAULT_COMPETITION,
@@ -1135,6 +1152,8 @@ function mapArenaRow(r: any): ArenaMatch {
         winner: r.winner, aCash: r.a_cash === null || r.a_cash === undefined ? null : Number(r.a_cash),
         bCash: r.b_cash === null || r.b_cash === undefined ? null : Number(r.b_cash),
         margin: Number(r.margin) || 0, games: Number(r.games) || 1,
+        aWins: r.a_wins === null || r.a_wins === undefined ? null : Number(r.a_wins),
+        bWins: r.b_wins === null || r.b_wins === undefined ? null : Number(r.b_wins),
         note: r.note ?? "", playedAt: r.played_at, author: r.author ?? "",
         authorId: r.author_id ?? null, createdAt: r.created_at,
     };
@@ -1158,19 +1177,33 @@ export async function addArenaMatch(db: D1Database, raw: any,
     let margin = arenaMoney(body.margin, "净胜额");
     if (margin === null && aCash !== null && bCash !== null) margin = Math.abs(aCash - bCash);
     if (margin === null) margin = 0;
-    const games = Math.max(1, Math.min(99, Math.round(Number(body.games ?? 1) || 1)));
+    const gamesGiven = body.games !== undefined && body.games !== null && body.games !== "";
+    let games = Math.max(1, Math.min(99, Math.round(Number(body.games ?? 1) || 1)));
+    // 局比分：要么都填要么都不填；填了要和胜者、局数自洽（局级 ELO 靠它）
+    const aWins = arenaCount(body.aWins ?? body.a_wins, "A 方胜局");
+    const bWins = arenaCount(body.bWins ?? body.b_wins, "B 方胜局");
+    if ((aWins === null) !== (bWins === null)) throw badRequest("局比分要么都填，要么都不填");
+    if (aWins !== null && bWins !== null) {
+        const total = aWins + bWins;
+        if (total === 0) throw badRequest("局比分之和至少为 1");
+        const expect = aWins > bWins ? "A" : bWins > aWins ? "B" : "draw";
+        if (winner !== expect) throw badRequest("局比分 " + aWins + ":" + bWins + " 与所选胜者不一致");
+        if (!gamesGiven) games = total;
+        else if (games !== total) throw badRequest("局比分之和（" + total + "）与局数（" + games + "）不一致");
+    }
     const note = String(body.note ?? "").trim().slice(0, ARENA_NOTE_MAX);
     const playedRaw = String(body.playedAt ?? body.played_at ?? "").trim();
     const playedAt = playedRaw ? playedRaw.slice(0, 40) : nowIso();
     const countRow = await db.prepare("SELECT COUNT(*) AS n FROM arena_matches WHERE deleted_at IS NULL").first<{ n: number }>();
     if ((countRow?.n ?? 0) >= ARENA_MAX_ROWS) throw badRequest("战绩数量已达上限（" + ARENA_MAX_ROWS + " 条）");
     const row: ArenaMatch = {
-        id: crypto.randomUUID(), competitionId, aName, bName, winner, aCash, bCash, margin, games, note,
+        id: crypto.randomUUID(), competitionId, aName, bName, winner, aCash, bCash, margin, games, aWins, bWins, note,
         playedAt, author: user.username, authorId: user.uid ?? null, createdAt: nowIso(),
     };
-    await db.prepare("INSERT INTO arena_matches (id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)")
+    await db.prepare("INSERT INTO arena_matches (id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id, a_wins, b_wins) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)")
         .bind(row.id, row.aName, row.bName, row.winner, row.aCash, row.bCash, row.margin, row.games,
-            row.note, row.playedAt, row.author, row.authorId, row.createdAt, row.competitionId)
+            row.note, row.playedAt, row.author, row.authorId, row.createdAt, row.competitionId,
+            row.aWins, row.bWins)
         .run();
     return row;
 }
@@ -1179,7 +1212,7 @@ export async function listArenaMatches(db: D1Database, limit = 300,
     competitionId: string = DEFAULT_COMPETITION): Promise<ArenaMatch[]> {
     const size = Math.max(1, Math.min(1000, Math.round(limit) || 300));
     const { results } = await db.prepare(
-        "SELECT id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id " +
+        "SELECT id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id, a_wins, b_wins " +
         "FROM arena_matches WHERE deleted_at IS NULL AND competition_id = ?2 ORDER BY played_at DESC, created_at DESC LIMIT ?1")
         .bind(size, competitionId).all<any>();
     return (results || []).map(mapArenaRow);
@@ -1192,22 +1225,63 @@ export async function deleteArenaMatch(db: D1Database, id: string): Promise<bool
 }
 
 /** 由战绩聚合积分榜（纯函数） */
+/** ELO 参数：起分 1500、K=24（与本地裁判引擎一致） */
+export const ARENA_ELO_START = 1500;
+export const ARENA_ELO_K = 24;
+
+/** 一轮（系列赛）的局比分：登记了就用，没登记按"胜者全胜"推断（16:0） */
+export function seriesScore(m: ArenaMatch): { aWins: number; bWins: number } {
+    const games = Math.max(1, Number(m.games) || 1);
+    if (m.winner === "draw") return { aWins: 0, bWins: 0 };
+    if (m.aWins !== null && m.bWins !== null && m.aWins + m.bWins > 0) {
+        return { aWins: m.aWins, bWins: m.bWins };
+    }
+    return m.winner === "A" ? { aWins: games, bWins: 0 } : { aWins: 0, bWins: games };
+}
+
+function eloExpect(ra: number, rb: number): number {
+    return 1 / (1 + Math.pow(10, (rb - ra) / 400));
+}
+
+/**
+ * 排名：主键 = 局级 ELO（一轮 16 局逐局更新，赢强对手涨得多、多打不占便宜），
+ * 次序 = 局胜率 → 场均净胜；同时保留轮次（系列赛）口径供展示。
+ */
 export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
     const map = new Map<string, ArenaStanding>();
     const bucket = (name: string): ArenaStanding => {
         const k = name.toLowerCase();
         let s = map.get(k);
         if (!s) {
-            s = { name, matches: 0, wins: 0, losses: 0, draws: 0, winRate: 0, netTotal: 0, netAvg: 0, bestWin: 0 };
+            s = {
+                name, matches: 0, wins: 0, losses: 0, draws: 0, winRate: 0,
+                netTotal: 0, netAvg: 0, bestWin: 0,
+                games: 0, gameWins: 0, gameLosses: 0, gameWinRate: 0,
+                elo: ARENA_ELO_START, lastPlayedAt: null,
+            };
             map.set(k, s);
         }
         return s;
     };
-    for (const m of rows) {
+    // ELO 依赖先后顺序：按比赛时间正序回放
+    const ordered = rows.slice().sort((x, y) =>
+        String(x.playedAt).localeCompare(String(y.playedAt))
+        || String(x.createdAt).localeCompare(String(y.createdAt)));
+    for (const m of ordered) {
         const a = bucket(m.aName);
         const b = bucket(m.bName);
+        const { aWins, bWins } = seriesScore(m);
+        const games = aWins + bWins;
         a.matches += 1;
         b.matches += 1;
+        a.games += games;
+        b.games += games;
+        a.gameWins += aWins;
+        a.gameLosses += bWins;
+        b.gameWins += bWins;
+        b.gameLosses += aWins;
+        if (!a.lastPlayedAt || m.playedAt > a.lastPlayedAt) a.lastPlayedAt = m.playedAt;
+        if (!b.lastPlayedAt || m.playedAt > b.lastPlayedAt) b.lastPlayedAt = m.playedAt;
         if (m.winner === "draw") {
             a.draws += 1;
             b.draws += 1;
@@ -1220,14 +1294,118 @@ export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
         win.netTotal += m.margin;
         lose.netTotal -= m.margin;
         if (m.margin > win.bestWin) win.bestWin = m.margin;
+        for (let i = 0; i < games; i++) {
+            const ea = eloExpect(a.elo, b.elo);
+            const sa = i < aWins ? 1 : 0;
+            a.elo += ARENA_ELO_K * (sa - ea);
+            b.elo += ARENA_ELO_K * ((1 - sa) - (1 - ea));
+        }
     }
     const out = Array.from(map.values());
     for (const s of out) {
         s.winRate = s.matches ? s.wins / s.matches : 0;
         s.netAvg = s.matches ? s.netTotal / s.matches : 0;
+        s.gameWinRate = s.games ? s.gameWins / s.games : 0;
+        s.elo = Math.round(s.elo);
     }
-    out.sort((x, y) => (y.wins - x.wins) || (y.netAvg - x.netAvg) || x.name.localeCompare(y.name));
+    out.sort((x, y) => (y.elo - x.elo) || (y.gameWinRate - x.gameWinRate)
+        || (y.netAvg - x.netAvg) || x.name.localeCompare(y.name));
     return out;
+}
+
+export interface ArenaH2hSide {
+    name: string;
+    seriesWins: number;
+    seriesLosses: number;
+    seriesDraws: number;
+    gameWins: number;
+    gameLosses: number;
+    cashTotal: number;
+    cashAvg: number;
+    netTotal: number;
+    netAvg: number;
+    bestWin: number;
+}
+
+export interface ArenaH2hSeries {
+    playedAt: string;
+    winner: "A" | "B" | "draw";
+    aName: string;
+    bName: string;
+    aCash: number | null;
+    bCash: number | null;
+    margin: number;
+    games: number;
+    aWins: number;
+    bWins: number;
+    note: string;
+}
+
+export interface ArenaHeadToHead {
+    a: ArenaH2hSide;
+    b: ArenaH2hSide;
+    series: ArenaH2hSeries[];
+}
+
+/** 任选两个模型看历史交锋（返回结果里 a/b 按调用方给的顺序，与登记时的先后手无关） */
+export function arenaHeadToHead(rows: ArenaMatch[], nameA: string, nameB: string): ArenaHeadToHead {
+    const ka = nameA.trim().toLowerCase();
+    const kb = nameB.trim().toLowerCase();
+    const side = (name: string): ArenaH2hSide => ({
+        name, seriesWins: 0, seriesLosses: 0, seriesDraws: 0,
+        gameWins: 0, gameLosses: 0, cashTotal: 0, cashAvg: 0, netTotal: 0, netAvg: 0, bestWin: 0,
+    });
+    const a = side(nameA.trim());
+    const b = side(nameB.trim());
+    let aCashN = 0;
+    let bCashN = 0;
+    const series: ArenaH2hSeries[] = [];
+    const matched = rows.filter((m) => {
+        const an = m.aName.toLowerCase();
+        const bn = m.bName.toLowerCase();
+        return (an === ka && bn === kb) || (an === kb && bn === ka);
+    }).sort((x, y) => String(x.playedAt).localeCompare(String(y.playedAt)));
+    for (const m of matched) {
+        const aIsLeft = m.aName.toLowerCase() === ka;
+        const { aWins, bWins } = seriesScore(m);
+        const myWins = aIsLeft ? aWins : bWins;
+        const oppWins = aIsLeft ? bWins : aWins;
+        const myCash = aIsLeft ? m.aCash : m.bCash;
+        const oppCash = aIsLeft ? m.bCash : m.aCash;
+        a.gameWins += myWins;
+        a.gameLosses += oppWins;
+        b.gameWins += oppWins;
+        b.gameLosses += myWins;
+        if (myCash !== null) { a.cashTotal += myCash; aCashN += 1; }
+        if (oppCash !== null) { b.cashTotal += oppCash; bCashN += 1; }
+        const aWon = m.winner === "draw" ? null : (m.winner === "A") === aIsLeft;
+        if (aWon === null) {
+            a.seriesDraws += 1;
+            b.seriesDraws += 1;
+        } else if (aWon) {
+            a.seriesWins += 1;
+            b.seriesLosses += 1;
+            a.netTotal += m.margin;
+            b.netTotal -= m.margin;
+            if (m.margin > a.bestWin) a.bestWin = m.margin;
+        } else {
+            b.seriesWins += 1;
+            a.seriesLosses += 1;
+            b.netTotal += m.margin;
+            a.netTotal -= m.margin;
+            if (m.margin > b.bestWin) b.bestWin = m.margin;
+        }
+        series.push({
+            playedAt: m.playedAt, winner: aWon === null ? "draw" : aWon ? "A" : "B",
+            aName: a.name, bName: b.name, aCash: myCash, bCash: oppCash,
+            margin: m.margin, games: myWins + oppWins, aWins: myWins, bWins: oppWins, note: m.note,
+        });
+    }
+    a.cashAvg = aCashN ? a.cashTotal / aCashN : 0;
+    b.cashAvg = bCashN ? b.cashTotal / bCashN : 0;
+    a.netAvg = a.seriesWins + a.seriesLosses ? a.netTotal / (a.seriesWins + a.seriesLosses) : 0;
+    b.netAvg = b.seriesWins + b.seriesLosses ? b.netTotal / (b.seriesWins + b.seriesLosses) : 0;
+    return { a, b, series };
 }
 // ---------------------------------------------------------------- 农场对抗赛回放
 // 元数据入 D1，回放 blob 入 R2（键 replays/<id>.json）。只有站长可上传/删除。

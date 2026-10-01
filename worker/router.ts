@@ -761,6 +761,20 @@ const routes: Route[] = [
         return { ok: true };
     } },
 
+    // ---- 任选两个模型看历史交锋（公开可读）----
+    { method: "GET", path: "/api/arena/h2h", role: null, handler: async (ctx) => {
+        const cid = await resolveCompetitionId(ctx, ctx.url.searchParams.get("competition"));
+        const a = String(ctx.url.searchParams.get("a") ?? "").trim();
+        const b = String(ctx.url.searchParams.get("b") ?? "").trim();
+        if (!a || !b) throw new ApiError(400, "请提供 a 与 b 两个模型名");
+        if (a.toLowerCase() === b.toLowerCase()) throw new ApiError(400, "两侧不能是同一个模型");
+        const rows = await store.listArenaMatches(ctx.env.DB, 1000, cid);
+        const h2h = store.arenaHeadToHead(rows, a, b);
+        const boards = store.arenaStandings(rows);
+        const eloOf = (n: string) => boards.find((s) => s.name.toLowerCase() === n.toLowerCase())?.elo ?? null;
+        return { ok: true, competitionId: cid, a: h2h.a, b: h2h.b, series: h2h.series, eloA: eloOf(a), eloB: eloOf(b) };
+    } },
+
     // ---- 对抗赛回放（blob 存 R2，元数据存 D1；只有站长可写）----
     { method: "GET", path: "/api/arena/replays", role: null, handler: async (ctx) => {
         const cid = await resolveCompetitionId(ctx, ctx.url.searchParams.get("competition"));

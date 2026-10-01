@@ -529,6 +529,66 @@ try {
   ok('站长删回放 → ok', delRepOwner.data?.ok === true)
   const afterDel = await fetch(apiUrl('/api/arena/replays/' + repId))
   ok('删除后取回 → 404', afterDel.status === 404, 'HTTP ' + afterDel.status)
+  // 20. 局级 ELO + 两两对比（v3.15）：用独立比赛做定量校验，互不污染
+  const boardOf = async (slug) => (await call(owner, 'GET', '/api/competitions/' + slug)).data?.standings || []
+  const rowIn = (board, name) => board.find((s) => s.name === name)
+  const eloIn = (board, name) => rowIn(board, name)?.elo
+  await call(owner, 'POST', '/api/competitions', { competition: { slug: 'elo-lab', name: 'ELO 试验场' } })
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab', match: {
+    aName: 'A', bName: 'B', winner: 'A', games: 16, aWins: 16, bWins: 0, playedAt: '2026-01-01T00:00:01Z' } })
+  const lab1 = await boardOf('elo-lab')
+  const eloA16 = eloIn(lab1, 'A')
+  ok('ELO：16:0 后 A 高于起分且不越过理论上限 1692', eloA16 > 1600 && eloA16 <= 1692, 'A=' + eloA16)
+  ok('ELO：一局一更新，双方评分互补（和恒等于 3000）', Math.abs((eloA16 + eloIn(lab1, 'B')) - 3000) <= 1, 'A+B=' + (eloA16 + eloIn(lab1, 'B')))
+  ok('ELO 榜按 ELO 降序', lab1[0]?.name === 'A' && lab1[0].elo >= lab1[1].elo)
+  ok('局统计：A 局数 16、局胜 16、局胜率 100%',
+    rowIn(lab1, 'A').games === 16 && rowIn(lab1, 'A').gameWins === 16 && rowIn(lab1, 'A').gameWinRate === 1,
+    JSON.stringify(rowIn(lab1, 'A')))
+  await call(owner, 'POST', '/api/competitions', { competition: { slug: 'elo-lab2', name: 'ELO 试验场2' } })
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab2', match: {
+    aName: 'A', bName: 'B', winner: 'A', games: 16, aWins: 9, bWins: 7, playedAt: '2026-01-01T00:00:01Z' } })
+  const eloA97 = eloIn(await boardOf('elo-lab2'), 'A')
+  ok('ELO：同样 16 局，16:0 比 9:7 涨得多（局比分不再被压成 1 场）', eloA97 < eloA16, '16:0 → ' + eloA16 + '，9:7 → ' + eloA97)
+  await call(owner, 'POST', '/api/competitions', { competition: { slug: 'elo-lab3', name: 'ELO 试验场3' } })
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab3', match: {
+    aName: 'P', bName: 'Q', winner: 'A', games: 16, aWins: 16, bWins: 0, playedAt: '2026-01-01T00:00:01Z' } })
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab3', match: {
+    aName: 'R', bName: 'P', winner: 'A', games: 16, aWins: 9, bWins: 7, playedAt: '2026-01-01T00:00:02Z' } })
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab3', match: {
+    aName: 'S', bName: 'Q', winner: 'A', games: 16, aWins: 9, bWins: 7, playedAt: '2026-01-01T00:00:03Z' } })
+  const lab3 = await boardOf('elo-lab3')
+  ok('ELO：赢强对手比赢弱对手涨得多', (eloIn(lab3, 'R') - 1500) > (eloIn(lab3, 'S') - 1500),
+    'R=' + eloIn(lab3, 'R') + ' S=' + eloIn(lab3, 'S'))
+  const okScore = await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab', match: {
+    aName: 'C', bName: 'D', winner: 'A', aWins: 5, bWins: 3 } })
+  ok('只填局比分、不填局数 → 局数自动取 8', okScore.data?.match?.games === 8 && okScore.data?.match?.aWins === 5, JSON.stringify(okScore.data?.match || null))
+  const badWinner = await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab', match: {
+    aName: 'C', bName: 'D', winner: 'A', aWins: 3, bWins: 5 } })
+  ok('局比分与胜者不一致 → 400', badWinner.status === 400, 'HTTP ' + badWinner.status)
+  const badSum = await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab', match: {
+    aName: 'C', bName: 'D', winner: 'A', games: 16, aWins: 16, bWins: 2 } })
+  ok('局比分之和与局数不符 → 400', badSum.status === 400, 'HTTP ' + badSum.status)
+  const halfScore = await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab', match: {
+    aName: 'C', bName: 'D', winner: 'A', aWins: 5 } })
+  ok('只填一侧局比分 → 400', halfScore.status === 400, 'HTTP ' + halfScore.status)
+  const h2h = await call(gina, 'GET', '/api/arena/h2h?competition=elo-lab&a=A&b=B')
+  ok('两两对比公开可读，交手合计正确（A 16:0 B）',
+    h2h.status === 200 && h2h.data?.a?.name === 'A' && h2h.data?.series?.length === 1
+    && h2h.data?.a?.seriesWins === 1 && h2h.data?.a?.gameWins === 16 && h2h.data?.b?.gameWins === 0
+    && h2h.data?.series?.[0]?.aWins === 16 && typeof h2h.data?.eloA === 'number',
+    JSON.stringify(h2h.data?.a || null))
+  const h2hSwap = await call(gina, 'GET', '/api/arena/h2h?competition=elo-lab&a=B&b=A')
+  ok('两两对比对调 A/B：胜负与局比分互换',
+    h2hSwap.data?.a?.seriesWins === 0 && h2hSwap.data?.a?.seriesLosses === 1
+    && h2hSwap.data?.series?.[0]?.aWins === 0 && h2hSwap.data?.series?.[0]?.bWins === 16,
+    JSON.stringify(h2hSwap.data?.a || null))
+  const h2hSame = await call(gina, 'GET', '/api/arena/h2h?a=dsf&b=DSF')
+  ok('两侧同一模型（忽略大小写）→ 400', h2hSame.status === 400, 'HTTP ' + h2hSame.status)
+  const h2hMissing = await call(gina, 'GET', '/api/arena/h2h?a=dsf')
+  ok('两两对比缺参数 → 400', h2hMissing.status === 400, 'HTTP ' + h2hMissing.status)
+  const h2hNone = await call(gina, 'GET', '/api/arena/h2h?a=nobody-a&b=nobody-b')
+  ok('没有交手的两个模型 → 200 且空列表', h2hNone.status === 200 && (h2hNone.data?.series || []).length === 0,
+    'HTTP ' + h2hNone.status + ' ' + JSON.stringify(h2hNone.data?.series || null))
 
 } catch (e) {
   failures.push(`流程异常：${e.message}`)
