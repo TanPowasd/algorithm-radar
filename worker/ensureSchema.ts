@@ -13,7 +13,7 @@
 import { SCHEMA_STATEMENTS } from "./schema";
 
 /** 与下方 MIGRATIONS 一一对应的版本号；改动迁移列表就必须 +1 */
-export const SCHEMA_VERSION = "v3.13";
+export const SCHEMA_VERSION = "v3.14";
 
 let ready: Promise<void> | null = null;
 
@@ -30,6 +30,9 @@ const MIGRATIONS: Array<[string, string, string]> = [
     ["problems", "time_limit", "ALTER TABLE problems ADD COLUMN time_limit INTEGER"],
     ["problems", "memory_limit", "ALTER TABLE problems ADD COLUMN memory_limit INTEGER"],
     ["problems", "has_attachments", "ALTER TABLE problems ADD COLUMN has_attachments INTEGER NOT NULL DEFAULT 0"],
+    // v3.14：把历史战绩与回放归入默认比赛（农场对抗赛）
+    ["arena_matches", "competition_id", "ALTER TABLE arena_matches ADD COLUMN competition_id TEXT NOT NULL DEFAULT 'kaggriculture'"],
+    ["arena_replays", "competition_id", "ALTER TABLE arena_replays ADD COLUMN competition_id TEXT NOT NULL DEFAULT 'kaggriculture'"],
 ];
 
 async function migrate(db: D1Database): Promise<void> {

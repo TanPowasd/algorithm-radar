@@ -50,7 +50,14 @@ class Jar {
 /** URL 统一走 new URL(常量基址) + pathname 赋值（不做字符串拼接进 fetch） */
 function apiUrl(pathname) {
   const u = new URL(BASE_URL)
-  u.pathname = pathname
+  // 注意：URL.pathname 赋值会把 "?" 转义成 %3F，所以带查询串时要拆开再分别赋值
+  const qi = pathname.indexOf('?')
+  if (qi >= 0) {
+    u.pathname = pathname.slice(0, qi)
+    u.search = pathname.slice(qi)
+  } else {
+    u.pathname = pathname
+  }
   return u
 }
 
@@ -420,7 +427,67 @@ try {
   ok('站长删战绩 → ok', arenaDelOwner.data?.ok === true)
   const arenaAfter = await call(owner, 'GET', '/api/arena/matches')
   ok('软删除后榜单重算（dsf 消失）', !(arenaAfter.data?.standings || []).some((s) => s.name === 'dsf'), JSON.stringify(arenaAfter.data?.standings))
-  // 18. 对抗赛回放：只有站长可上传/删除，GET 公开可读（blob 在 R2）
+  // 18. 比赛维度：默认比赛兼容 + 新建比赛 + 跨比赛隔离（v3.14）
+  const cupReplay = {
+    format: 'k4u-arena-replay/1',
+    meta: { seed: 7, labels: ['p1', 'p2'], winner: 'A', end_reason: 'cash', steps_done: 1 },
+    legend: { crops: {}, animals: {}, items: [] },
+    frames: [{
+      t: 1,
+      p: [
+        { pos: [4, 4], hands: [], money: 3000, tiles: '0'.repeat(100), extra: {}, shed: {}, seeds: {}, inv: [] },
+        { pos: [4, 5], hands: [], money: 3000, tiles: '0'.repeat(100), extra: {}, shed: {}, seeds: {}, inv: [] },
+      ],
+      act: [{ farmer: ['PASS'] }, { farmer: ['PASS'] }],
+    }],
+  }
+  const compList = await call(owner, 'GET', '/api/competitions')
+  ok('比赛列表含默认比赛（农场对抗赛）', (compList.data?.competitions || []).some((c) => c.slug === 'kaggriculture'),
+    JSON.stringify(compList.data?.competitions?.[0] || null))
+  const defMatches = await call(owner, 'GET', '/api/arena/matches')
+  const kgMatches = await call(owner, 'GET', '/api/arena/matches?competition=kaggriculture')
+  ok('缺省比赛 = kaggriculture（旧链接行为不变）',
+    defMatches.data?.competitionId === 'kaggriculture'
+    && (defMatches.data?.matches || []).length === (kgMatches.data?.matches || []).length,
+    JSON.stringify({ def: defMatches.data?.matches?.length, kg: kgMatches.data?.matches?.length }))
+  const compContrib = await call(gina, 'POST', '/api/competitions', { competition: { slug: 'test-cup', name: '测试杯' } })
+  ok('贡献者新建比赛 → 403', compContrib.status === 403, 'HTTP ' + compContrib.status)
+  const compNew = await call(owner, 'POST', '/api/competitions', {
+    competition: { slug: 'test-cup', name: '测试杯', subtitle: 'e2e 专用', scoreModel: 'weighted_rank', sort: 9 },
+  })
+  ok('站长新建比赛 → ok', compNew.data?.ok === true && compNew.data?.competition?.slug === 'test-cup',
+    'HTTP ' + compNew.status + ' ' + JSON.stringify(compNew.data))
+  const compDup = await call(owner, 'POST', '/api/competitions', { competition: { slug: 'test-cup', name: '重名' } })
+  ok('短名重复 → 400', compDup.status === 400, 'HTTP ' + compDup.status)
+  const compBadSlug = await call(owner, 'POST', '/api/competitions', { competition: { slug: 'Bad Slug!', name: 'x' } })
+  ok('短名非法 → 400', compBadSlug.status === 400, 'HTTP ' + compBadSlug.status)
+  const compMatch = await call(owner, 'POST', '/api/arena/matches', {
+    competition: 'test-cup', match: { aName: 'p1', bName: 'p2', winner: 'A', aCash: 100, bCash: 50 },
+  })
+  ok('往新比赛登记战绩 → ok 且归属正确', compMatch.data?.match?.competitionId === 'test-cup',
+    JSON.stringify(compMatch.data?.match || null))
+  const tcMatches = await call(owner, 'GET', '/api/arena/matches?competition=test-cup')
+  const kgOnly = await call(owner, 'GET', '/api/arena/matches?competition=kaggriculture')
+  ok('跨比赛隔离：各看各的',
+    (tcMatches.data?.matches || []).length === 1
+    && (tcMatches.data?.matches || []).every((m) => m.competitionId === 'test-cup')
+    && !(kgOnly.data?.matches || []).some((m) => m.competitionId === 'test-cup'),
+    JSON.stringify({ tcStatus: tcMatches.status, tc: tcMatches.data, kgStatus: kgOnly.status, kgLen: kgOnly.data?.matches?.length }).slice(0, 300))
+  const compDetail = await call(owner, 'GET', '/api/competitions/test-cup')
+  ok('比赛详情一次返回比赛 + 战绩 + 积分榜',
+    compDetail.data?.competition?.name === '测试杯' && compDetail.data?.competition?.matches === 1
+    && (compDetail.data?.matches || []).length === 1 && Array.isArray(compDetail.data?.standings),
+    JSON.stringify(compDetail.data?.competition || null))
+  const compMissing = await call(owner, 'GET', '/api/competitions/no-such-cup')
+  ok('不存在的比赛 → 404', compMissing.status === 404, 'HTTP ' + compMissing.status)
+  const compBadQuery = await call(owner, 'GET', '/api/arena/matches?competition=no-such-cup')
+  ok('战绩查询指定不存在的比赛 → 404', compBadQuery.status === 404, 'HTTP ' + compBadQuery.status)
+  const compRep = await call(owner, 'POST', '/api/arena/replays', { competition: 'test-cup', replay: cupReplay })
+  ok('回放也能归属到指定比赛', compRep.data?.replay?.competitionId === 'test-cup', JSON.stringify(compRep.data?.replay || null))
+  const compRepList = await call(owner, 'GET', '/api/arena/replays?competition=test-cup')
+  ok('回放按比赛隔离', (compRepList.data?.replays || []).length === 1
+    && compRepList.data.replays.every((r) => r.competitionId === 'test-cup'), JSON.stringify(compRepList.data?.replays?.length))
+  // 19. 对抗赛回放：只有站长可上传/删除，GET 公开可读（blob 在 R2）
   const tinyReplay = {
     format: 'k4u-arena-replay/1',
     meta: { seed: 11, labels: ['dsf4.1', 'qwen4'], winner: 'A', end_reason: 'cash', steps_done: 1 },

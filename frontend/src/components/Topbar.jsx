@@ -82,8 +82,8 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
         <Link className={`btn small ${location.pathname === '/prompts' ? 'primary' : 'ghost'}`} to="/prompts">
           推荐提示词
         </Link>
-        <Link className={`btn small ${location.pathname === '/arena' ? 'primary' : 'ghost'}`} to="/arena">
-          对抗赛
+        <Link className={`btn small ${location.pathname.startsWith('/arena') ? 'primary' : 'ghost'}`} to="/arena">
+          比赛
         </Link>
         <Link className={`btn small ${location.pathname === '/v2' ? 'primary' : 'ghost'}`} to="/v2">
           k4u-V2

@@ -244,6 +244,15 @@ async function maybeFetchLuogu(pid: string, info: Record<string, unknown>) {
 
 // ---------------------------------------------------------------- 路由表
 
+/** 解析比赛参数：缺省用默认比赛；指定了不存在的短名直接 404 */
+async function resolveCompetitionId(ctx: any, raw: unknown): Promise<string> {
+    const key = String(raw ?? "").trim().toLowerCase();
+    if (!key) return store.DEFAULT_COMPETITION;
+    const c = await store.getCompetition(ctx.env.DB, key);
+    if (!c) throw new ApiError(404, "没找到比赛 " + key);
+    return c.id;
+}
+
 const routes: Route[] = [
     { method: "GET", path: "/api/ping", role: null, handler: () => ({
         ok: true,
@@ -708,16 +717,39 @@ const routes: Route[] = [
         return { ok: true, ...r, revision: await currentRevision(ctx.env.DB) };
     } },
 
+    // ---- 比赛（同一站点承载多个比赛；缺省比赛 = 农场对抗赛）----
+    { method: "GET", path: "/api/competitions", role: null, handler: async (ctx) => {
+        return { ok: true, competitions: await store.listCompetitions(ctx.env.DB) };
+    } },
+
+    { method: "POST", path: "/api/competitions", role: "owner", handler: async (ctx) => {
+        const user = requireRole(ctx, "owner");
+        const raw = ctx.body?.competition && typeof ctx.body.competition === "object" ? ctx.body.competition : ctx.body;
+        const c = await store.addCompetition(ctx.env.DB, raw);
+        await store.logAudit(ctx.env.DB, user, "competition_add", "新建比赛 " + c.slug + "（" + c.name + "）");
+        return { ok: true, competition: c, message: "比赛已创建" };
+    } },
+
+    { method: "GET", path: "/api/competitions/:slug", role: null, handler: async (ctx) => {
+        const c = await store.getCompetition(ctx.env.DB, ctx.params.slug);
+        if (!c) throw new ApiError(404, "没找到这个比赛");
+        const matches = await store.listArenaMatches(ctx.env.DB, 300, c.id);
+        const replays = await store.listArenaReplays(ctx.env.DB, 200, c.id);
+        return { ok: true, competition: c, matches, standings: store.arenaStandings(matches), replays };
+    } },
+
     // ---- 农场对抗赛战绩（只登记谁和谁打、谁赢了、赢了多少）----
     { method: "GET", path: "/api/arena/matches", role: null, handler: async (ctx) => {
-        const rows = await store.listArenaMatches(ctx.env.DB);
-        return { ok: true, matches: rows, standings: store.arenaStandings(rows) };
+        const cid = await resolveCompetitionId(ctx, ctx.url.searchParams.get("competition"));
+        const rows = await store.listArenaMatches(ctx.env.DB, 300, cid);
+        return { ok: true, competitionId: cid, matches: rows, standings: store.arenaStandings(rows) };
     } },
 
     { method: "POST", path: "/api/arena/matches", role: "owner", handler: async (ctx) => {
         const user = requireRole(ctx, "owner");
         const raw = ctx.body?.match && typeof ctx.body.match === "object" ? ctx.body.match : ctx.body;
-        const m = await store.addArenaMatch(ctx.env.DB, raw, { uid: user.uid, username: user.username });
+        const cid = await resolveCompetitionId(ctx, raw?.competition ?? ctx.body?.competition);
+        const m = await store.addArenaMatch(ctx.env.DB, raw, { uid: user.uid, username: user.username }, cid);
         return { ok: true, match: m, message: "战绩已登记" };
     } },
 
@@ -731,7 +763,8 @@ const routes: Route[] = [
 
     // ---- 对抗赛回放（blob 存 R2，元数据存 D1；只有站长可写）----
     { method: "GET", path: "/api/arena/replays", role: null, handler: async (ctx) => {
-        return { ok: true, replays: await store.listArenaReplays(ctx.env.DB) };
+        const cid = await resolveCompetitionId(ctx, ctx.url.searchParams.get("competition"));
+        return { ok: true, competitionId: cid, replays: await store.listArenaReplays(ctx.env.DB, 200, cid) };
     } },
 
     { method: "POST", path: "/api/arena/replays", role: "owner", handler: async (ctx) => {
@@ -739,7 +772,8 @@ const routes: Route[] = [
         const bucket = ctx.env.SNAPSHOT_BUCKET;
         if (!bucket) throw new ApiError(503, "回放存储（R2）未配置，暂时无法上传");
         const body = ctx.body?.replay && typeof ctx.body.replay === "object" ? ctx.body.replay : ctx.body;
-        const info = await store.addArenaReplay(ctx.env.DB, bucket, body, { uid: user.uid, username: user.username });
+        const cid = await resolveCompetitionId(ctx, body?.competition ?? ctx.body?.competition);
+        const info = await store.addArenaReplay(ctx.env.DB, bucket, body, { uid: user.uid, username: user.username }, cid);
         await store.logAudit(ctx.env.DB, user, "arena_replay_add",
             "上传回放 " + info.id + "（" + Math.round(info.bytes / 1024) + " KB，种子 " + (info.seed ?? "-") + "）");
         return { ok: true, replay: info, message: "回放已上传" };

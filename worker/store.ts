@@ -998,10 +998,92 @@ export async function listAudit(db: D1Database, limit = 100): Promise<AuditEntry
     }));
 }
 
+// ---------------------------------------------------------------- 比赛（同一站点承载多个比赛）
+export interface Competition {
+    id: string;
+    slug: string;
+    name: string;
+    subtitle: string;
+    rulesUrl: string;
+    engineSha: string;
+    scoreModel: string;
+    status: string;
+    sort: number;
+    createdAt: string;
+    matches: number;
+    replays: number;
+    lastPlayedAt: string | null;
+}
+
+/** 缺省比赛：历史战绩与回放都归到它名下（迁移时的默认值） */
+export const DEFAULT_COMPETITION = "kaggriculture";
+export const COMPETITION_MAX_ROWS = 50;
+export const COMPETITION_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,31}$/;
+const COMPETITION_SCORE_MODELS = ["1v1_cash", "weighted_rank", "other"];
+const COMPETITION_STATUS = ["live", "soon", "archived"];
+const COMPETITION_SELECT =
+    "SELECT c.id, c.slug, c.name, c.subtitle, c.rules_url, c.engine_sha, c.score_model, c.status, c.sort, c.created_at, " +
+    "(SELECT COUNT(*) FROM arena_matches m WHERE m.competition_id = c.id AND m.deleted_at IS NULL) AS matches, " +
+    "(SELECT COUNT(*) FROM arena_replays p WHERE p.competition_id = c.id AND p.deleted_at IS NULL) AS replays, " +
+    "(SELECT MAX(m.played_at) FROM arena_matches m WHERE m.competition_id = c.id AND m.deleted_at IS NULL) AS last_played_at " +
+    "FROM competitions c ";
+
+function mapCompetitionRow(r: any): Competition {
+    return {
+        id: String(r.id), slug: r.slug, name: r.name, subtitle: r.subtitle ?? "",
+        rulesUrl: r.rules_url ?? "", engineSha: r.engine_sha ?? "",
+        scoreModel: r.score_model ?? "1v1_cash", status: r.status ?? "live",
+        sort: Number(r.sort) || 0, createdAt: r.created_at,
+        matches: Number(r.matches) || 0, replays: Number(r.replays) || 0,
+        lastPlayedAt: r.last_played_at ?? null,
+    };
+}
+
+export async function listCompetitions(db: D1Database): Promise<Competition[]> {
+    const { results } = await db.prepare(
+        COMPETITION_SELECT + "WHERE c.deleted_at IS NULL ORDER BY c.sort ASC, c.created_at ASC").all<any>();
+    return (results || []).map(mapCompetitionRow);
+}
+
+export async function getCompetition(db: D1Database, key: string): Promise<Competition | null> {
+    const k = String(key ?? "").trim().toLowerCase();
+    if (!k) return null;
+    const row = await db.prepare(
+        COMPETITION_SELECT + "WHERE (c.slug = ?1 OR c.id = ?1) AND c.deleted_at IS NULL")
+        .bind(k).first<any>();
+    return row ? mapCompetitionRow(row) : null;
+}
+
+export async function addCompetition(db: D1Database, raw: any): Promise<Competition> {
+    const body = raw && typeof raw === "object" ? raw : {};
+    const slug = String(body.slug ?? "").trim().toLowerCase();
+    if (!COMPETITION_SLUG_RE.test(slug)) throw badRequest("短名只能用 2-32 位小写字母、数字与连字符，且以字母或数字开头");
+    const name = String(body.name ?? "").trim().replace(/\s+/g, " ").slice(0, ARENA_NAME_MAX);
+    if (!name) throw badRequest("比赛名称不能为空");
+    const subtitle = String(body.subtitle ?? "").trim().slice(0, ARENA_NOTE_MAX);
+    const rulesUrl = String(body.rulesUrl ?? body.rules_url ?? "").trim().slice(0, 300);
+    const engineSha = String(body.engineSha ?? body.engine_sha ?? "").trim().slice(0, 64);
+    const scoreModel = String(body.scoreModel ?? body.score_model ?? "1v1_cash").trim();
+    if (!COMPETITION_SCORE_MODELS.includes(scoreModel)) throw badRequest("评分模型只能是 " + COMPETITION_SCORE_MODELS.join(" / "));
+    const status = String(body.status ?? "live").trim();
+    if (!COMPETITION_STATUS.includes(status)) throw badRequest("状态只能是 " + COMPETITION_STATUS.join(" / "));
+    const sort = Math.round(Number(body.sort ?? 0) || 0);
+    if (await getCompetition(db, slug)) throw badRequest("短名 " + slug + " 已被占用");
+    const countRow = await db.prepare("SELECT COUNT(*) AS n FROM competitions WHERE deleted_at IS NULL").first<{ n: number }>();
+    if ((countRow?.n ?? 0) >= COMPETITION_MAX_ROWS) throw badRequest("比赛数量已达上限（" + COMPETITION_MAX_ROWS + " 个）");
+    await db.prepare("INSERT INTO competitions (id, slug, name, subtitle, rules_url, engine_sha, score_model, status, sort, created_at) " +
+        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)")
+        .bind(slug, slug, name, subtitle, rulesUrl, engineSha, scoreModel, status, sort, nowIso()).run();
+    const created = await getCompetition(db, slug);
+    if (!created) throw badRequest("比赛创建失败，请重试");
+    return created;
+}
+
 // ---------------------------------------------------------------- 农场对抗赛战绩
 // 一条记录 = 一轮对抗（谁和谁打、谁赢了、赢了多少）；可选多局用 games 标注。
 export interface ArenaMatch {
     id: string;
+    competitionId: string;
     aName: string;
     bName: string;
     winner: "A" | "B" | "draw";
@@ -1048,7 +1130,8 @@ function arenaMoney(v: unknown, field: string): number | null {
 
 function mapArenaRow(r: any): ArenaMatch {
     return {
-        id: String(r.id), aName: r.a_name, bName: r.b_name,
+        id: String(r.id), competitionId: r.competition_id ?? DEFAULT_COMPETITION,
+        aName: r.a_name, bName: r.b_name,
         winner: r.winner, aCash: r.a_cash === null || r.a_cash === undefined ? null : Number(r.a_cash),
         bCash: r.b_cash === null || r.b_cash === undefined ? null : Number(r.b_cash),
         margin: Number(r.margin) || 0, games: Number(r.games) || 1,
@@ -1058,7 +1141,8 @@ function mapArenaRow(r: any): ArenaMatch {
 }
 
 export async function addArenaMatch(db: D1Database, raw: any,
-    user: { uid: number | null; username: string }): Promise<ArenaMatch> {
+    user: { uid: number | null; username: string },
+    competitionId: string = DEFAULT_COMPETITION): Promise<ArenaMatch> {
     const body = raw && typeof raw === "object" ? raw : {};
     const aName = arenaName(body.aName ?? body.a_name, "A 方名称");
     const bName = arenaName(body.bName ?? body.b_name, "B 方名称");
@@ -1081,22 +1165,23 @@ export async function addArenaMatch(db: D1Database, raw: any,
     const countRow = await db.prepare("SELECT COUNT(*) AS n FROM arena_matches WHERE deleted_at IS NULL").first<{ n: number }>();
     if ((countRow?.n ?? 0) >= ARENA_MAX_ROWS) throw badRequest("战绩数量已达上限（" + ARENA_MAX_ROWS + " 条）");
     const row: ArenaMatch = {
-        id: crypto.randomUUID(), aName, bName, winner, aCash, bCash, margin, games, note,
+        id: crypto.randomUUID(), competitionId, aName, bName, winner, aCash, bCash, margin, games, note,
         playedAt, author: user.username, authorId: user.uid ?? null, createdAt: nowIso(),
     };
-    await db.prepare("INSERT INTO arena_matches (id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)")
+    await db.prepare("INSERT INTO arena_matches (id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)")
         .bind(row.id, row.aName, row.bName, row.winner, row.aCash, row.bCash, row.margin, row.games,
-            row.note, row.playedAt, row.author, row.authorId, row.createdAt)
+            row.note, row.playedAt, row.author, row.authorId, row.createdAt, row.competitionId)
         .run();
     return row;
 }
 
-export async function listArenaMatches(db: D1Database, limit = 300): Promise<ArenaMatch[]> {
+export async function listArenaMatches(db: D1Database, limit = 300,
+    competitionId: string = DEFAULT_COMPETITION): Promise<ArenaMatch[]> {
     const size = Math.max(1, Math.min(1000, Math.round(limit) || 300));
     const { results } = await db.prepare(
-        "SELECT id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at " +
-        "FROM arena_matches WHERE deleted_at IS NULL ORDER BY played_at DESC, created_at DESC LIMIT ?1")
-        .bind(size).all<any>();
+        "SELECT id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id " +
+        "FROM arena_matches WHERE deleted_at IS NULL AND competition_id = ?2 ORDER BY played_at DESC, created_at DESC LIMIT ?1")
+        .bind(size, competitionId).all<any>();
     return (results || []).map(mapArenaRow);
 }
 
@@ -1148,6 +1233,7 @@ export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
 // 元数据入 D1，回放 blob 入 R2（键 replays/<id>.json）。只有站长可上传/删除。
 export interface ArenaReplay {
     id: string;
+    competitionId: string;
     aName: string;
     bName: string;
     seed: number | null;
@@ -1180,7 +1266,8 @@ async function sha256Hex(text: string): Promise<string> {
 
 function mapArenaReplayRow(r: any): ArenaReplay {
     return {
-        id: String(r.id), aName: r.a_name, bName: r.b_name,
+        id: String(r.id), competitionId: r.competition_id ?? DEFAULT_COMPETITION,
+        aName: r.a_name, bName: r.b_name,
         seed: r.seed === null || r.seed === undefined ? null : Number(r.seed),
         winner: r.winner ?? "", endReason: r.end_reason ?? "",
         steps: Number(r.steps) || 0, frames: Number(r.frames) || 0,
@@ -1192,7 +1279,8 @@ function mapArenaReplayRow(r: any): ArenaReplay {
 
 /** 校验回放骨架 → 写 R2 → 写 D1（D1 失败回收 R2） */
 export async function addArenaReplay(db: D1Database, bucket: R2Bucket, raw: any,
-    user: { uid: number | null; username: string }): Promise<ArenaReplay> {
+    user: { uid: number | null; username: string },
+    competitionId: string = DEFAULT_COMPETITION): Promise<ArenaReplay> {
     const body = raw && typeof raw === "object" ? raw : {};
     if (String(body.format || "") !== REPLAY_FORMAT) {
         throw badRequest("不是回放文件：format 必须为 " + REPLAY_FORMAT);
@@ -1213,7 +1301,7 @@ export async function addArenaReplay(db: D1Database, bucket: R2Bucket, raw: any,
     if ((countRow?.n ?? 0) >= ARENA_REPLAY_MAX_ROWS) throw badRequest("回放数量已达上限（" + ARENA_REPLAY_MAX_ROWS + " 份），请先删除旧的");
     const id = crypto.randomUUID();
     const row: ArenaReplay = {
-        id, aName, bName,
+        id, competitionId, aName, bName,
         seed: meta.seed === null || meta.seed === undefined ? null : Math.round(Number(meta.seed) || 0),
         winner: String(meta.winner ?? "").slice(0, 12),
         endReason: String(meta.end_reason ?? "").slice(0, 24),
@@ -1227,10 +1315,11 @@ export async function addArenaReplay(db: D1Database, bucket: R2Bucket, raw: any,
         httpMetadata: { contentType: "application/json; charset=utf-8" },
     });
     try {
-        await db.prepare("INSERT INTO arena_replays (id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at) " +
-            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)")
+        await db.prepare("INSERT INTO arena_replays (id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at, competition_id) " +
+            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)")
             .bind(row.id, row.aName, row.bName, row.seed, row.winner, row.endReason, row.steps, row.frames,
-                row.bytes, row.sha256, row.engineSha, row.matchId, row.author, row.authorId, row.createdAt)
+                row.bytes, row.sha256, row.engineSha, row.matchId, row.author, row.authorId, row.createdAt,
+                row.competitionId)
             .run();
     } catch (e) {
         await bucket.delete(replayObjectKey(id));   // D1 写失败则回收 R2，避免留下孤儿对象
@@ -1239,18 +1328,19 @@ export async function addArenaReplay(db: D1Database, bucket: R2Bucket, raw: any,
     return row;
 }
 
-export async function listArenaReplays(db: D1Database, limit = 200): Promise<ArenaReplay[]> {
+export async function listArenaReplays(db: D1Database, limit = 200,
+    competitionId: string = DEFAULT_COMPETITION): Promise<ArenaReplay[]> {
     const size = Math.max(1, Math.min(500, Math.round(limit) || 200));
     const { results } = await db.prepare(
-        "SELECT id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at " +
-        "FROM arena_replays WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?1")
-        .bind(size).all<any>();
+        "SELECT id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at, competition_id " +
+        "FROM arena_replays WHERE deleted_at IS NULL AND competition_id = ?2 ORDER BY created_at DESC LIMIT ?1")
+        .bind(size, competitionId).all<any>();
     return (results || []).map(mapArenaReplayRow);
 }
 
 export async function getArenaReplay(db: D1Database, id: string): Promise<ArenaReplay | null> {
     const row = await db.prepare(
-        "SELECT id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at " +
+        "SELECT id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at, competition_id " +
         "FROM arena_replays WHERE id = ?1 AND deleted_at IS NULL").bind(String(id)).first<any>();
     return row ? mapArenaReplayRow(row) : null;
 }

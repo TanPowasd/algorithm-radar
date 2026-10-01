@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import Topbar from '../components/Topbar'
 import { useApp } from '../state'
 import { api } from '../api/client'
@@ -40,6 +41,8 @@ const EMPTY_FORM = { aName: '', bName: '', winner: 'A', aCash: '', bCash: '', ma
  */
 export default function ArenaPage() {
   const { session, toast } = useApp()
+  const { slug = 'kaggriculture' } = useParams()
+  const [comp, setComp] = useState(null)
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -50,14 +53,17 @@ export default function ArenaPage() {
   const canWrite = session?.role === 'owner'
   const isAdmin = session?.role === 'owner' || session?.role === 'admin'
 
+  // 一个比赛一个页面：数据按 URL 里的比赛短名取（缺省 = 农场对抗赛）
   const load = useCallback(() => {
-    api('/api/arena/matches')
-      .then((d) => { setData(d); setError('') })
-      .catch((e) => setError(e.message))
-    api('/api/arena/replays')
-      .then((d) => setReplays(d.replays || []))
-      .catch(() => setReplays([]))
-  }, [])
+    api('/api/competitions/' + encodeURIComponent(slug))
+      .then((d) => {
+        setComp(d.competition || null)
+        setData({ matches: d.matches || [], standings: d.standings || [] })
+        setReplays(d.replays || [])
+        setError('')
+      })
+      .catch((e) => { setError(e.message); setComp(null); setData(null); setReplays([]) })
+  }, [slug])
 
   useEffect(() => { load() }, [load])
 
@@ -87,6 +93,7 @@ export default function ArenaPage() {
         method: 'POST',
         body: {
           match: {
+            competition: slug,
             aName: form.aName.trim(),
             bName: form.bName.trim(),
             winner: form.winner,
@@ -118,7 +125,7 @@ export default function ArenaPage() {
     setBusy(true)
     try {
       const replay = JSON.parse(await file.text())
-      const d = await api('/api/arena/replays', { method: 'POST', body: { replay } })
+      const d = await api('/api/arena/replays', { method: 'POST', body: { replay, competition: slug } })
       toast('回放已上传：' + (d.replay?.aName || '?') + ' vs ' + (d.replay?.bName || '?'))
       load()
     } catch (err) {
@@ -159,7 +166,8 @@ export default function ArenaPage() {
       <Topbar />
       <main className="layout">
         <div className="page-head">
-          <h2>农场对抗赛 · 战绩</h2>
+          <h2>{comp?.name || '比赛'} · 战绩</h2>
+          <Link className="btn small ghost" style={{ marginLeft: 'auto' }} to="/arena">← 全部比赛</Link>
           <span className="desc">登记"谁和谁打、谁赢了、赢了多少" · 积分榜自动聚合 · 仅站长可写</span>
         </div>
 

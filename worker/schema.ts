@@ -130,6 +130,22 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at  TEXT NOT NULL
 )`,
     `CREATE INDEX IF NOT EXISTS idx_arena_replay_created ON arena_replays(deleted_at, created_at DESC)`,
+    // v3.14：比赛维度（同一站点承载多个比赛；历史数据默认归入农场对抗赛）
+    `CREATE TABLE IF NOT EXISTS competitions (
+    id          TEXT PRIMARY KEY,
+    slug        TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    subtitle    TEXT NOT NULL DEFAULT '',
+    rules_url   TEXT NOT NULL DEFAULT '',
+    engine_sha  TEXT NOT NULL DEFAULT '',
+    score_model TEXT NOT NULL DEFAULT '1v1_cash',
+    status      TEXT NOT NULL DEFAULT 'live',
+    sort        INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    deleted_at  TEXT
+)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_comp_slug ON competitions(slug)`,
+    `INSERT OR IGNORE INTO competitions (id, slug, name, subtitle, rules_url, engine_sha, score_model, status, sort, created_at) VALUES ('kaggriculture', 'kaggriculture', '农场对抗赛', '两个 AI 各自写一个农场经营 agent，1v1 对战，终局现金高者胜', '', '62371bb7fb83f256af801864ac24e08003c63756fbd97b538ad7c15f7c8cea79', '1v1_cash', 'live', 1, '2026-10-01T00:00:00Z')`,
     // revision 单调递增（缓存校验器的一部分）；data_version 对齐旧 data.json 的版本号；
     // cache_epoch 在清库/覆盖导入时更换，保证校验器不会「回到旧值」
     `INSERT OR IGNORE INTO meta(key, value) VALUES ('revision', '0')`,

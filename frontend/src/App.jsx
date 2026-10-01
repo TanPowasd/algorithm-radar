@@ -6,6 +6,7 @@ import ContributorsPage from './pages/ContributorsPage'
 import PromptsPage from './pages/PromptsPage'
 import K4uV2Page from './pages/K4uV2Page'
 import ArenaPage from './pages/ArenaPage'
+import CompetitionsPage from './pages/CompetitionsPage'
 import ErrorBoundary from './components/ErrorBoundary'
 import ToastHost from './components/ToastHost'
 import BackTop from './components/BackTop'
@@ -23,7 +24,8 @@ export default function App() {
         <Route path="/users" element={<UsersPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/contributors" element={<ContributorsPage />} />
-        <Route path="/arena" element={<ArenaPage />} />
+        <Route path="/arena" element={<CompetitionsPage />} />
+        <Route path="/arena/:slug" element={<ArenaPage />} />
         <Route path="/prompts" element={<PromptsPage />} />
         <Route path="*" element={<K4uV2Page />} />
       </Routes>
