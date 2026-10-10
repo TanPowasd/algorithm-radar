@@ -7,6 +7,7 @@ import { defineConfig } from 'vite'
  */
 export default defineConfig({
   plugins: [react()],
+  ssr: { noExternal: ['lucide-react', '@tanstack/react-virtual', '@tanstack/virtual-core'] },
   build: {
     ssr: 'selftest/entry.jsx',
     outDir: '.selftest',

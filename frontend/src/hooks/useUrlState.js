@@ -22,7 +22,7 @@ export function useUrlState(prefix = '') {
   }, [params, key])
 
   /** 一次写多个：值为 ''/null/undefined/false 的键会被删除，保持链接干净 */
-  const setMany = useCallback((patch) => {
+  const setMany = useCallback((patch, { replace = true } = {}) => {
     setParams((prev) => {
       const next = new URLSearchParams(prev)
       for (const [k, v] of Object.entries(patch)) {
@@ -31,10 +31,10 @@ export function useUrlState(prefix = '') {
         else next.set(name, String(v))
       }
       return next
-    }, { replace: true })
+    }, { replace })
   }, [setParams, key])
 
-  const set = useCallback((k, v) => setMany({ [k]: v }), [setMany])
+  const set = useCallback((k, v, options) => setMany({ [k]: v }, options), [setMany])
 
   return { get, getNum, set, setMany, params }
 }

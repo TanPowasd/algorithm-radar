@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from './api/client'
+import { api, clearApiCache } from './api/client'
 import { makeVendorOf } from './palette'
 import { createRefreshCoordinator } from './refreshCoordinator'
 
@@ -17,7 +17,12 @@ export { AppContext }
 function loadCache() {
   try {
     const raw = localStorage.getItem(LS_CACHE)
-    return raw ? JSON.parse(raw) : null
+    const cached = raw ? JSON.parse(raw) : null
+    if (cached?.cacheSchema !== 4) {
+      localStorage.removeItem(LS_CACHE)
+      return null
+    }
+    return cached
   } catch {
     return null
   }
@@ -25,7 +30,8 @@ function loadCache() {
 
 function saveCache(data) {
   try {
-    localStorage.setItem(LS_CACHE, JSON.stringify({ ...data, cachedAt: Date.now() }))
+    const records = (data.records || []).filter((record) => record.status === 'approved')
+    localStorage.setItem(LS_CACHE, JSON.stringify({ ...data, records, scope: 'public', cacheSchema: 4, cachedAt: Date.now() }))
   } catch {
     /* 存储满则忽略 */
   }
@@ -64,6 +70,24 @@ export function AppProvider({ children }) {
   const [nicknames, setNicknames] = useState({})
   const [offline, setOffline] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [authOpen, setAuthOpen] = useState(false)
+  const openAuth = useCallback(() => setAuthOpen(true), [])
+  const closeAuth = useCallback(() => setAuthOpen(false), [])
+  const sessionScope = useRef('public')
+  const authGeneration = useRef(0)
+  const detailCache = useRef(new Map())
+  const validatorRef = useRef('')
+  useEffect(() => {
+    const invalidate = () => {
+      authGeneration.current++
+      sessionScope.current = 'invalidated'
+      detailCache.current.clear()
+      setSession({ loggedIn: false, configured: true, username: '', role: '' })
+      setData((previous) => ({ ...previous, scope: 'public', records: (previous.records || []).filter((r) => r.status === 'approved') }))
+    }
+    window.addEventListener('radar:identity-change', invalidate)
+    return () => window.removeEventListener('radar:identity-change', invalidate)
+  }, [])
   /** 主题三态：'system' | 'light' | 'dark'（旧值 light/dark 直接兼容） */
   const [themeMode, setThemeMode] = useState(() => {
     const v = readLS(LS_THEME, 'light')
@@ -113,8 +137,18 @@ export function AppProvider({ children }) {
   }, [])
 
   const refreshSession = useCallback(async () => {
+    const generation = authGeneration.current
     try {
       const s = await api('/api/session')
+      if (generation !== authGeneration.current) return false
+      const scope = s.loggedIn ? `${s.role}:${s.uid}` : 'public'
+      if (sessionScope.current !== scope) {
+        sessionScope.current = scope
+        authGeneration.current++
+        clearApiCache()
+        detailCache.current.clear()
+        setData((previous) => ({ ...previous, scope: 'public', records: (previous.records || []).filter((r) => r.status === 'approved') }))
+      }
       setSession(s)
       return true
     } catch {
@@ -129,14 +163,36 @@ export function AppProvider({ children }) {
    * 接口失败时保留现有数据（或本地缓存）只读展示，交由上层判定离线。
    */
   const refreshData = useCallback(async () => {
+    const generation = authGeneration.current
     try {
-      const d = await api('/api/data')
+      const d = await api('/api/data?view=compact')
+      if (generation !== authGeneration.current) return false
+      const validator = `${d.epoch || '0'}:${d.revision}:${d.scope || 'public'}`
+      if (validator !== validatorRef.current) {
+        detailCache.current.clear()
+        validatorRef.current = validator
+      }
       setData(d)
-      saveCache(d)
+      if (validator !== `${dataValidatorCache.current}`) {
+        saveCache(d)
+        dataValidatorCache.current = validator
+      }
       return true
     } catch {
       return false // 断网/失败：保留现有数据（或缓存）只读展示，交由上层判定离线
     }
+  }, [])
+
+  const dataValidatorCache = useRef('')
+  const getProblem = useCallback(async (pid, { force = false } = {}) => {
+    const key = `${validatorRef.current}:${pid}`
+    if (!force && detailCache.current.has(key)) return detailCache.current.get(key)
+    const pending = api(`/api/problems/${encodeURIComponent(pid)}`, { force })
+      .then((result) => result.problem || result)
+      .catch((error) => { detailCache.current.delete(key); throw error })
+    detailCache.current.set(key, pending)
+    if (detailCache.current.size > 64) detailCache.current.delete(detailCache.current.keys().next().value)
+    return pending
   }, [])
 
   const refreshModels = useCallback(async () => {
@@ -175,11 +231,12 @@ export function AppProvider({ children }) {
   }, [nicknames])
 
   /**
-   * 一次全量拉取：session + data 并行，成功后再补 models + contributors。
+   * 先确认身份，再读取该身份的数据；成功后并行补模型和贡献者目录。
    * 以「/api/data 成功」为在线判据（session 失败只影响登录态显示，不判离线）。
    */
   const runFullRefresh = useCallback(async () => {
-    const [, dataOk] = await Promise.all([refreshSession(), refreshData()])
+    await refreshSession()
+    const dataOk = await refreshData()
     setLoaded(true)
     if (dataOk) {
       setOffline(false)
@@ -302,6 +359,10 @@ export function AppProvider({ children }) {
 
   const value = useMemo(() => ({
     session,
+    authOpen,
+    openAuth,
+    closeAuth,
+    getProblem,
     data,
     models,
     nicknames,
@@ -337,7 +398,7 @@ export function AppProvider({ children }) {
     isOwner: session.role === 'owner',
     isAdmin: session.role === 'admin' || session.role === 'owner',
     isContributor: session.role === 'contributor' || session.role === 'admin' || session.role === 'owner',
-  }), [session, data, models, nicknames, nicknameOf, nameByUid, offline, loaded, theme, themeMode, toggleTheme,
+  }), [session, authOpen, openAuth, closeAuth, getProblem, data, models, nicknames, nicknameOf, nameByUid, offline, loaded, theme, themeMode, toggleTheme,
     widthMode, barMinSamples, radarSize, vendorOf, focusModels, toggleFocusModel, focusOnly,
     focusContributor, setFocusContributor, toasts, toast,
     refreshAll, syncData, refreshSession, refreshData, refreshModels, refreshNicknames, retryNow])

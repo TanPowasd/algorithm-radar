@@ -125,6 +125,102 @@ export const ARENA_MIN_GAMES = 10
 /** 分差加权（Margin-of-Victory）：默认开启 —— 大胜比险胜拿更多天梯分 */
 export const ARENA_MARGIN_OF_VICTORY = true
 
+/** Deterministic bootstrap draws; callers can keep the same sample across edits. */
+export function arenaRandom(seed = 1) {
+  let state = 2166136261
+  for (const c of String(seed)) state = Math.imul(state ^ c.charCodeAt(0), 16777619)
+  return () => {
+    state += 0x6d2b79f5
+    let value = state
+    value = Math.imul(value ^ (value >>> 15), value | 1)
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+export function emptyArenaStats() {
+  return { wins: new Map(), opponents: new Map(), totals: new Map() }
+}
+
+/** Fractional wins and pair counts are sufficient for the existing MM update. */
+export function applyArenaGame(stats, game, weight = 1) {
+  if (!weight) return
+  for (const [model, other, share] of [[game.a, game.b, game.s], [game.b, game.a, 1 - game.s]]) {
+    const total = (stats.totals.get(model) || 0) + weight
+    stats.totals.set(model, total)
+    stats.wins.set(model, (stats.wins.get(model) || 0) + weight * share)
+    let opponents = stats.opponents.get(model)
+    if (!opponents) { opponents = new Map(); stats.opponents.set(model, opponents) }
+    const count = (opponents.get(other) || 0) + weight
+    if (count) opponents.set(other, count)
+    else opponents.delete(other)
+    if (!total) {
+      stats.totals.delete(model)
+      stats.wins.delete(model)
+      stats.opponents.delete(model)
+    }
+  }
+}
+
+export function arenaStats(games) {
+  const stats = emptyArenaStats()
+  for (const game of games) applyArenaGame(stats, game)
+  return stats
+}
+
+/** A resumable solver lets the worker yield for cancellation between batches. */
+export function createBradleyTerrySolver(players, stats, opts = {}) {
+  const list = [...new Set(players)].sort()
+  const index = new Map(list.map((model, i) => [model, i]))
+  const anchor = toNum(opts.anchor) ?? ARENA_ANCHOR
+  const scale = toNum(opts.scale) ?? ARENA_SCALE
+  const prior = toNum(opts.prior) ?? ARENA_PRIOR_GAMES
+  const tolerance = toNum(opts.tolerance) ?? 0.0001
+  const stableRounds = toNum(opts.stableRounds) ?? 3
+  const maxIterations = toNum(opts.maxIterations) ?? 10000
+  let strength = Float64Array.from(list, (model) => {
+    const value = opts.initialStrengths?.get(model)
+    return Number.isFinite(value) && value > 0 ? value : 1
+  })
+  let next = new Float64Array(list.length)
+  const wins = Float64Array.from(list, (model) => (stats.wins.get(model) || 0) + prior * 0.5)
+  const neighbors = list.map((model) => [...(stats.opponents.get(model) || [])]
+    .filter(([other]) => index.has(other)).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([other, count]) => [index.get(other), count]))
+  const mean = Math.exp(strength.reduce((sum, value) => sum + Math.log(value), 0) / (list.length || 1))
+  for (let i = 0; i < strength.length; i++) strength[i] /= mean
+  let iterations = 0, stable = 0, maxDelta = Infinity
+  return {
+    advance(batch = 32) {
+      for (let step = 0; step < batch && iterations < maxIterations && stable < stableRounds; step++) {
+        let logSum = 0
+        for (let i = 0; i < list.length; i++) {
+          let denominator = prior / (strength[i] + 1)
+          for (const [j, count] of neighbors[i]) denominator += count / (strength[i] + strength[j])
+          next[i] = Math.max(1e-12, denominator > 0 ? wins[i] / denominator : strength[i])
+          logSum += Math.log(next[i])
+        }
+        const geometricMean = Math.exp(logSum / (list.length || 1)) || 1
+        maxDelta = 0
+        for (let i = 0; i < list.length; i++) {
+          next[i] /= geometricMean
+          maxDelta = Math.max(maxDelta, Math.abs(scale * Math.log10(next[i] / strength[i])))
+        }
+        const previous = strength; strength = next; next = previous
+        iterations++
+        stable = maxDelta < tolerance ? stable + 1 : 0
+      }
+      return this.done
+    },
+    get done() { return !list.length || stable >= stableRounds || iterations >= maxIterations },
+    get converged() { return !list.length || stable >= stableRounds },
+    get iterations() { return iterations },
+    get maxDelta() { return maxDelta },
+    strengths() { return new Map(list.map((model, i) => [model, strength[i]])) },
+    ratings() { return new Map(list.map((model, i) => [model, anchor + scale * Math.log10(strength[i])])) },
+  }
+}
+
 /**
  * 单场胜势积分（∈ [0,1]）：
  *   分差加权模式 → 自身加权分 ÷ (自身 + 对手)，大胜接近 1、险胜接近 0.5；
@@ -163,6 +259,12 @@ export function arenaGames(byProblem, opts = {}) {
 
 /** MM 迭代拟合 Bradley-Terry，返回 Elo 分（均值锚定 ARENA_ANCHOR） */
 export function bradleyTerry(players, games, opts = {}) {
+  if (opts.converge) {
+    const solver = createBradleyTerrySolver(players, arenaStats(games), opts)
+    while (!solver.done) solver.advance(128)
+    if (!solver.converged) throw new Error('Bradley-Terry did not converge within the iteration limit')
+    return solver.ratings()
+  }
   const anchor = toNum(opts.anchor) ?? ARENA_ANCHOR
   const scale = toNum(opts.scale) ?? ARENA_SCALE
   const prior = toNum(opts.prior) ?? ARENA_PRIOR_GAMES
@@ -207,9 +309,10 @@ export function arenaRating(byProblem, opts = {}) {
   const fit = bradleyTerry(players, games, opts)
   const boots = toNum(opts.bootstrap) ?? ARENA_BOOTSTRAP
   const samples = new Map(players.map((m) => [m, []]))
+  const random = opts.seed === undefined ? Math.random : arenaRandom(opts.seed)
   for (let b = 0; b < boots && games.length; b++) {
     const resample = new Array(games.length)
-    for (let i = 0; i < games.length; i++) resample[i] = games[Math.floor(Math.random() * games.length)]
+    for (let i = 0; i < games.length; i++) resample[i] = games[Math.floor(random() * games.length)]
     const r = bradleyTerry(players, resample, opts)
     for (const m of players) samples.get(m).push(r.get(m))
   }

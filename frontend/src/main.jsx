@@ -13,6 +13,8 @@ import '@fontsource/jetbrains-mono/latin-500.css'
 import '@fontsource/jetbrains-mono/latin-700.css'
 
 import './styles.css'
+import './workbench.css'
+import './management.css'
 
 /* 首帧前就把主题/版心写到 <html> 上，避免明暗切换闪白 */
 try {

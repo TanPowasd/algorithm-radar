@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import Topbar from '../components/Topbar'
 import PromptCopyButton from '../components/PromptCopyButton'
 import PidLink from '../components/PidLink'
 import { useApp } from '../state'
+import { useProblem } from '../hooks/useProblem'
 import { difficultyName, luoguUrl, promptOf, standardPrompt, DIFFICULTY_NAMES } from '../aggregate'
 
 export default function PromptsPage() {
@@ -30,8 +30,10 @@ export default function PromptsPage() {
 
   // 当前聚焦选中的题目（默认选第一道题或空）
   const [selectedPid, setSelectedPid] = useState(() => {
-    return problemList[0]?.pid || 'P1001'
+    return problemList[0]?.pid || ''
   })
+  const resolvedPid = selectedPid || problemList[0]?.pid || 'P1001'
+  const detail = useProblem(resolvedPid)
 
   // 手动输入的自定义题号（允许查询未在题库收录的洛谷题）
   const [inputPid, setInputPid] = useState('')
@@ -60,8 +62,8 @@ export default function PromptsPage() {
 
   // 计算当前聚焦题目的详细信息（raw 供 PromptCopyButton 判断附件与拼装模板）
   const activeProblem = useMemo(() => {
-    const targetPid = String(selectedPid || '').trim().toUpperCase() || (problemList[0]?.pid || 'P1001')
-    const found = data.problems?.[targetPid]
+    const targetPid = String(resolvedPid).trim().toUpperCase()
+    const found = data.problems?.[targetPid] ? detail.problem || data.problems[targetPid] : null
     if (found) {
       return {
         pid: found.pid,
@@ -85,7 +87,7 @@ export default function PromptsPage() {
       raw: null,
       isExisting: false,
     }
-  }, [selectedPid, data.problems, problemList])
+  }, [resolvedPid, data.problems, detail.problem])
 
   const handleSelectPid = (pid) => {
     setSelectedPid(pid)
@@ -188,6 +190,7 @@ export default function PromptsPage() {
           </div>
 
           <div className="callout prompt-box" style={{ marginTop: 'var(--sp-2)' }}>
+            {detail.error && <div className="form-error" role="alert">{detail.error}<button className="btn small" onClick={detail.retry}>重试</button></div>}
             <div className="prompt-head">
               <span className="prompt-title">该题推荐提示词内容</span>
               <span className="chain">（建立工作区文件夹后发送给待测 AI 模型；发送前把 <code>{'{模型id}'}</code> 占位符替换为实际模型名）</span>
@@ -199,7 +202,7 @@ export default function PromptsPage() {
               />
             </div>
             <pre style={{ maxHeight: 280, overflowY: 'auto', padding: '12px 16px', background: 'var(--surface-3)', borderRadius: 'var(--r-sm)' }}>
-              {activeProblem.prompt}
+              {detail.loading ? '加载题面...' : detail.error || activeProblem.prompt}
             </pre>
           </div>
         </div>

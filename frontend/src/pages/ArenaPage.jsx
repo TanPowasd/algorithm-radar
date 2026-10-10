@@ -10,7 +10,7 @@ export default function ArenaPage() {
   return (
     <>
       <Topbar />
-      <main className="layout">
+      <main className="layout management-layout">
         <ArenaView slug={slug} />
       </main>
     </>

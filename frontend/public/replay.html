@@ -1,4 +1,4 @@
-<!-- 由 F:\AIkaggle对抗赛\scripts\sync_web_player.py 从 viz/player.html 生成；源文件 sha256=d5842aeae4a5189d5b3914af9096a3fbd300cdbba63a041aeebe55ce2c04384a；请改源文件后重新同步，勿直接改这里 -->
+<!-- 由 F:\AIkaggle对抗赛\kaggriculture\organizer\scripts\sync_web_player.py 从 viz/player.html 生成；源文件 sha256=e7d17bba4222fbb6f5282ecf22d50c2be20f1c23490717f9f11cc283ae920bf2；请改源文件后重新同步，勿直接改这里 -->
 <!doctype html>
 <html lang="zh-CN">
 <head>
@@ -16,6 +16,8 @@
     <span id="tPlayers"></span>
     <span class="tag" id="tWinner">–</span>
     <span class="tag" id="tEngine">–</span>
+    <button id="openFile" type="button">打开回放</button>
+    <select id="theme" aria-label="主题"><option value="light">亮色</option><option value="dark">暗色</option><option value="system">跟随系统</option></select>
   </header>
 
   <div id="drop">
@@ -23,7 +25,7 @@
     <label style="cursor:pointer;text-decoration:underline">
       选择文件<input id="file" type="file" accept=".json,application/json" hidden>
     </label>
-    <div id="loadbox">也支持用 #src=/replays/xxx.json 直接打开（配合 record_replay.py --serve）</div>
+    <div id="loadbox" role="status"></div>
     <div id="err"></div>
   </div>
 
@@ -60,17 +62,17 @@
 
   <div id="controls" hidden>
     <div class="row" style="margin-bottom:6px">
-      <button id="play">▶ 播放</button>
-      <button id="spd">速度 1×</button>
-      <button id="b1">−1 步</button>
-      <button id="f1">+1 步</button>
-      <button id="bd">−1 天</button>
-      <button id="fd">+1 天</button>
-      <button id="end">跳到结束</button>
+      <button id="play" title="播放" aria-label="播放">▶</button>
+      <select id="spd" aria-label="播放速度"><option value="1">1×</option><option value="4">4×</option><option value="16">16×</option><option value="64">64×</option></select>
+      <button id="b1" title="上一帧" aria-label="上一帧">←</button>
+      <button id="f1" title="下一帧" aria-label="下一帧">→</button>
+      <button id="bd" title="前一天" aria-label="前一天">↤</button>
+      <button id="fd" title="后一天" aria-label="后一天">↦</button>
+      <button id="end" title="跳到结束" aria-label="跳到结束">⇥</button>
       <span class="hint" id="clock">–</span>
     </div>
     <div class="row">
-      <input id="seek" type="range" min="0" max="0" value="0" step="1">
+      <input id="seek" aria-label="回放进度" type="range" min="0" max="0" value="0" step="1">
     </div>
   </div>
 </div>

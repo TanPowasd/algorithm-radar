@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import CopyButton from './CopyButton'
+import { Copy, Check, LoaderCircle } from 'lucide-react'
 import { useDialog } from '../hooks/useDialog'
 import { copyText } from '../hooks/copyText'
 import { luoguUrl, promptOf } from '../aggregate'
@@ -26,7 +26,9 @@ function writeLastModel(name) {
 export default function PromptCopyButton({
   problem, modelId, label = '一键复制', okLabel = '已复制', toast, size = 'small', kind = '', title,
 }) {
-  const { models } = useApp()
+  const { models, getProblem } = useApp()
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [choosing, setChoosing] = useState(false)
   const [picked, setPicked] = useState(readLastModel)
   const [showNotice, setShowNotice] = useState(false)
@@ -38,14 +40,24 @@ export default function PromptCopyButton({
   const needsChooser = !modelId
 
   const doCopy = async (withModel) => {
-    const ok = await copyText(promptOf(problem, withModel))
+    setBusy(true)
+    setCopied(false)
+    try {
+    const complete = problem?.hasContent && typeof problem.content !== 'string' ? await getProblem(problem.pid) : problem
+    const ok = await copyText(promptOf(complete, withModel))
     if (!ok) {
       toast?.('复制失败，请手动选择文本', 'err')
       return false
     }
     if (withModel) writeLastModel(withModel)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2500)
     toast?.(withModel ? `已复制（工作区：${withModel}_${problem?.pid || ''}）` : '已复制到剪贴板')
     return true
+    } catch (error) {
+      toast?.(error.message, 'err')
+      return false
+    } finally { setBusy(false) }
   }
 
   const click = async (e) => {
@@ -68,26 +80,17 @@ export default function PromptCopyButton({
 
   return (
     <>
-      {needsChooser ? (
+      {(
         <button
           type="button"
           className={`btn copy-btn ${size === 'small' ? 'small' : ''} ${kind}`}
           onClick={click}
+          disabled={busy}
           title={title || '选择模型并复制提示词'}
         >
-          ⧉ {label}
+          {busy ? <LoaderCircle size={15} className="spin" /> : copied ? <Check size={15} /> : <Copy size={15} />}
+          {copied ? okLabel : label}
         </button>
-      ) : (
-        <CopyButton
-          text={promptOf(problem, modelId)}
-          label={label}
-          okLabel={okLabel}
-          toast={toast}
-          size={size}
-          kind={kind}
-          title={title}
-          onCopied={() => { if (problem?.hasAttachments) setShowNotice(true) }}
-        />
       )}
 
       {choosing && (
@@ -107,7 +110,7 @@ export default function PromptCopyButton({
             </div>
             <div className="modal-foot">
               <button type="button" className="btn ghost" onClick={() => setChoosing(false)}>取消</button>
-              <button type="button" className="btn primary" onClick={confirmCopy}>复制提示词</button>
+              <button type="button" className="btn primary" disabled={busy} onClick={confirmCopy}>{busy ? '加载中...' : '复制提示词'}</button>
             </div>
           </div>
         </div>

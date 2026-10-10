@@ -21,6 +21,7 @@ export default function ArenaRenameCard({ slug, standings, canWrite, toast, onDo
     const { name, thinking } = unpackEntity(v)
     setToName(name); setToThinking(thinking)
   }
+  const changeTarget = (setter, value) => { setter(value); setScope(null) }
 
   const submit = async (dryRun) => {
     setErr('')
@@ -39,7 +40,7 @@ export default function ArenaRenameCard({ slug, standings, canWrite, toast, onDo
       } else {
         toast(d.message || '已改名')
         setScope(null); setFrom('')
-        onDone && onDone()
+        if (onDone) onDone()
       }
     } catch (e) {
       setErr(e.message)
@@ -49,21 +50,21 @@ export default function ArenaRenameCard({ slug, standings, canWrite, toast, onDo
   }
 
   return (
-    <div className="card">
+    <section className="mg-section">
       <div className="card-head"><h3>批量改选手名 / 思考强度</h3>
         <span className="chain" style={{ marginLeft: 'auto' }}>一次改掉这个选手的全部登记记录（A、B 两侧都改）</span>
       </div>
-      <div style={{ padding: '0 var(--sp-4) var(--sp-4)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 'var(--sp-3)' }}>
+      <fieldset className="mg-fieldset" disabled={busy}>
+        <div className="mg-form-grid">
           <div className="field"><label>要改的选手</label>
             <select value={from} onChange={(e) => pickFrom(e.target.value)}>
               <option value="">（请选择）</option>
               {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
-          <div className="field"><label>新名字</label><input value={toName} onChange={(e) => setToName(e.target.value)} maxLength={40} placeholder="例：deepseek v4.1flash" /></div>
+          <div className="field"><label>新名字</label><input value={toName} onChange={(e) => changeTarget(setToName, e.target.value)} maxLength={40} placeholder="例：deepseek v4.1flash" /></div>
           <div className="field"><label>新思考强度</label>
-            <select value={toThinking} onChange={(e) => setToThinking(e.target.value)}>
+            <select value={toThinking} onChange={(e) => changeTarget(setToThinking, e.target.value)}>
               {THINKING_LEVELS.map((t) => <option key={t.code} value={t.code}>{t.label}</option>)}
             </select>
           </div>
@@ -81,7 +82,7 @@ export default function ArenaRenameCard({ slug, standings, canWrite, toast, onDo
           </button>
           <span className="chain">先把名字里的 high / max 拆成思考强度，再按「模型 + 思考强度」看榜会更清楚。</span>
         </div>
-      </div>
-    </div>
+      </fieldset>
+    </section>
   )
 }

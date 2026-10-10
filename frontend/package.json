@@ -11,17 +11,22 @@
     "preview": "vite preview",
     "selftest": "vite build --config vite.selftest.config.mjs && node .selftest/entry.mjs",
     "selftest:fixture": "node scripts/make-fixture.mjs",
-    "check-classes": "node scripts/check-classes.mjs"
+    "check-classes": "node scripts/check-classes.mjs",
+    "test:rating": "node scripts/test-rating.mjs",
+    "benchmark:rating": "node scripts/benchmark-rating.mjs",
+    "test:browser": "node scripts/verify-browser.mjs"
   },
   "dependencies": {
     "@fontsource/chakra-petch": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "chart.js": "^4.5.0",
+    "lucide-react": "^0.468.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.9.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",

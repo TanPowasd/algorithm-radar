@@ -1,10 +1,12 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ListOrdered, Columns3, Table2, RefreshCw } from 'lucide-react'
 import { useApp } from '../state'
 import {
   bestThinkingCell, difficultyName, isApproved, isPassed, matrixCell, metricScore, scoreTierClass,
   seriesColorMap, seriesKey, seriesList, filterByModels, filterByContributor, THINKING_LABELS,
 } from '../aggregate'
-import { arenaRating } from '../score'
+import { useIncrementalRating } from '../hooks/useIncrementalRating'
+import ScoreLayouts from './ScoreLayouts'
 import PidLink from '../components/PidLink'
 import { useUrlState } from '../hooks/useUrlState'
 
@@ -26,25 +28,33 @@ function RankBadge({ rank }) {
 }
 
 /**
- * v2 的加权分显示 5 位小数；decimal 默认 false → 老版沿用原来的整数口径，显示完全不变。
+ * decimal 可指定显示精度；true 兼容 5 位，false 保持旧整数显示。
  */
-const fmtScore = (v, decimal) => (decimal ? Number(v).toFixed(5) : Math.round(v))
+const fmtScore = (v, decimal) => (decimal ? Number(v).toFixed(typeof decimal === 'number' ? decimal : 5) : Math.round(v))
 
 export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decimal = false, blankEmpty = false, onlyWithScore = false, unitScore = false, rawScores = false }) {
   const { data, loaded, focusModels, focusContributor, theme, vendorOf } = useApp()
   const url = useUrlState('mx')
   /** v2：算不出加权分的格子直接留空（不显示「—」占位、更不出现原始分）；老版 blankEmpty=false → 原样 */
   const emptyCell = blankEmpty ? '' : '—'
-  const [modeLocal, setModeLocal] = useState(() => {
-    const fromUrl = url.get('mode', '')
-    return MODES.some((m) => m.key === fromUrl) ? fromUrl : 'bestLevel'
-  })
-  const mode = modeLocal
+  const requestedMode = url.get('mode', 'bestLevel')
+  const mode = MODES.some((item) => item.key === requestedMode) ? requestedMode : 'bestLevel'
   const tableRef = useRef(null)
+  const hoverFrame = useRef(null)
+  const hoverNodes = useRef([])
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 700)
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 700px)')
+    const change = () => setMobile(media.matches)
+    change()
+    media.addEventListener?.('change', change)
+    return () => media.removeEventListener?.('change', change)
+  }, [])
+  const requestedLayout = url.get('layout', mobile ? 'ranking' : 'matrix')
+  const layout = ['ranking', 'compare', 'matrix'].includes(requestedLayout) ? requestedLayout : 'matrix'
   const query = url.get('q', '')
 
   const setMode = useCallback((m) => {
-    setModeLocal(m)
     url.set('mode', m)
   }, [url])
 
@@ -75,32 +85,11 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
    *   4) 自举重采样给 95% 区间；对局 < 10 标「对局少」。
    * 格子里的加权分不受影响。
    */
-  const rating = useMemo(() => {
-    const blank = { raw: new Map(), byProblem: new Map(), arena: new Map() }
-    if (!unitScore) return blank
-    const pids = Object.values(data.problems || {})
-    const raw = new Map()
-    const byProblem = new Map()
-    for (const s of seriesList(approved)) {
-      for (const p of pids) {
-        const recs = grouped.get(`${s}\u0000${p.pid}`)
-        if (!recs || !recs.length) continue
-        let v = null
-        if (mode === 'bestLevel' || mode === 'bestScore') {
-          v = bestThinkingCell(recs, mode === 'bestLevel' ? 'level' : 'score', 'avgscore').value
-        } else if (mode !== 'status') {
-          const c = matrixCell(approved, s, p.pid)
-          const info = mode === 'final' ? c.finalInfo : c.scoreInfo
-          v = info ? info.avg : null
-        }
-        if (v === null || v === undefined) continue
-        raw.set(`${s}\u0000${p.pid}`, v)
-        if (!byProblem.has(p.pid)) byProblem.set(p.pid, [])
-        byProblem.get(p.pid).push({ model: s, score: v })
-      }
-    }
-    return { raw, byProblem, arena: arenaRating(byProblem) }
-  }, [approved, grouped, data.problems, mode, unitScore])
+  const publicDefault = (!focusModels || focusModels.size === 0) && focusContributor == null && (data.scope || 'public') === 'public'
+  const ratingScope = publicDefault ? 'public' : JSON.stringify([data.scope, [...(focusModels || [])].sort(), focusContributor])
+  const incremental = useIncrementalRating({ records: approved, problems: data.problems, epoch: data.epoch || '0',
+    scope: ratingScope, mode, enabled: unitScore && mode !== 'status', cachePublic: publicDefault })
+  const ratings = incremental.ratings
 
   // —— 列（AI）：按“每条记录全轮均分再平均”从高到低排 ——
   const series = useMemo(() => {
@@ -114,7 +103,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
     // v2：只显示「有可显示数据」（至少有一轮算出加权分）的模型列；老版列出口径不变
     const s = onlyWithScore ? [...perModel.keys()] : seriesList(approved)
     if (unitScore) {
-      return [...s].sort((a, b) => ((rating.arena.get(b)?.rating ?? -1) - (rating.arena.get(a)?.rating ?? -1))
+      return [...s].sort((a, b) => ((ratings.get(b)?.rating ?? -1) - (ratings.get(a)?.rating ?? -1))
         || a.localeCompare(b, 'zh-Hans-CN'))
     }
     const avgOf = new Map()
@@ -124,7 +113,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
     }
     return [...s].sort((a, b) => (avgOf.get(b) ?? -1) - (avgOf.get(a) ?? -1)
       || a.localeCompare(b, 'zh-Hans-CN'))
-  }, [approved, unitScore, rating])
+  }, [approved, unitScore, ratings, onlyWithScore])
 
   // —— 行（题目）：按每题整体均分从高到低排 ——
   const problems = useMemo(() => {
@@ -183,9 +172,8 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
 
   /* 十字高亮：命中行/列的格子打上 data-*-hit，靠 CSS 上色（避免逐格 re-render） */
   const clearHits = (table) => {
-    table.querySelectorAll('[data-cx-hit]').forEach((el) => el.removeAttribute('data-cx-hit'))
-    table.querySelectorAll('[data-rx-hit]').forEach((el) => el.removeAttribute('data-rx-hit'))
-    table.querySelectorAll('.on').forEach((el) => el.classList.remove('on'))
+    hoverNodes.current.forEach((el) => { el.removeAttribute('data-cx-hit'); el.removeAttribute('data-rx-hit'); el.classList.remove('on') })
+    hoverNodes.current = []
     delete table.dataset.cx
     delete table.dataset.rx
   }
@@ -196,19 +184,27 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
     const cell = e.target.closest?.('td.mcell')
     if (!cell || !cell.dataset.c || !cell.dataset.r) { clearHits(table); return }
     if (table.dataset.cx === cell.dataset.c && table.dataset.rx === cell.dataset.r) return
-    clearHits(table)
-    table.dataset.cx = cell.dataset.c
-    table.dataset.rx = cell.dataset.r
-    const esc = (v) => (window.CSS && window.CSS.escape ? window.CSS.escape(v) : v)
-    table.querySelectorAll(`[data-c="${esc(cell.dataset.c)}"]`).forEach((el) => el.setAttribute('data-cx-hit', ''))
-    table.querySelectorAll(`[data-r="${esc(cell.dataset.r)}"]`).forEach((el) => el.setAttribute('data-rx-hit', ''))
-    table.querySelector(`thead th[data-c="${esc(cell.dataset.c)}"]`)?.classList.add('on')
-    table.querySelector(`tbody th[data-r="${esc(cell.dataset.r)}"]`)?.classList.add('on')
+    cancelAnimationFrame(hoverFrame.current)
+    hoverFrame.current = requestAnimationFrame(() => {
+      clearHits(table)
+      table.dataset.cx = cell.dataset.c
+      table.dataset.rx = cell.dataset.r
+      const esc = (v) => (window.CSS && window.CSS.escape ? window.CSS.escape(v) : v)
+      const column = [...table.querySelectorAll(`[data-c="${esc(cell.dataset.c)}"]`)]
+      const row = [...table.querySelectorAll(`[data-r="${esc(cell.dataset.r)}"]`)]
+      column.forEach((el) => el.setAttribute('data-cx-hit', ''))
+      row.forEach((el) => el.setAttribute('data-rx-hit', ''))
+      const heads = [table.querySelector(`thead th[data-c="${esc(cell.dataset.c)}"]`), table.querySelector(`tbody th[data-r="${esc(cell.dataset.r)}"]`)].filter(Boolean)
+      heads.forEach((el) => el.classList.add('on'))
+      hoverNodes.current = [...column, ...row, ...heads]
+    })
   }, [])
 
   const onLeave = useCallback(() => {
+    cancelAnimationFrame(hoverFrame.current)
     if (tableRef.current) clearHits(tableRef.current)
   }, [])
+  useEffect(() => () => cancelAnimationFrame(hoverFrame.current), [])
 
   const cellKeyboard = (pid, model) => ({
     tabIndex: 0,
@@ -225,13 +221,17 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
   const isBest = active.best === 'level' || active.best === 'score'
 
   return (
-    <div className="card" id="matrix-card">
+    <div className="matrix-surface" id="matrix-card">
       <div className="card-head">
         <h2>AI × 题目矩阵</h2>
         <span className="hint">{blankEmpty ? '点击成绩查看该轮明细' : '点击成绩查看原始测评'}</span>
         <span className="matrix-count">{visibleProblems.length} / {problems.length} 题 · {series.length} 个模型</span>
       </div>
       <div className="matrix-toolbar">
+        <div className="seg layout-seg" role="group" aria-label="展示布局">
+          {[['ranking', '排名', ListOrdered], ['compare', '对比', Columns3], ['matrix', '矩阵', Table2]].map(([key, label, Icon]) =>
+            <button key={key} aria-pressed={layout === key} className={layout === key ? 'active' : ''} onClick={() => url.set('layout', key)}><Icon size={15} />{label}</button>)}
+        </div>
         <label className="matrix-search">
           查找题目
           <input type="search" value={query} placeholder="题号 / 题名"
@@ -255,14 +255,16 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
           ))}
         </div>
       </div>
-          <p className="matrix-hint">
-            {mode === 'status' ? '单元格 = 最终轮判定'
-              : isBest ? `单元格 = ${active.best === 'level' ? '最佳思考等级' : '最高分'}记录的分数（右上标注等级）`
-                : mode === 'final' ? '单元格 = 每条记录最后一个有分数轮次' : '单元格 = 全部有分数轮次均分'}
-          </p>
+      {unitScore && mode !== 'status' && <div className="rating-progress" role="status" aria-live="polite">
+        {incremental.status === 'computing' ? '更新 rating...' : incremental.status === 'intervals' ? '更新置信区间...' : incremental.status === 'error' ? incremental.error : 'rating 已更新'}
+        {incremental.status === 'error' && <button className="btn small" onClick={incremental.retry}><RefreshCw size={14} />重试</button>}
+      </div>}
       {!series.length ? <div className="empty" role="status">{loaded === false ? '正在加载评测数据…' : '当前范围内暂无已审核的测评数据，请尝试调整模型或贡献者筛选。'}</div>
         : !visibleProblems.length ? <div className="empty">没有匹配「{query}」的题目。<button className="btn small ghost" onClick={() => url.set('q', '')}>显示全部题目</button></div>
-        : <div className="matrix-wrap" id="matrix-wrap" tabIndex={0} role="region" aria-label="评测矩阵，可横向和纵向滚动">
+        : layout !== 'matrix' ? <ScoreLayouts layout={layout} series={series} problems={visibleProblems} grouped={grouped}
+          ratings={incremental.ratings} intervalsReady={incremental.status === 'ready'} summary={summary} mode={mode} unitScore={unitScore} decimal={decimal}
+          url={url} onOpenDetail={onOpenDetail} onQuickAdd={canSubmit ? onQuickAdd : undefined} />
+        : <div className="matrix-wrap" id="matrix-wrap" tabIndex={0} role="region" aria-label="评测矩阵，可横向滚动">
         <table className="matrix" ref={tableRef} onMouseMove={onMove} onMouseLeave={onLeave}>
           <thead>
             <tr>
@@ -289,7 +291,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
                   )
                 }
                 if (unitScore) {
-                  const ov = rating.arena.get(s)
+                  const ov = ratings.get(s)
                   if (!ov || ov.rating === null || ov.rating === undefined) {
                     return (
                       <td key={s} className="mcell score-na" data-r="sum" data-c={'c' + si} title={info.total + ' 条记录 · 没有可比的对局'}>
@@ -300,10 +302,8 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
                   const tip = 'Arena 天梯分 ' + fmtScore(ov.rating, decimal) + '（全体锚定 1000 分）'
                     + '\n对局 ' + ov.games + ' 局 · 胜势率 ' + (ov.winShare === null ? '-' : (ov.winShare * 100).toFixed(1) + '%')
                     + '（胜势积分合计 ' + fmtScore(ov.share, decimal) + '）'
-                    + (ov.lo === null || ov.hi === null ? '' : '\n95% 区间 ' + fmtScore(ov.lo, decimal) + ' ~ ' + fmtScore(ov.hi, decimal))
+                    + (incremental.status !== 'ready' || ov.lo === null || ov.hi === null ? '' : '\n95% 区间 ' + fmtScore(ov.lo, decimal) + ' ~ ' + fmtScore(ov.hi, decimal))
                     + '\n' + ov.status
-                    + '\n单场胜势积分 = 自身加权分 ÷（自身 + 对手加权分）—— 大胜比险胜拿更多天梯分'
-                    + '\nBradley-Terry：P(i 胜 j) = 1 / (1 + 10^(-(Ri-Rj)/400))'
                   return (
                     <td key={s} className="mcell" data-r="sum" data-c={'c' + si} title={tip}>
                       {fmtScore(ov.rating, decimal)}{ov.status.indexOf('对局少') === 0 ? <span className="lv">对局少</span> : null}
@@ -352,14 +352,16 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
                     )
                   }
                   if (mode === 'status') {
-                    const c = matrixCell(approved, s, p.pid)
+                    const c = matrixCell(recs, s, p.pid)
+                    const disabled = unitScore && !c.scoreInfo;
                     const cls = c.kind === 'ac' ? 'ac' : c.kind === 'fail' ? 'fail' : 'giveup'
                     const label = c.kind === 'ac' ? 'AC' : c.kind === 'fail' ? '未过' : '放弃'
                     return (
                       <td
-                        key={s} className={`mcell ${cls}`} {...cellProps} {...cellKeyboard(p.pid, s)}
+                        key={s} className={`mcell ${cls}`} {...cellProps} {...(disabled ? {} : cellKeyboard(p.pid, s))}
+                        aria-disabled={disabled || undefined}
                         title={`${c.passed}/${c.total} 条最终通过`}
-                        onClick={() => onOpenDetail && onOpenDetail(p.pid, s)}
+                        onClick={disabled ? undefined : () => onOpenDetail && onOpenDetail(p.pid, s)}
                       >{label}</td>
                     )
                   }
@@ -369,9 +371,10 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
                       const cls = c.kind === 'ac' ? 'ac' : c.kind === 'fail' ? 'fail' : 'giveup'
                       return (
                         <td
-                          key={s} className={`mcell ${blankEmpty ? '' : cls} score-na`} {...cellProps} {...cellKeyboard(p.pid, s)}
+                          key={s} className={`mcell ${blankEmpty ? '' : cls} score-na`} {...cellProps} {...(unitScore ? {} : cellKeyboard(p.pid, s))}
+                          aria-disabled={unitScore || undefined}
                           title={blankEmpty ? '缺该轮时间/内存，算不出加权分（不显示原始分）' : `${THINKING_LABELS[c.thinking] || c.thinking} 无有效分数`}
-                          onClick={() => onOpenDetail && onOpenDetail(p.pid, s)}
+                          onClick={unitScore ? undefined : () => onOpenDetail && onOpenDetail(p.pid, s)}
                         >{emptyCell}</td>
                       )
                     }
@@ -385,9 +388,9 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
                       >{v}<span className="lv">{lv}</span></td>
                     )
                   }
-                  const c = matrixCell(approved, s, p.pid)
+                  const c = matrixCell(recs, s, p.pid)
                   const info = mode === 'final' ? c.finalInfo : c.scoreInfo
-                  if (!info) return <td key={s} className="mcell score-na" {...cellProps}>{emptyCell}</td>
+                  if (!info) return <td key={s} className="mcell score-na" {...cellProps} aria-disabled={unitScore || undefined}>{emptyCell}</td>
                   const avg = fmtScore(info.avg, decimal)
                   return (
                     <td
@@ -416,33 +419,12 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
           <span style={{ color: 'var(--red)' }}><i />0–59</span>
           <span>· 未作答{blankEmpty ? '' : '　— 无有效分数'}</span>
         </div>}
-        <span>{(unitScore ? '列按 rating（Chatbot Arena）排序' : rawScores ? '列按模型原始分均分排序' : '列按模型整体均分排序')} · 滚动时题目列与表头固定</span>
       </div>
       <details className="matrix-hint">
-        <summary>排序与统计口径</summary>
-        列 = AI（<b>颜色按厂商归组</b>，同厂商同色系，列下色条即厂商色），行 = 题目（按整体均分 ↓）。
-        默认口径「最佳等级」= 该题该模型只取<b>思考等级最高</b>（Ultra&gt;Max&gt;X-High&gt;High&gt;Medium&gt;Low&gt;关闭）的那条记录分数，
-        可切到「最佳分数」改取分数最高的那批；悬停行/列有十字高亮，贡献者可在空格子上用「+」快捷提单。
-        查找题目只缩小可见行，首行「{unitScore ? 'rating' : '整体'}」仍为当前模型与贡献者范围的整体统计。
-        {rawScores && (
-          <>
-            <br />
-            <b>这一页显示洛谷原始分</b>（不做原始分/时间/空间加权），并且<b>包含 2026-09-05 21:19 之前的全部历史数据</b>；
-            首行「<b>整体</b>」= 各模型在该题原始分的平均。加权分与 rating 见 <b>rating</b> 页签。
-          </>
-        )}
-        {unitScore && (
-          <>
-            <br />
-            <b>格子里的加权分一个数都不变</b>；只有首行「<b>rating</b>」用 <b>Chatbot Arena 模式</b>：
-            同一道题上两个模型的加权分比一场（同模型不比），<b>分差加权 Margin-of-Victory</b>：
-            单场胜势积分 = <b>自身加权分 ÷（自身 + 对手加权分）</b> —— 「赢 50 分的大胜」比「赢 0.001 分的险胜」加更多天梯分；
-            再用 Bradley-Terry / Elo 做最大似然拟合 <b>P(i 胜 j) = 1 ÷ (1 + 10^(−(Ri−Rj)/400))</b>，
-            MM 迭代收敛后把全体锚定到 <b>1000 分</b>（分差 400 ≈ 胜率 10:1）；悬停可看对局数与 95% 自举区间。
-            对局数 &lt; 10 标「对局少」。
-          </>
-        )}
-
+        <summary>评分口径</summary>
+        <p>最佳等级取最高思考等级记录的有效轮次均分；最佳分数取成绩最高的记录。有分数轮次才参与均分。</p>
+        {rawScores && <p>AI 分数包含全部历史记录，使用洛谷原始分。</p>}
+        {unitScore && <p>加权分使用原始成绩与每轮时间、内存。rating 按同题模型的胜势积分拟合 Bradley–Terry，锚定 1000 分，显示 200 次自举的 95% 区间。</p>}
       </details>
     </div>
   )

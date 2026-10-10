@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const srcDir = join(here, '..', 'src')
-const css = readFileSync(join(srcDir, 'styles.css'), 'utf8')
+const css = readdirSync(srcDir).filter((name) => name.endsWith('.css')).map((name) => readFileSync(join(srcDir, name), 'utf8')).join('\n')
 
 const walk = (dir, out = []) => {
   for (const name of readdirSync(dir)) {
@@ -24,7 +24,7 @@ for (const f of walk(srcDir)) {
   const text = readFileSync(f, 'utf8')
   for (const m of text.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
     for (const cls of (m[1] ?? m[2] ?? '').replace(/\$\{[^}]*\}/g, ' ').split(/\s+/)) {
-      if (!cls || !/^[\w-]+$/.test(cls)) continue
+      if (!cls || !/^[a-zA-Z_][\w-]*$/.test(cls) || cls.endsWith('-')) continue
       if (!used.has(cls)) used.set(cls, new Set())
       used.get(cls).add(rel)
     }
@@ -32,13 +32,6 @@ for (const f of walk(srcDir)) {
   for (const m of text.matchAll(/classList\.(?:add|toggle|remove)\('([\w-]+)'/g)) {
     if (!used.has(m[1])) used.set(m[1], new Set())
     used.get(m[1]).add(rel)
-  }
-  // 条件类名字符串：visible ? 'on' : '' 之类
-  for (const m of text.matchAll(/\?\s*'([\w-]+)'\s*:\s*'([\w-]+)'/g)) {
-    for (const cls of [m[1], m[2]]) {
-      if (!used.has(cls)) used.set(cls, new Set())
-      used.get(cls).add(rel)
-    }
   }
 }
 
@@ -52,4 +45,5 @@ if (!missing.length) {
 } else {
   console.log(`\n缺定义的类名（${missing.length}）：`)
   for (const [cls, where] of missing) console.log(`  .${cls.padEnd(22)} ${[...where].slice(0, 3).join(', ')}`)
+  process.exitCode = 1
 }

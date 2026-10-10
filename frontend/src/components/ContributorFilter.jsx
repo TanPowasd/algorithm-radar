@@ -31,7 +31,7 @@ export default function ContributorFilter() {
       ? '全民制作人（历史导入）'
       : (people.find((p) => p.key === focusContributor)?.label || `#${focusContributor}`)
 
-  if (!people.length && !hasLegacy) return null // 名册还没加载 / 站上没有贡献者
+  if (!people.length && !hasLegacy && !active) return null
 
   return (
     <div className="filter-compact-bar" id="contributor-filter">

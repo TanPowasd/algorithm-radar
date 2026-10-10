@@ -40,7 +40,7 @@ export default function ModelFilter() {
   const validFocus = focusModels && focusModels.size > 0
     ? new Set([...focusModels].filter((m) => approvedModels.includes(m)))
     : focusModels
-  const activeCount = validFocus?.size ?? 0
+  const activeCount = focusModels?.size ?? 0
 
   const groups = useMemo(() => {
     const kw = q.trim().toLowerCase()
@@ -54,7 +54,7 @@ export default function ModelFilter() {
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0], 'zh-Hans-CN'))
   }, [approvedModels, vendorOf, q])
 
-  if (approvedModels.length < 2) return null // 少于 2 个模型时无需筛选
+  if (approvedModels.length < 2 && !activeCount) return null
 
   const click = (m) => {
     if ((validFocus?.size ?? 0) === 0) focusOnly([m])

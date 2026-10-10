@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useApp } from '../state'
 import PromptCopyButton from './PromptCopyButton'
 import DeleteRecordButton from './DeleteRecordButton'
@@ -6,27 +6,27 @@ import PidLink from './PidLink'
 import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLabel, reviewerLabel, fmtClock, fmtDateTime, promptOf } from '../aggregate'
 import { THINKING_LABELS } from '../aggregate'
 import { useDialog } from '../hooks/useDialog'
+import { useProblem } from '../hooks/useProblem'
 
-/** 分数文案：v2（decimal）显示 5 位小数；老版保持原样 */
-const scoreText = (score, decimal) => (score === null || score === undefined ? '' : (decimal ? Number(score).toFixed(5) : String(score)))
+/** decimal 可指定显示精度；true 兼容原有 5 位显示。 */
+const scoreText = (score, decimal) => (score === null || score === undefined ? '' : (decimal ? Number(score).toFixed(typeof decimal === 'number' ? decimal : 5) : String(score)))
 
 /** 题目详情抽屉：题目信息 + 推荐提示词（一键复制）+ 该题全部记录 + 三个统计 */
 export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitClick, onEditRecord, blankEmpty = false, decimal = false }) {
   const dialogRef = useDialog(onClose)
   const { data, toast, nicknameOf, nameByUid, isAdmin, session } = useApp()
-  const problem = data.problems?.[pid]
-  const isMyRecord = (r) => Boolean(
+  const { problem, loading, error, retry } = useProblem(pid)
+  const isMyRecord = useCallback((r) => Boolean(
     session.loggedIn && (
-      (session.username && r.author === session.username) ||
       (session.uid && r.authorId === session.uid)
     )
-  )
+  ), [session.loggedIn, session.uid])
   const recs = useMemo(() =>
     (data.records || []).filter((r) => {
       if (r.pid !== pid) return false
       if (r.status !== 'pending') return true
       return isMyRecord(r)
-    }).sort((a, b) => b.date.localeCompare(a.date)), [data.records, pid, session])
+    }).sort((a, b) => b.date.localeCompare(a.date)), [data.records, pid, isMyRecord])
 
   const stats = useMemo(() => {
     if (!recs.length) return null
@@ -59,19 +59,21 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
           <button className="icon-btn close" onClick={onClose} aria-label="关闭">✕</button>
         </div>
         <div className="drawer-body">
+          {loading && <div className="chain" role="status">加载题面...</div>}
+          {error && <div className="form-error" role="alert">{error} <button className="btn small" onClick={retry}>重试</button></div>}
           {problem && (
             <div className="callout prompt-box" id="problem-prompt">
               <div className="prompt-head">
                 <span className="prompt-title">推荐提示词 · {problem.prompt ? '专属定制口径' : '标准统一模板'}</span>
                 <PromptCopyButton problem={problem} modelId={highlightModel || undefined} toast={toast} />
               </div>
-              <pre style={{ maxHeight: 320, overflowY: 'auto' }}>{promptOf(problem, highlightModel || undefined)}</pre>
+              {!loading && !error && <pre style={{ maxHeight: 320, overflowY: 'auto' }}>{promptOf(problem, highlightModel || undefined)}</pre>}
             </div>
           )}
           {stats && (
             <div className="drawer-stats">
               <div className="stat"><div className="s-label">测试数</div><div className="s-value">{stats.count}</div></div>
-              <div className="stat"><div className="s-label">首轮均分</div><div className="s-value">{stats.firstAvg === null || stats.firstAvg === undefined ? (blankEmpty ? '' : '—') : (decimal ? Number(stats.firstAvg).toFixed(5) : stats.firstAvg)}</div></div>
+              <div className="stat"><div className="s-label">首轮均分</div><div className="s-value">{stats.firstAvg === null || stats.firstAvg === undefined ? (blankEmpty ? '' : '—') : scoreText(stats.firstAvg, decimal)}</div></div>
               <div className="stat"><div className="s-label">最终通过率</div><div className="s-value">{stats.passRate}%</div></div>
             </div>
           )}

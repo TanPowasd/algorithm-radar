@@ -87,7 +87,7 @@ export default function ArenaImportCard({ slug, canWrite, toast, onDone }) {
       } } })
       toast('已登记：' + d.match.aName + ' vs ' + d.match.bName + (d.match.sourceKey ? '（来源 ' + d.match.sourceKey + '）' : ''))
       setParsed(null); setText('')
-      onDone && onDone()
+      if (onDone) onDone()
     } catch (err2) {
       setErr(err2.message)
     } finally {
@@ -97,28 +97,29 @@ export default function ArenaImportCard({ slug, canWrite, toast, onDone }) {
 
   if (!canWrite) return null
   return (
-    <div className="card">
+    <section className="mg-section">
       <div className="card-head"><h3>登记自动化 · 粘贴裁判产物</h3>
         <span className="chain" style={{ marginLeft: 'auto' }}>支持 league.json 与 k4u-arena-import/1 · 同一来源不会登记两次</span>
       </div>
-      <form onSubmit={doImport} style={{ padding: '0 var(--sp-4) var(--sp-4)' }}>
+      <form onSubmit={doImport}>
+        <fieldset className="mg-fieldset" disabled={busy}>
         <div className="field" style={{ marginBottom: 'var(--sp-3)' }}>
           <label>粘贴内容</label>
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4}
             placeholder='{"rows":[{"name":"gptsol6.1xhigh","w":16,...}],"seeds":[11,23,...]}'
             style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} />
         </div>
-        <button className="btn small" type="button" onClick={doParse}>解析</button>
+        <button className="btn small" type="button" disabled={busy} onClick={doParse}>解析</button>
         {err && <div className="form-error" style={{ marginTop: 'var(--sp-2)' }}>{err}</div>}
         {parsed && (
           <>
-            <div className="stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginTop: 'var(--sp-3)' }}>
+            <div className="stats mg-stats">
               <div className="stat"><div className="s-label">胜者</div><div className="s-value" style={{ fontSize: 16 }}>{parsed.winner === 'draw' ? '平局' : parsed.winner + ' 胜'}</div></div>
               <div className="stat"><div className="s-label">局比分</div><div className="s-value">{parsed.aWins ?? '—'} : {parsed.bWins ?? '—'}</div></div>
               <div className="stat"><div className="s-label">局数</div><div className="s-value">{parsed.games ?? '—'}</div></div>
               <div className="stat"><div className="s-label">来源键</div><div className="s-value" style={{ fontSize: 12, wordBreak: 'break-all' }}>{parsed.sourceKey || '—'}</div></div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 'var(--sp-3)', marginTop: 'var(--sp-3)' }}>
+            <div className="mg-form-grid">
               <div className="field"><label>A 方名字</label><input value={aName} onChange={(e) => setAName(e.target.value)} maxLength={40} /></div>
               <div className="field"><label>A 方思考强度</label>
                 <select value={aThinking} onChange={(e) => setAThinking(e.target.value)}>
@@ -133,7 +134,7 @@ export default function ArenaImportCard({ slug, canWrite, toast, onDone }) {
                 </select>
               </div>
               <div className="field"><label>B 终局现金（场均）</label><input value={parsed.bCash} readOnly /></div>
-              <div className="field" style={{ gridColumn: 'span 2' }}><label>备注</label><input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} /></div>
+              <div className="field mg-span-two"><label>备注</label><input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} /></div>
               <div className="field"><label>比赛时间（可留空用当前）</label><input value={playedAt} onChange={(e) => setPlayedAt(e.target.value)} placeholder="2026-10-01T00:30:00" /></div>
             </div>
             <div style={{ marginTop: 'var(--sp-3)', display: 'flex', gap: 'var(--sp-2)', alignItems: 'center' }}>
@@ -142,7 +143,8 @@ export default function ArenaImportCard({ slug, canWrite, toast, onDone }) {
             </div>
           </>
         )}
+        </fieldset>
       </form>
-    </div>
+    </section>
   )
 }

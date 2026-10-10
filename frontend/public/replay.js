@@ -1,9 +1,9 @@
-/* 由 sync_web_player.py 从 viz/player.html 生成；源文件 sha256=d5842aeae4a5189d5b3914af9096a3fbd300cdbba63a041aeebe55ce2c04384a；请勿直接改 */
+/* 由 sync_web_player.py 从 viz/player.html 生成；源文件 sha256=e7d17bba4222fbb6f5282ecf22d50c2be20f1c23490717f9f11cc283ae920bf2；请勿直接改 */
 "use strict";
 /* ---------------- 数据解码：与 engine/replay.py::decode_frames 保持一致 ---------------- */
 function decodeReplay(rep){
   var meta = rep.meta || {}, cfg = meta.cfg || {};
-  var turns = cfg.turnsPerDay || 24;
+  var turns = Math.max(1, Number(cfg.turnsPerDay) || 24);
   var tiles = [null,null], extra = [null,null];
   var town = [], prices = [], mktInv = [], dead = [false,false];
   var rows = [{shed:{},seeds:{},inv:[]},{shed:{},seeds:{},inv:[]}];
@@ -59,7 +59,22 @@ function decodeReplay(rep){
 var CROP_COLOR = {WHEAT:"#d9b44a",CARROT:"#e07b39",TOMATO:"#e04f4f",STRAWBERRY:"#d94f8a",MELON:"#7ac74f"};
 var ANIMAL_GLYPH = {GOOSE:"🦢",COW:"🐄",SHEEP:"🐑"};
 var OPS_CN = {};
-var S = {rep:null, frames:[], idx:0, playing:false, speed:1, last:0, acc:0};
+var S = {rep:null, frames:[], idx:0, renderedIdx:-1, playing:false, speed:1, last:0, acc:0, raf:0, src:"", turns:24, legend:null, tileKeys:[[],[]], chart:null, loadSeq:0};
+
+function escapeText(value){
+  return String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+
+// Sampled replays use engine steps, not array indices, for links and day jumps.
+function indexAtStep(step, forward){
+  var frames = S.frames, lo = 0, hi = frames.length;
+  while (lo < hi){ var mid = (lo + hi) >>> 1; if (frames[mid].t < step) lo = mid + 1; else hi = mid; }
+  if (!frames.length) return 0;
+  if (forward || (lo < frames.length && frames[lo].t === step)) return Math.min(lo, frames.length - 1);
+  return Math.max(0, lo - 1);
+}
 
 function fmtMoney(v){ return v===null||v===undefined ? "–" : Math.round(v).toLocaleString("en-US"); }
 function fmtOp(op){
@@ -94,7 +109,7 @@ function cropFromCode(rep, code, p, i){
   return "";
 }
 function animalFromCode(rep, code, p, i){
-  var an = legendOf(rep).animals;
+  var an = (S.legend || legendOf(rep)).animals;
   if (an[code]) return an[code];
   var ex = (p.extra||{})[i];
   if (ex && ex[0] === 2) return an[ex[1]] || "";
@@ -114,9 +129,14 @@ function buildBoard(el){
 }
 
 function paintBoard(rep, cells, p, side){
-  var crops = legendOf(rep).crops;
+  var crops = S.legend.crops;
   for (var i=0;i<100;i++){
     var c = cells[i], code = cellCode(p,i), ex = (p.extra||{})[i];
+    var occupants = (p.hands || []).map(function(h){ return h && h[0] === i%10 && h[1] === Math.floor(i/10); });
+    var farmer = p.pos && p.pos[0] === i%10 && p.pos[1] === Math.floor(i/10);
+    var signature = code + ":" + JSON.stringify(ex || null) + ":" + occupants.join(",") + ":" + Boolean(farmer);
+    if (S.tileKeys[side][i] === signature) continue;
+    S.tileKeys[side][i] = signature;
     var cls = "cell", inner = "";
     var bg = "";
     if (code === "L"){ cls += " locked"; }
@@ -170,11 +190,11 @@ function paintBoard(rep, cells, p, side){
 }
 
 function paintLegend(el, rep){
-  var l = legendOf(rep);
+  var l = S.legend || legendOf(rep);
   var html = "";
   for (var code in l.crops){
     var nm = l.crops[code];
-    html += '<span><i style="background:' + (CROP_COLOR[nm] || "#6b8e4e") + '"></i>' + nm + "</span>";
+    html += '<span><i style="background:' + (CROP_COLOR[nm] || "#6b8e4e") + '"></i>' + escapeText(nm) + "</span>";
   }
   html += '<span><i style="background:var(--locked)"></i>未解锁</span>';
   html += '<span><i style="background:var(--weed)"></i>杂草</span>';
@@ -184,195 +204,231 @@ function paintLegend(el, rep){
 }
 
 function paintMarket(rep, f){
-  var items = legendOf(rep).items, el = document.getElementById("mkt");
-  var prev = S.frames[Math.max(0, S.idx-24)] || f;
+  var items = S.legend.items, el = document.getElementById("mkt");
+  var prev = S.frames[indexAtStep(f.t - S.turns, false)] || f;
   var html = "";
   for (var i=0;i<items.length;i++){
     var p = f.mkt.prices[i], iv = f.mkt.inv[i], p0 = prev.mkt.prices[i] || p;
     var d = p - p0, cls = d > 0 ? "up" : (d < 0 ? "down" : "");
-    html += "<tr><td>" + items[i] + '</td><td class="n ' + cls + '">' + p +
-            '</td><td class="n" style="color:var(--muted)">' + iv + "</td></tr>";
+    html += "<tr><td>" + escapeText(items[i]) + '</td><td class="n ' + cls + '">' + escapeText(p) +
+            '</td><td class="n" style="color:var(--muted)">' + escapeText(iv) + "</td></tr>";
   }
   el.innerHTML = html;
 }
 
 function paintActs(rep, f){
-  var el = document.getElementById("acts"), html = "", labels = (rep.meta.labels||["A","B"]);
+  var el = document.getElementById("acts"), html = "", labels = ((rep.meta || {}).labels||["A","B"]);
   for (var i=0;i<2;i++){
     var a = f.act[i] || {}, p = f.p[i];
     var rows = [];
-    if (a.farmer) rows.push('<span class="k">农夫</span> <span class="op">' + fmtOp(a.farmer) + "</span>");
+    if (a.farmer) rows.push('<span class="k">农夫</span> <span class="op">' + escapeText(fmtOp(a.farmer)) + "</span>");
     var hands = a.hands || [];
-    for (var h=0;h<hands.length;h++) rows.push('<span class="k">雇工' + (h+1) + '</span> <span class="op">' + fmtOp(hands[h]) + "</span>");
+    for (var h=0;h<hands.length;h++) rows.push('<span class="k">雇工' + (h+1) + '</span> <span class="op">' + escapeText(fmtOp(hands[h])) + "</span>");
     var mkt = a.market || [];
-    for (var m=0;m<mkt.length;m++) rows.push('<span class="k">市场</span> <span class="op">' + fmtOp(mkt[m]) + "</span>");
+    for (var m=0;m<mkt.length;m++) rows.push('<span class="k">市场</span> <span class="op">' + escapeText(fmtOp(mkt[m])) + "</span>");
     if (!rows.length) rows.push('<span class="k">（无动作）</span>');
     var own = [];
-    for (var k in (p.shed||{})) own.push(k + "×" + p.shed[k]);
-    for (var k2 in (p.seeds||{})) own.push("种子 " + k2 + "×" + p.seeds[k2]);
-    html += '<div class="side"><div><span class="nm ' + (i===0?"nmA":"nmB") + '">' + (labels[i]||("seat"+i)) +
+    for (var k in (p.shed||{})) own.push(escapeText(k) + "×" + escapeText(p.shed[k]));
+    for (var k2 in (p.seeds||{})) own.push("种子 " + escapeText(k2) + "×" + escapeText(p.seeds[k2]));
+    html += '<div class="side"><div><span class="nm ' + (i===0?"nmA":"nmB") + '">' + escapeText(labels[i]||("seat"+i)) +
             "</span> <span class='k'>现金 " + fmtMoney(p.money) + (f.dead[i] ? " · 已判负" : "") + "</span></div>" +
             rows.join("<br>") + '<div class="k" style="margin-top:4px">库存 ' + (own.join("、") || "空") + "</div></div>";
   }
   el.innerHTML = html;
 }
 
-function paintChart(rep){
-  var cv = document.getElementById("cvMoney");
-  var ctx = cv.getContext("2d");
-  var W = cv.width, H = cv.height;
-  ctx.clearRect(0,0,W,H);
-  var frames = S.frames;
-  if (!frames.length) return;
-  var max = 1;
-  for (var i=0;i<frames.length;i++){
-    for (var s=0;s<frames[i].p.length;s++){
-      var m = frames[i].p[s].money || 0;
-      if (m > max) max = m;
-    }
+function prepareChart(){
+  var points = [], min = 0, max = 1;
+  for (var i=0; i<S.frames.length; i++){
+    var f = S.frames[i], a = Number(f.p[0].money) || 0, b = Number(f.p[1].money) || 0;
+    min = Math.min(min,a,b); max = Math.max(max,a,b);
+    points.push([f.t,a,b]);
   }
-  ctx.strokeStyle = "#2c3344"; ctx.lineWidth = 1;
-  for (var g=0; g<=4; g++){
-    var y = 10 + (H-30) * g / 4;
-    ctx.beginPath(); ctx.moveTo(34, y); ctx.lineTo(W-6, y); ctx.stroke();
+  S.chart = {points:points,min:min,max:max,first:points[0][0],span:Math.max(1,points[points.length-1][0]-points[0][0]),base:document.createElement("canvas"),width:0,height:0};
+  buildChartBase();
+}
+
+// Curves and their scale are rebuilt only when the file, theme, or canvas size changes.
+function buildChartBase(){
+  if (!S.chart) return;
+  var cv = document.getElementById("cvMoney"), ratio = window.devicePixelRatio || 1;
+  var W = Math.max(200, Math.round(cv.clientWidth * ratio)), H = Math.max(100, Math.round(cv.clientHeight * ratio));
+  cv.width = W; cv.height = H;
+  var chart = S.chart, base = chart.base;
+  base.width = W; base.height = H; chart.width = W; chart.height = H; chart.ratio = ratio;
+  var ctx = base.getContext("2d"), css = getComputedStyle(document.documentElement);
+  chart.colors = [css.getPropertyValue("--a").trim(),css.getPropertyValue("--b").trim()];
+  chart.marker = css.getPropertyValue("--marker").trim(); chart.muted = css.getPropertyValue("--muted").trim();
+  ctx.fillStyle = css.getPropertyValue("--panel").trim(); ctx.fillRect(0,0,W,H);
+  var left = 48*ratio, top = 12*ratio, bottom = H-26*ratio, right = W-8*ratio;
+  chart.left = left; chart.right = right; chart.top = top; chart.bottom = bottom;
+  ctx.strokeStyle = css.getPropertyValue("--grid").trim(); ctx.lineWidth = ratio;
+  for (var g=0;g<=4;g++){
+    var y = top+(bottom-top)*g/4;
+    ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(right,y);ctx.stroke();
   }
-  var colors = ["#5aa9ff","#ffb347"];
-  for (var si=0; si<2; si++){
-    ctx.strokeStyle = colors[si]; ctx.lineWidth = 2; ctx.beginPath();
-    for (var j=0;j<frames.length;j++){
-      var x = 34 + (W-42) * j / Math.max(1, frames.length-1);
-      var yv = 10 + (H-30) * (1 - (frames[j].p[si] ? (frames[j].p[si].money||0) : 0) / max);
-      if (j === 0) ctx.moveTo(x, yv); else ctx.lineTo(x, yv);
+  ctx.save();ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();
+  for (var side=0;side<2;side++){
+    ctx.strokeStyle = chart.colors[side];ctx.lineWidth = 2*ratio;ctx.beginPath();
+    for (var j=0;j<chart.points.length;j++){
+      var point = chart.points[j], x = left+(right-left)*(point[0]-chart.first)/chart.span;
+      var py = bottom-(bottom-top)*(point[side+1]-chart.min)/(chart.max-chart.min);
+      if (!j) ctx.moveTo(x,py);else ctx.lineTo(x,py);
     }
     ctx.stroke();
   }
-  ctx.strokeStyle = "#ffffff55"; ctx.beginPath();
-  var cx = 34 + (W-42) * S.idx / Math.max(1, frames.length-1);
-  ctx.moveTo(cx, 6); ctx.lineTo(cx, H-18); ctx.stroke();
-  ctx.fillStyle = "#98a2b3"; ctx.font = "11px sans-serif";
-  ctx.fillText("0", 8, H-16); ctx.fillText("step " + frames[Math.min(S.idx,frames.length-1)].t, cx+3, H-16);
-  ctx.fillText(fmtMoney(max), 4, 16);
+  ctx.restore();ctx.fillStyle = chart.muted;ctx.font = 10*ratio+"px sans-serif";
+  ctx.fillText(fmtMoney(chart.max),2*ratio,top+4*ratio);ctx.fillText(fmtMoney(chart.min),2*ratio,bottom);
+}
+
+function paintChart(){
+  if (!S.chart || !S.frames.length) return;
+  var cv = document.getElementById("cvMoney"), ctx = cv.getContext("2d"), chart = S.chart, ratio = chart.ratio;
+  ctx.clearRect(0,0,cv.width,cv.height);ctx.drawImage(chart.base,0,0);
+  var step = S.frames[S.idx].t, x = chart.left+(chart.right-chart.left)*(step-chart.first)/chart.span;
+  ctx.strokeStyle = chart.marker;ctx.lineWidth = ratio;ctx.beginPath();ctx.moveTo(x,chart.top);ctx.lineTo(x,chart.bottom);ctx.stroke();
+  ctx.fillStyle = chart.muted;ctx.font = 10*ratio+"px sans-serif";
+  ctx.fillText("step "+step,Math.min(x+3*ratio,cv.width-90*ratio),cv.height-6*ratio);
 }
 
 /* ---------------- 主渲染 ---------------- */
-function render(){
+function render(force){
   if (!S.frames.length) return;
-  S.idx = Math.max(0, Math.min(S.idx, S.frames.length-1));
+  S.idx = Math.max(0,Math.min(S.idx,S.frames.length-1));
+  if (!force && S.renderedIdx === S.idx) return;
+  S.renderedIdx = S.idx;
   var f = S.frames[S.idx], rep = S.rep;
-  document.getElementById("tStep").textContent = "step " + f.t + " / 第 " + f.day + " 天 " + f.hour + " 时";
-  document.getElementById("clock").textContent = "第 " + f.day + " 天 " + f.hour + " 时 · 现金 " +
-      fmtMoney(f.p[0].money) + " vs " + fmtMoney(f.p[1].money);
+  document.getElementById("tStep").textContent = "step "+f.t+" / 第 "+f.day+" 天 "+f.hour+" 时";
+  document.getElementById("clock").textContent = "第 "+f.day+" 天 "+f.hour+" 时 · 现金 "+fmtMoney(f.p[0].money)+" vs "+fmtMoney(f.p[1].money);
   for (var i=0;i<2;i++){
     var p = f.p[i];
-    document.getElementById("money" + (i===0?"A":"B")).textContent = fmtMoney(p.money) +
-        "  |  雇工 " + (p.hands||[]).length;
-    paintBoard(rep, S.cells[i], p, i);
+    document.getElementById("money"+(i===0?"A":"B")).textContent = fmtMoney(p.money)+" | 雇工 "+(p.hands||[]).length;
+    paintBoard(rep,S.cells[i],p,i);
   }
   document.getElementById("seek").value = String(S.idx);
-  if (history.replaceState) history.replaceState(null, "", "#t=" + f.t);
-  paintMarket(rep, f);
-  paintActs(rep, f);
-  paintChart(rep);
+  var params = new URLSearchParams(location.hash.slice(1));
+  if (S.src) params.set("src",S.src);else params.delete("src");
+  params.set("t",String(f.t));
+  var hash = "#"+params.toString();
+  if (history.replaceState && hash !== location.hash){try {history.replaceState(null,"",hash);}catch(_e){}}
+  paintMarket(rep,f);paintActs(rep,f);paintChart();
 }
 
 function tick(ts){
   if (!S.playing) return;
   if (!S.last) S.last = ts;
-  var dt = (ts - S.last) / 1000; S.last = ts;
-  S.acc += dt * S.speed * 12;             // 12 步/秒 × 倍速
-  while (S.acc >= 1){
-    S.acc -= 1;
-    if (S.idx >= S.frames.length-1){ setPlaying(false); break; }
-    S.idx++;
+  var dt = Math.min(0.25,(ts-S.last)/1000);S.last = ts;
+  S.acc += dt*S.speed*12;
+  var before = S.idx;
+  while (S.idx < S.frames.length-1){
+    var interval = Math.max(1,S.frames[S.idx+1].t-S.frames[S.idx].t);
+    if (S.acc < interval) break;
+    S.acc -= interval;S.idx++;
   }
-  render();
-  if (S.playing) requestAnimationFrame(tick);
+  if (before !== S.idx) render();
+  if (S.idx >= S.frames.length-1) setPlaying(false);
+  if (S.playing) S.raf = requestAnimationFrame(tick);
 }
 function setPlaying(on){
-  S.playing = on;
-  document.getElementById("play").textContent = on ? "⏸ 暂停" : "▶ 播放";
-  S.last = 0;
-  if (on) requestAnimationFrame(tick);
+  if (on && !S.frames.length) return;
+  if (S.playing === on) return;
+  S.playing = on;S.last = 0;S.acc = 0;
+  cancelAnimationFrame(S.raf);
+  var button = document.getElementById("play"), label = on ? "暂停" : "播放";
+  button.textContent = on ? "⏸" : "▶";button.title = label;button.setAttribute("aria-label",label);
+  if (on) S.raf = requestAnimationFrame(tick);
 }
 
 /* ---------------- 载入 ---------------- */
-function loadReplay(rep){
-  if (!rep || !rep.frames){ throw new Error("不是回放文件（缺 frames）"); }
-  if (String(rep.format||"").indexOf("k4u-arena-replay") !== 0){ throw new Error("格式不匹配：" + rep.format); }
-  S.rep = rep; S.frames = decodeReplay(rep); S.idx = 0;
-  var meta = rep.meta || {}, labels = meta.labels || ["A","B"];
-  document.getElementById("nameA").textContent = labels[0];
-  document.getElementById("nameB").textContent = labels[1];
-  document.getElementById("tSeed").textContent = "seed " + meta.seed;
-  document.getElementById("tWinner").textContent = "结果 " + (meta.winner === "draw" ? "平局" : ((meta.winner||"?") + " 胜")) +
-      " · " + (meta.end_reason || "?") + " · 终局 " + fmtMoney((meta.final_cash||[])[0]) + " vs " + fmtMoney((meta.final_cash||[])[1]);
-  document.getElementById("tEngine").textContent = "引擎 " + String(meta.engine_sha256||"").slice(0,8) +
-      " · " + (meta.delta ? "增量帧" : "全量帧") + " · 每 " + (meta.sample_every||1) + " 步";
-  S.cells = [buildBoard(document.getElementById("boardA")), buildBoard(document.getElementById("boardB"))];
-  paintLegend(document.getElementById("legA"), rep);
-  paintLegend(document.getElementById("legB"), rep);
-  document.getElementById("main").hidden = false;
-  document.getElementById("controls").hidden = false;
-  document.getElementById("drop").style.display = "none";
-  var seek = document.getElementById("seek");
-  seek.max = String(S.frames.length-1); seek.value = "0";
-  render();
-}
-
-function fail(e){
-  document.getElementById("err").textContent = "载入失败：" + (e && e.message ? e.message : e);
-}
-
-function boot(){
-  // 先取参数：loadReplay→render 会 replaceState 改写 hash，之后再读就拿不到了
-  var hash = location.hash || "";
-  var m = /#src=([^&]+)/.exec(hash);
-  var mt = /[#&]t=(\d+)/.exec(hash);
-  var wantT = mt ? (parseInt(mt[1], 10) || 0) : null;
-  if (m){
-    fetch(decodeURIComponent(m[1])).then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function(rep){
-        loadReplay(rep);
-        if (wantT !== null){ S.idx = wantT; render(); }
-      }).catch(fail);
+function loadReplay(rep, options){
+  options = options || {};
+  if (!rep || !Array.isArray(rep.frames)) throw new Error("不是回放文件（缺 frames）");
+  if (String(rep.format||"").indexOf("k4u-arena-replay") !== 0) throw new Error("格式不匹配："+rep.format);
+  var frames = decodeReplay(rep);
+  if (!frames.length) throw new Error("回放没有可显示的帧");
+  for (var j=0;j<frames.length;j++){
+    if (frames[j].p.length < 2) throw new Error("回放需要两位选手");
+    if (j && frames[j].t < frames[j-1].t) throw new Error("回放时间顺序无效");
   }
-  document.getElementById("file").addEventListener("change", function(ev){
-    var f = ev.target.files[0]; if (!f) return;
+  setPlaying(false);S.rep = rep;S.frames = frames;S.idx = 0;S.renderedIdx = -1;S.src = options.src || "";S.legend = legendOf(rep);S.tileKeys = [[],[]];
+  var meta = rep.meta || {}, labels = meta.labels || ["A","B"];
+  S.turns = Math.max(1,Number((meta.cfg || {}).turnsPerDay)||24);
+  if (options.t !== null && options.t !== undefined) S.idx = indexAtStep(options.t,false);
+  document.getElementById("nameA").textContent = labels[0] || "A";
+  document.getElementById("nameB").textContent = labels[1] || "B";
+  document.getElementById("tSeed").textContent = "seed "+meta.seed;
+  document.getElementById("tWinner").textContent = "结果 "+(meta.winner === "draw" ? "平局" : ((meta.winner||"?")+" 胜"))+" · "+(meta.end_reason || "?")+" · 终局 "+fmtMoney((meta.final_cash||[])[0])+" vs "+fmtMoney((meta.final_cash||[])[1]);
+  document.getElementById("tEngine").textContent = "引擎 "+String(meta.engine_sha256||"").slice(0,8)+" · "+(meta.delta ? "增量帧" : "全量帧")+" · 每 "+(meta.sample_every||1)+" 步";
+  if (!S.cells) S.cells = [buildBoard(document.getElementById("boardA")),buildBoard(document.getElementById("boardB"))];
+  paintLegend(document.getElementById("legA"),rep);paintLegend(document.getElementById("legB"),rep);
+  document.getElementById("main").hidden = false;document.getElementById("controls").hidden = false;
+  document.getElementById("drop").style.display = "none";document.getElementById("err").textContent = "";
+  var seek = document.getElementById("seek");seek.max = String(S.frames.length-1);seek.value = String(S.idx);
+  prepareChart();render();
+}
+function fail(e){
+  document.getElementById("drop").style.display = "block";
+  document.getElementById("loadbox").textContent = "";
+  document.getElementById("err").textContent = "载入失败："+(e && e.message ? e.message : e);
+}
+function applyTheme(mode){
+  var dark = mode === "dark" || (mode === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme",dark ? "dark" : "light");
+  try {localStorage.setItem("radar.theme",mode);}catch(_e){}
+  if (S.chart){buildChartBase();paintChart();}
+}
+function boot(){
+  var theme = document.getElementById("theme"), saved;
+  try {saved = localStorage.getItem("radar.theme");}catch(_e){}
+  theme.value = ["light","dark","system"].indexOf(saved) >= 0 ? saved : "light";applyTheme(theme.value);
+  theme.addEventListener("change",function(){applyTheme(theme.value);});
+  if (window.matchMedia){
+    var mq = window.matchMedia("(prefers-color-scheme: dark)");
+    if (mq.addEventListener) mq.addEventListener("change",function(){if (theme.value === "system") applyTheme("system");});
+  }
+  var params = new URLSearchParams(location.hash.slice(1)), src = params.get("src"), t = params.get("t");
+  var wantT = t !== null && /^\d+$/.test(t) ? Number(t) : null;
+  if (src){
+    var remoteLoad = ++S.loadSeq;
+    document.getElementById("loadbox").textContent = "加载回放…";
+    fetch(src).then(function(r){if(!r.ok) throw new Error("HTTP "+r.status);return r.json();})
+      .then(function(rep){if (remoteLoad === S.loadSeq) loadReplay(rep,{src:src,t:wantT});})
+      .catch(function(error){if (remoteLoad === S.loadSeq) fail(error);});
+  }
+  function readFile(file){
+    if (!file) return;
+    var localLoad = ++S.loadSeq;
+    setPlaying(false);
     var fr = new FileReader();
-    fr.onload = function(){ try { loadReplay(JSON.parse(fr.result)); } catch(e){ fail(e); } };
-    fr.readAsText(f);
-  });
+    fr.onload = function(){if (localLoad !== S.loadSeq) return;try {loadReplay(JSON.parse(fr.result),{src:""});}catch(e){fail(e);}};
+    fr.onerror = function(){if (localLoad === S.loadSeq) fail(new Error("无法读取文件"));};fr.readAsText(file);
+  }
+  document.getElementById("openFile").addEventListener("click",function(){document.getElementById("file").click();});
+  document.getElementById("file").addEventListener("change",function(ev){readFile(ev.target.files[0]);ev.target.value = "";});
   var drop = document.getElementById("drop");
-  ["dragenter","dragover"].forEach(function(t){
-    drop.addEventListener(t, function(e){ e.preventDefault(); drop.classList.add("hot"); });
+  ["dragenter","dragover"].forEach(function(type){drop.addEventListener(type,function(e){e.preventDefault();drop.classList.add("hot");});});
+  ["dragleave","drop"].forEach(function(type){drop.addEventListener(type,function(e){e.preventDefault();drop.classList.remove("hot");});});
+  drop.addEventListener("drop",function(e){readFile(e.dataTransfer.files[0]);});
+  document.getElementById("play").addEventListener("click",function(){setPlaying(!S.playing);});
+  document.getElementById("spd").addEventListener("change",function(ev){S.speed = Number(ev.target.value);});
+  function bump(amount){setPlaying(false);S.idx += amount;render();}
+  function day(direction){setPlaying(false);if (S.frames.length){S.idx = indexAtStep(S.frames[S.idx].t+direction*S.turns,direction>0);render();}}
+  document.getElementById("b1").addEventListener("click",function(){bump(-1);});
+  document.getElementById("f1").addEventListener("click",function(){bump(1);});
+  document.getElementById("bd").addEventListener("click",function(){day(-1);});
+  document.getElementById("fd").addEventListener("click",function(){day(1);});
+  document.getElementById("end").addEventListener("click",function(){setPlaying(false);S.idx = S.frames.length-1;render();});
+  document.getElementById("seek").addEventListener("input",function(ev){setPlaying(false);S.idx = Number(ev.target.value)||0;render();});
+  window.addEventListener("keydown",function(e){
+    if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) return;
+    if (e.key === " "){e.preventDefault();setPlaying(!S.playing);}
+    if (e.key === "ArrowRight"){e.preventDefault();bump(1);}
+    if (e.key === "ArrowLeft"){e.preventDefault();bump(-1);}
   });
-  ["dragleave","drop"].forEach(function(t){
-    drop.addEventListener(t, function(e){ e.preventDefault(); drop.classList.remove("hot"); });
-  });
-  drop.addEventListener("drop", function(e){
-    var f = e.dataTransfer.files[0]; if (!f) return;
-    var fr = new FileReader();
-    fr.onload = function(){ try { loadReplay(JSON.parse(fr.result)); } catch(err){ fail(err); } };
-    fr.readAsText(f);
-  });
-  document.getElementById("play").addEventListener("click", function(){ setPlaying(!S.playing); });
-  document.getElementById("spd").addEventListener("click", function(){
-    S.speed = S.speed === 1 ? 4 : (S.speed === 4 ? 16 : (S.speed === 16 ? 64 : 1));
-    document.getElementById("spd").textContent = "速度 " + S.speed + "×";
-  });
-  function bump(d){ setPlaying(false); S.idx += d; render(); }
-  document.getElementById("b1").addEventListener("click", function(){ bump(-1); });
-  document.getElementById("f1").addEventListener("click", function(){ bump(1); });
-  document.getElementById("bd").addEventListener("click", function(){ bump(-24); });
-  document.getElementById("fd").addEventListener("click", function(){ bump(24); });
-  document.getElementById("end").addEventListener("click", function(){ setPlaying(false); S.idx = S.frames.length-1; render(); });
-  document.getElementById("seek").addEventListener("input", function(ev){
-    setPlaying(false); S.idx = parseInt(ev.target.value,10) || 0; render();
-  });
-  window.addEventListener("keydown", function(e){
-    if (e.key === " "){ e.preventDefault(); setPlaying(!S.playing); }
-    if (e.key === "ArrowRight") bump(1);
-    if (e.key === "ArrowLeft") bump(-1);
-  });
+  document.addEventListener("visibilitychange",function(){S.last = 0;});
+  if (window.ResizeObserver){
+    var observer = new ResizeObserver(function(){if (S.chart){buildChartBase();paintChart();}});
+    observer.observe(document.getElementById("cvMoney"));
+  }else window.addEventListener("resize",function(){if (S.chart){buildChartBase();paintChart();}});
 }
 boot();

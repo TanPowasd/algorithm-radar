@@ -1,0 +1,90 @@
+.management-layout { min-width: 0; }
+.mg-fieldset { display: block; min-width: 0; border: 0; margin: 0; padding: 0; }
+.management-layout .page-head { align-items: center; flex-wrap: wrap; gap: 12px; }
+.management-layout .page-head h2 { font-size: 22px; margin: 0; }
+.management-layout .card-head { flex-wrap: wrap; min-width: 0; padding: 14px 0; }
+.management-layout .card-head h2, .management-layout .card-head h3 { font-size: 16px; }
+.mg-tabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--border); margin: 18px 0 0; padding: 0; }
+.mg-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: 0 0 auto; min-height: 44px; padding: 10px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.mg-tabs button:hover { background: var(--surface-2); color: var(--text); }
+.mg-tabs button.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
+.mg-tabs button span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mg-section { min-width: 0; margin: 0; padding: 12px 0 20px; border-bottom: 1px solid var(--border-soft); background: transparent; }
+.mg-section .card-head { border: 0; margin: 0; }
+.mg-section .table-scroll { border-radius: 4px; }
+.management-layout .filter-search { min-width: 0; width: min(300px, 100%); margin-left: auto; }
+.mg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.mg-toolbar .filter-search { margin-left: 0; }
+.mg-pager { display: flex; justify-content: flex-end; align-items: center; gap: 8px; min-height: 46px; padding: 8px 0; font-size: 12px; color: var(--muted); }
+.mg-pager > span { margin-right: 8px; }
+.mg-pager .icon-btn { display: inline-flex; align-items: center; justify-content: center; }
+.mg-selection { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 44px; padding: 8px 12px; margin: 0 0 12px; border-left: 3px solid var(--accent); background: var(--accent-soft); font-size: 12px; }
+.management-layout table.data td.mg-wrap-cell { white-space: normal; min-width: 220px; max-width: 600px; overflow-wrap: anywhere; }
+.mg-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 12px 0; }
+.mg-form-grid .field { min-width: 0; margin: 0; }
+.mg-form-grid input, .mg-form-grid select, .mg-form-grid textarea { min-width: 0; width: 100%; }
+.mg-span-two { grid-column: span 2; }
+.mg-two-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mg-model-form { grid-template-columns: 1fr 1fr 1.4fr auto; align-items: center; }
+.mg-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 14px 0; min-width: 0; }
+.mg-stats-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mg-stats .stat { min-width: 0; }
+.mg-stats .s-label, .mg-stats .s-value { overflow-wrap: anywhere; }
+.mg-stats .s-value { font-size: 24px; }
+.competition-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }
+.competitions-layout { min-width: 0; }
+.competition-item { min-width: 0; margin: 0; border-radius: 6px; }
+.competition-item .card-head { align-items: flex-start; }
+.competition-item .card-head h3 { min-width: 0; overflow-wrap: anywhere; }
+.competition-item .desc { padding: 0 !important; }
+.arena-workspace > .mg-section { padding-top: 10px; }
+.arena-replay-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 12px; }
+.arena-replay-item { border: 1px solid var(--border); border-radius: 6px; padding: 14px; display: flex; flex-direction: column; gap: 7px; min-width: 0; background: var(--surface); }
+.arena-replay-item .lb-model, .arena-replay-item .chain { overflow-wrap: anywhere; }
+.management-layout .btn, .record-modal .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.record-modal { display: flex; flex-direction: column; max-height: 86dvh; padding: 0; overflow: hidden; border-radius: 6px; }
+.record-modal .modal-head { flex: 0 0 auto; margin: 0; padding: 16px 22px; border-bottom: 1px solid var(--border); }
+.record-modal .modal-head h3 { font-size: 17px; letter-spacing: 0; overflow-wrap: anywhere; }
+.record-form-body { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 0 22px 16px; }
+.mg-form-section { padding: 18px 0 8px; border-bottom: 1px solid var(--border-soft); }
+.mg-form-section:last-of-type { border-bottom: 0; }
+.mg-section-title { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.mg-section-title > span:first-child { color: var(--accent); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mg-section-title h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.record-prompt { margin: 12px 0; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+.record-prompt summary { cursor: pointer; padding: 12px 0; font-size: 13px; color: var(--text-2); }
+.record-prompt .prompt-box { padding: 0 0 12px; border: 0; background: transparent; }
+.record-prompt pre { max-height: 180px; overflow: auto; }
+.record-modal .sub-row { position: relative; grid-template-columns: 130px 100px minmax(0, 1fr) 32px; gap: 8px; border: 1px solid var(--border-soft); border-radius: 4px; padding: 12px; margin-bottom: 10px; }
+.record-round-label { grid-column: 1 / -1; font-size: 12px; color: var(--text-2); }
+.record-modal .sub-row .del { grid-row: 2; grid-column: 4; align-self: center; }
+.record-modal .sub-row .perf-box { grid-row: 3; }
+.record-modal .perf-field { flex: 1 1 180px; }
+.record-modal .field input, .record-modal .field select { min-width: 0; }
+.record-actions { flex: 0 0 auto; margin: 0; padding: 12px 22px; border-top: 1px solid var(--border); background: var(--surface); }
+@media (max-width: 1000px) {
+  .mg-model-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .competition-list { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) {
+  .mg-tabs button { padding: 10px 12px; }
+  .management-layout .card-head { align-items: flex-start; gap: 10px; }
+  .management-layout .filter-search { width: 100%; margin-left: 0; }
+  .mg-form-grid, .mg-two-columns, .mg-model-form { grid-template-columns: 1fr; }
+  .mg-span-two { grid-column: auto; }
+  .mg-stats, .mg-stats-three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mg-stats .stat { display: block; padding: 10px; }
+  .mg-stats .s-value { font-size: 21px; }
+  .management-layout .stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mg-section .card-tools { width: 100%; margin-left: 0; flex-wrap: wrap; }
+  .mg-form-grid + div { flex-wrap: wrap; }
+  .record-modal { max-height: 100dvh; height: 100dvh; border-radius: 0; }
+  .record-modal .modal-head, .record-form-body { padding-left: 16px; padding-right: 16px; }
+  .record-modal .sub-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px; }
+  .record-modal .sub-row > input:nth-of-type(2) { grid-column: 1 / -1; grid-row: 3; }
+  .record-modal .sub-row .del { grid-column: 3; }
+  .record-modal .sub-row .perf-box { grid-row: 4; }
+  .record-modal .perf-field { flex: 1 1 100%; }
+  .record-actions { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .record-actions .btn { min-height: 42px; }
+}

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
 import { PID_RE, DIFFICULTY_NAMES, standardPrompt } from '../aggregate'
@@ -22,7 +22,7 @@ function parseTags(text) {
  */
 export default function PublishModal({ onClose, initialPid, onPublished, editProblem }) {
   const dialogRef = useDialog(onClose)
-  const { toast, refreshAll } = useApp()
+  const { toast, refreshAll, getProblem } = useApp()
   const isEdit = !!editProblem
   const [form, setForm] = useState(() => ({
     pid: (editProblem?.pid || initialPid || '').toUpperCase(),
@@ -40,6 +40,16 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
   const [fetchState, setFetchState] = useState(null) // {kind, text}
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [loadingDetail, setLoadingDetail] = useState(Boolean(editProblem?.hasContent && typeof editProblem.content !== 'string'))
+
+  useEffect(() => {
+    if (!editProblem?.hasContent || typeof editProblem.content === 'string') return
+    let active = true
+    getProblem(editProblem.pid).then((complete) => {
+      if (active) { setForm((previous) => ({ ...previous, content: complete.content || '', prompt: complete.prompt || '' })); setLoadingDetail(false) }
+    }).catch((err) => { if (active) setError(err.message) })
+    return () => { active = false }
+  }, [editProblem, getProblem])
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }))
 
@@ -70,6 +80,7 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
 
   const submit = async (e) => {
     e.preventDefault()
+    if (loadingDetail) return
     setError('')
     const pid = form.pid.trim().toUpperCase()
     if (!PID_RE.test(pid)) return setError('题号格式不正确（示例：P1001 / B2001 / CF10A）')
@@ -95,7 +106,7 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
         toast(`题目 ${pid} 已发布`)
       }
       await refreshAll()
-      onPublished && onPublished()
+      onPublished?.()
       onClose()
     } catch (err) {
       setError(err.message)
@@ -215,7 +226,7 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
         {error && <div className="form-error">{error}</div>}
         <div className="modal-foot">
           <button type="button" className="btn ghost" onClick={onClose}>取消</button>
-          <button type="submit" className="btn primary" disabled={busy}>{busy ? '保存中…' : isEdit ? '保存修改' : '发布'}</button>
+          <button type="submit" className="btn primary" disabled={busy || loadingDetail}>{loadingDetail ? '加载题面...' : busy ? '保存中…' : isEdit ? '保存修改' : '发布'}</button>
         </div>
       </form>
     </div>

@@ -495,7 +495,7 @@ table.matrix tbody th.on, table.data tbody th.on {
 }
 
 /* 矩阵视图 */
-.matrix-wrap { overflow: auto; border: 1px solid var(--border-soft); border-radius: 0; max-height: var(--mmax, 68vh); scrollbar-gutter: stable; }
+.matrix-wrap { overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border-soft); border-radius: 0; max-height: none; }
 table.matrix { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: var(--fs-sm); }
 table.matrix th, table.matrix td { padding: 7px 10px; border-bottom: 1px solid var(--border-soft); }
 table.matrix thead th {
@@ -1161,7 +1161,7 @@ table.data.has-check td.sticky-col, table.data.has-check th.sticky-col { left: 3
   .matrix-search input { min-width: 0; flex: 1; }
   .matrix-count { margin-left: 0; }
   table.matrix .row-head { min-width: 145px; max-width: 170px; }
-  .matrix-wrap { max-height: 65vh; }
+  .matrix-wrap { max-height: none; }
   .matrix-toolbar .seg { width: 100%; }
   .matrix-toolbar .seg button { flex: 1; padding: 4px 6px; }
   .notice { align-items: flex-start; }

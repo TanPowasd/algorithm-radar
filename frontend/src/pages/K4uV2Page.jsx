@@ -1,227 +1,134 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { Plus, RefreshCw, ArrowUpRight } from 'lucide-react'
 import Topbar from '../components/Topbar'
-import AuthModal from '../components/AuthModal'
-import PublishModal from '../components/PublishModal'
-import ImportModal from '../components/ImportModal'
 import MatrixView from '../views/MatrixView'
-import RecordsTable from '../views/RecordsTable'
-import ProblemDrawer from '../components/ProblemDrawer'
-import RecordFormModal from '../components/RecordFormModal'
-import ArenaView from '../views/ArenaView'
+import ModelFilter from '../components/ModelFilter'
+import ContributorFilter from '../components/ContributorFilter'
+import StatsBar from '../components/StatsBar'
 import { AppContext, useApp } from '../state'
-import { api } from '../api/client'
-import { toV2Dataset, V2_EMPTY } from '../v2data'
-import { V2_CUTOFF_ISO } from './../score'
+import { toV2Dataset } from '../v2data'
+import { useUrlState } from '../hooks/useUrlState'
+import { useHotkeys } from '../hooks/useHotkeys'
 
-/**
- * k4u-V2：站点唯一的页面（旧数据页 /old 已下线并重定向到首页）。
- * - 数据存在 Cloudflare（D1，经 Worker 的 /api/data）：提交后重新打开仍然在，和原来一样；
- * - 三个页签：
- *     AI 分数 —— 全部历史记录（含 2026-09-05 21:19 之前的旧数据），格子是洛谷原始分，首行是平均分；
- *     rating  —— 只用 createdAt ≥ V2_CUTOFF_ISO 的记录，格子是加权分，首行是 Chatbot Arena 天梯分；
- *     测评明细 —— v2 时间线内的记录，可编辑 / 可开详情。
- */
+const RecordsTable = lazy(() => import('../views/RecordsTable'))
+const ProblemDrawer = lazy(() => import('../components/ProblemDrawer'))
+const RecordFormModal = lazy(() => import('../components/RecordFormModal'))
+const PublishModal = lazy(() => import('../components/PublishModal'))
+const ImportModal = lazy(() => import('../components/ImportModal'))
+const ArenaView = lazy(() => import('../views/ArenaView'))
+const TABS = [{ key: 'score', label: 'AI 分数' }, { key: 'rating', label: 'rating' },
+  { key: 'table', label: '测评明细' }, { key: 'arena', label: '比赛' }]
+
 export default function K4uV2Page() {
   const app = useApp()
-  const [source, setSource] = useState(null) // null = 尚未加载完
-  const [failed, setFailed] = useState(false)
-  const [authOpen, setAuthOpen] = useState(false)
+  const url = useUrlState()
+  const requested = url.get('v', 'rating')
+  const view = TABS.some((tab) => tab.key === requested) ? requested : 'rating'
+  const source = app.data
+  const dataset = useMemo(() => toV2Dataset(source), [source])
+  const encodedModels = url.get('models', '')
+  const encodedContributor = url.get('contributor', '')
+  const focusModels = useMemo(() => {
+    if (!encodedModels) return app.focusModels
+    try {
+      const names = JSON.parse(encodedModels)
+      return Array.isArray(names) ? new Set(names.filter((name) => typeof name === 'string')) : app.focusModels
+    } catch { return app.focusModels }
+  }, [encodedModels, app.focusModels])
+  const focusContributor = encodedContributor === 'all' ? null : encodedContributor === 'legacy' ? 'legacy'
+    : encodedContributor && /^\d+$/.test(encodedContributor) ? Number(encodedContributor) : app.focusContributor
+  useEffect(() => {
+    const patch = {}
+    if (!encodedModels && app.focusModels.size) patch.models = JSON.stringify([...app.focusModels])
+    if (!encodedContributor && app.focusContributor != null) patch.contributor = app.focusContributor
+    if (Object.keys(patch).length) url.setMany(patch)
+    if (encodedModels && JSON.stringify([...focusModels].sort()) !== JSON.stringify([...app.focusModels].sort())) app.focusOnly([...focusModels])
+    if (encodedContributor && focusContributor !== app.focusContributor) app.setFocusContributor(focusContributor)
+  }, [encodedModels, encodedContributor, focusModels, focusContributor, app.focusModels, app.focusContributor, app.focusOnly, app.setFocusContributor, url])
+  const activeApp = useMemo(() => ({ ...app, data: view === 'score' ? source : dataset, focusModels, focusContributor,
+    focusOnly: (names) => { app.focusOnly(names); url.set('models', JSON.stringify(names)) },
+    toggleFocusModel: (name) => {
+      const next = new Set(focusModels)
+      if (next.has(name)) next.delete(name); else next.add(name)
+      app.focusOnly([...next]); url.set('models', JSON.stringify([...next]))
+    },
+    setFocusContributor: (value) => { app.setFocusContributor(value); url.set('contributor', value == null ? 'all' : value) },
+  }), [app, view, source, dataset, focusModels, focusContributor, url])
   const [publishOpen, setPublishOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [drawer, setDrawer] = useState(null)
-  const [formState, setFormState] = useState(null) // { edit, lockPid }
-  // 'score' = AI 分数（老版矩阵图口径：每格洛谷原始分、含之前的历史数据，首行平均分）
-  // 'rating' = rating（只用 v2 时间线，每格加权分，首行 Chatbot Arena 天梯分）
-  // 'table' = 测评明细
-  const [view, setView] = useState('rating') // 默认打开 rating
-  const [arenaSlug, setArenaSlug] = useState('kaggriculture')
-
-  const load = useCallback(async () => {
-    try {
-      const raw = await api('/api/data')
-      setSource(raw && typeof raw === 'object' ? raw : V2_EMPTY)
-      setFailed(false)
-    } catch {
-      setSource(V2_EMPTY)
-      setFailed(true)
-    }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  const dataset = useMemo(() => (source ? toV2Dataset(source) : V2_EMPTY), [source])
-  /** rating 页签：至少一轮能算出加权分，否则矩阵没有可显示的模型列 */
-  const hasScoreable = useMemo(
-    () => dataset.records.some((r) => (r.submissions || []).some((s) => typeof s.score === 'number')),
-    [dataset],
-  )
-  /** AI 分数页签：不看时间线，直接用 D1 的原始记录（洛谷原始分，含之前的历史数据） */
-  const rawRecords = useMemo(() => (source && Array.isArray(source.records) ? source.records : []), [source])
-  /** AI 分数页签有没有可显示的数据：至少一轮有洛谷原始分 */
-  const rawScoreable = useMemo(
-    () => rawRecords.some((r) => (r.submissions || []).some((s) => typeof (s && s.score) === 'number')),
-    [rawRecords],
-  )
-  /** 表单/顶栏/AI 分数用实时原始数据；rating / 明细 / 详情用加权 + 时间线过滤后的数据 */
-  const liveApp = useMemo(() => ({ ...app, data: source || V2_EMPTY }), [app, source])
-  const v2App = useMemo(() => ({ ...app, data: dataset }), [app, dataset])
-  const loaded = source !== null
-  const count = dataset.records.length
-  const openDetail = useCallback((pid, model) => setDrawer({ pid, model: model || null }), [])
+  const [formState, setFormState] = useState(null)
+  const setView = useCallback((nextView) => url.set('v', nextView, { replace: false }), [url])
+  const openDetail = useCallback((pid, model) => setDrawer({ pid, model, raw: view === 'score' }), [view])
+  const openForm = (pid = null) => { setDrawer(null); setFormState({ edit: null, lockPid: pid }) }
+  const editRecord = (record) => {
+    setDrawer(null)
+    setFormState({ edit: (source.records || []).find((r) => r.id === record.id) || record, lockPid: null })
+  }
+  useHotkeys({ 1: () => setView('score'), 2: () => setView('rating'), 3: () => setView('table'),
+    4: () => setView('arena'), t: app.toggleTheme, r: app.retryNow,
+    w: () => app.setWidthMode(app.widthMode === 'full' ? 'narrow' : 'full') }, [setView, app])
 
   return (
-    <AppContext.Provider value={liveApp}>
-      <Topbar
-        onOpenAuth={() => setAuthOpen(true)}
-        onOpenPublish={() => setPublishOpen(true)}
-        onOpenImport={() => setImportOpen(true)}
-        hud={{ samples: count, models: 0, view: 'v2' }}
-      />
-      <main className="layout v2-layout">
-        <div className="v2-head">
-          <span className="v2-badge">k4u-V2 升级版</span>
-          {view === 'arena' ? <h2>比赛</h2> : <h2>新数据落点</h2>}
-          <span className="v2-sub">
-            {view === 'arena'
-              ? '多比赛：局级 ELO 实力榜 · 对战记录 · 回放 · 仅站长可登记'
-              : view === 'score'
-                ? '全部历史数据（含 2026-09-05 之前）· 分数为洛谷原始分'
-                : '2026-09-05 21:19 之后的数据 · 分数为加权分'}
-          </span>
-        </div>
-        <div className="v2-toolbar">
-          <div className="v2-seg" role="tablist" aria-label="v2 视图">
-            <button
-              type="button" role="tab" aria-selected={view === 'score'}
-              className={'btn small ' + (view === 'score' ? 'primary' : 'ghost')}
-              onClick={() => setView('score')}
-            >AI 分数</button>
-            <button
-              type="button" role="tab" aria-selected={view === 'rating'}
-              className={'btn small ' + (view === 'rating' ? 'primary' : 'ghost')}
-              onClick={() => setView('rating')}
-            >rating</button>
-            <button
-              type="button" role="tab" aria-selected={view === 'table'}
-              className={'btn small ' + (view === 'table' ? 'primary' : 'ghost')}
-              onClick={() => setView('table')}
-            >测评明细{loaded && count > 0 ? '（' + count + '）' : ''}</button>
-            <button
-              type="button" role="tab" aria-selected={view === 'arena'}
-              className={'btn small ' + (view === 'arena' ? 'primary' : 'ghost')}
-              onClick={() => setView('arena')}
-            >比赛</button>
+    <>
+      <a className="skip-link" href="#benchmark-panel">跳到评测内容</a>
+      <Topbar onOpenPublish={() => setPublishOpen(true)} onOpenImport={() => setImportOpen(true)}
+        hud={{ samples: dataset.records.length, models: app.models.length, view }} />
+      <main className="layout benchmark-layout">
+        <div className="workbench-heading">
+          <div><span className="eyebrow">K4U / BENCHMARK</span><h2>{view === 'arena' ? '模型对抗赛' : '模型解题评测'}</h2></div>
+          <div className="heading-actions">
+            <button className="icon-btn" onClick={app.retryNow} title="刷新数据" aria-label="刷新数据"><RefreshCw size={18} /></button>
+            {app.isContributor && view !== 'arena' && <button className="btn primary" onClick={() => openForm()}><Plus size={16} />提交测评</button>}
           </div>
-          {app.isContributor && view !== 'arena' && (
-            <button type="button" className="btn primary" onClick={() => setFormState({ edit: null, lockPid: null })}>
-              + 提交测评
-            </button>
-          )}
-          {app.isContributor && view !== 'arena' && <span className="v2-hint">每轮必填：时间消耗（ms）与 内存使用量（MB），都须大于 0</span>}
         </div>
-
-        {view !== 'arena' && !loaded && (
-          <section className="v2-panel" aria-live="polite">
-            <p className="v2-empty-title">加载中…</p>
+        <div className="analysis-nav benchmark-tabs">
+          <div className="view-tabs" role="tablist" aria-label="评测视图">
+            {TABS.map((tab) => <button key={tab.key} id={'benchmark-tab-' + tab.key} role="tab"
+              aria-selected={view === tab.key} aria-controls="benchmark-panel" tabIndex={view === tab.key ? 0 : -1}
+              className={view === tab.key ? 'active' : ''} onClick={() => setView(tab.key)}
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+                event.preventDefault()
+                const index = TABS.findIndex((item) => item.key === view)
+                const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? TABS.length - 1
+                  : (index + (event.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length
+                setView(TABS[nextIndex].key)
+                document.getElementById('benchmark-tab-' + TABS[nextIndex].key)?.focus()
+              }}>{tab.label}</button>)}
+          </div>
+          {view === 'arena' && <a className="btn small ghost" href="/arena">比赛目录<ArrowUpRight size={15} /></a>}
+        </div>
+        {app.offline && <div className="notice offline-notice" role="alert"><span>连接暂时不可用，正在显示缓存数据。</span><button className="btn small" onClick={app.retryNow}>重试</button></div>}
+        <AppContext.Provider value={activeApp}>
+          {view !== 'arena' && <><StatsBar /><div className="analysis-filters"><ModelFilter /><ContributorFilter /></div></>}
+          <section id="benchmark-panel" role="tabpanel" aria-labelledby={'benchmark-tab-' + view}>
+            {!app.loaded && !(source.records || []).length && view !== 'arena'
+              ? <div className="empty" role="status">加载评测数据...</div>
+              : <Suspense fallback={<div className="empty" role="status">加载中...</div>}>
+                {(view === 'score' || view === 'rating') && <MatrixView key={view}
+                  onOpenDetail={openDetail} onQuickAdd={app.isContributor ? openForm : undefined}
+                  canSubmit={app.isContributor} decimal={view === 'score' ? 2 : 5} blankEmpty onlyWithScore
+                  unitScore={view === 'rating'} rawScores={view === 'score'} />}
+                {view === 'table' && <RecordsTable onOpenDetail={openDetail} onEdit={editRecord}
+                  isAdmin={app.isAdmin} blankEmpty defaultExpanded decimal />}
+                {view === 'arena' && <ArenaView slug={url.get('competition', 'kaggriculture')}
+                  onSelect={(slug) => url.set('competition', slug)} showAdmin={false} />}
+              </Suspense>}
           </section>
-        )}
-
-        {view !== 'arena' && loaded && ((view === 'score' && rawRecords.length === 0) || (view !== 'score' && count === 0)) && (
-          <section className="v2-panel" aria-live="polite">
-            <div className="v2-empty" role="status">
-              <p className="v2-empty-title">{failed ? '数据加载失败' : '暂无数据'}</p>
-              <p className="v2-empty-sub">
-                {failed
-                  ? '无法连接服务器，请稍后重试。'
-                  : view === 'score'
-                    ? '还没有任何测评记录。'
-                    : '当前没有 createdAt ≥ ' + V2_CUTOFF_ISO + ' 的测评记录。'}
-              </p>
-            </div>
-          </section>
-        )}
-
-        {loaded && view === 'rating' && count > 0 && !hasScoreable && (
-          <section className="v2-panel" aria-live="polite">
-            <div className="v2-empty" role="status">
-              <p className="v2-empty-title">暂无可用数据</p>
-              <p className="v2-empty-sub">
-                {'现有 ' + count + ' 条记录都缺「每轮时间消耗(ms)／内存使用量(MB)」，算不出加权分，矩阵里没有可显示的模型。用「+ 提交测评」提交时会强制填写这两项。'}
-              </p>
-            </div>
-          </section>
-        )}
-
-        {/* 比赛：整页复用 views/ArenaView（同一个比赛视图，主界面内直接切比赛） */}
-        {view === 'arena' && <ArenaView slug={arenaSlug} onSelect={setArenaSlug} showAdmin={false} />}
-
-        {/* AI 分数：实时原始数据 + 洛谷原始分，首行是平均分 */}
-        {loaded && view === 'score' && rawScoreable && (
-          <AppContext.Provider value={liveApp}>
-            <MatrixView
-              onOpenDetail={openDetail}
-              onQuickAdd={app.isContributor ? (pid) => setFormState({ edit: null, lockPid: pid }) : undefined}
-              canSubmit={app.isContributor}
-              decimal
-              blankEmpty
-              onlyWithScore
-              rawScores
-            />
-          </AppContext.Provider>
-        )}
-
-        {/* rating：加权数据，首行是 Chatbot Arena 天梯分 */}
-        {loaded && view === 'rating' && count > 0 && hasScoreable && (
-          <AppContext.Provider value={v2App}>
-            <MatrixView
-              onOpenDetail={openDetail}
-              onQuickAdd={app.isContributor ? (pid) => setFormState({ edit: null, lockPid: pid }) : undefined}
-              canSubmit={app.isContributor}
-              decimal
-              blankEmpty
-              onlyWithScore
-              unitScore
-            />
-          </AppContext.Provider>
-        )}
-
-        {loaded && count > 0 && view === 'table' && (
-          <AppContext.Provider value={v2App}>
-            <RecordsTable
-              onOpenDetail={openDetail}
-              onEdit={(r) => {
-                // 编辑必须拿原始记录（表单里填的是洛谷评分 + 每轮时间/内存），不能把加权分写回去
-                const rawList = source && Array.isArray(source.records) ? source.records : []
-                const raw = rawList.find((x) => x.id === r.id) || r
-                setFormState({ edit: raw, lockPid: null })
-              }}
-              isAdmin={app.isAdmin}
-              blankEmpty
-              defaultExpanded
-              decimal
-            />
-          </AppContext.Provider>
-        )}
-      </main>
-
-      {drawer && (
-        <AppContext.Provider value={v2App}>
-          <ProblemDrawer pid={drawer.pid} highlightModel={drawer.model} onClose={() => setDrawer(null)} blankEmpty decimal />
         </AppContext.Provider>
-      )}
-
-      {formState && (
-        <RecordFormModal
-          perfFields
-          editRecord={formState.edit}
-          lockPid={formState.lockPid}
-          onClose={() => { setFormState(null); load() }}
-        />
-      )}
-
-      {authOpen && <AuthModal onClose={() => setAuthOpen(false)} />}
-      {publishOpen && <PublishModal onClose={() => setPublishOpen(false)} onPublished={load} />}
-      {importOpen && <ImportModal onClose={() => setImportOpen(false)} />}
-    </AppContext.Provider>
+        <footer className="foot">AI vs 洛谷 · <a href="/api/export/public?format=json">公开数据 JSON</a> · <a href="/contributors">贡献者</a></footer>
+      </main>
+      <Suspense fallback={null}>
+        {drawer && <AppContext.Provider value={{ ...app, data: drawer.raw ? source : dataset }}>
+          <ProblemDrawer pid={drawer.pid} highlightModel={drawer.model} onClose={() => setDrawer(null)}
+            onSubmitClick={app.isContributor ? () => openForm(drawer.pid) : undefined}
+            onEditRecord={editRecord} blankEmpty decimal={drawer.raw ? 2 : 5} />
+        </AppContext.Provider>}
+        {formState && <RecordFormModal perfFields editRecord={formState.edit} lockPid={formState.lockPid} onClose={() => setFormState(null)} />}
+        {publishOpen && <PublishModal onClose={() => setPublishOpen(false)} />}
+        {importOpen && <ImportModal onClose={() => setImportOpen(false)} />}
+      </Suspense>
+    </>
   )
 }

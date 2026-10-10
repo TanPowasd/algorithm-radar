@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useApp } from '../state'
 import { api } from '../api/client'
 import DeleteRecordButton from '../components/DeleteRecordButton'
@@ -97,12 +97,11 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin, blankEmpty
     }
   }, [])
 
-  const isMyRecord = (r) => Boolean(
+  const isMyRecord = useCallback((r) => Boolean(
     session.loggedIn && (
-      (session.username && r.author === session.username) ||
       (session.uid && r.authorId === session.uid)
     )
-  )
+  ), [session.loggedIn, session.uid])
 
   const visibleSource = useMemo(() => {
     // 所有通过记录（受贡献者视角 + 模型聚焦约束）+ 当前登录者自己的待审记录（不受贡献者筛选影响，保持可改）
@@ -111,7 +110,7 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin, blankEmpty
       ...filterByContributor(filterByModels(list.filter((r) => !isPending(r)), focusModels), focusContributor),
       ...list.filter(isPending),
     ]
-  }, [data.records, focusModels, focusContributor, session])
+  }, [data.records, focusModels, focusContributor, isMyRecord])
 
   const filtered = useMemo(() => {
     let list = visibleSource
@@ -119,12 +118,12 @@ export default function RecordsTable({ onOpenDetail, onEdit, isAdmin, blankEmpty
       list = list.filter(isMyRecord)
     }
     return applyFilters(list, { ...filters, includePending: true })
-  }, [visibleSource, filters, session])
+  }, [visibleSource, filters, isMyRecord])
 
   const myTotalCount = useMemo(() => {
     if (!session.loggedIn) return 0
     return (data.records || []).filter(isMyRecord).length
-  }, [data.records, session])
+  }, [data.records, session.loggedIn, isMyRecord])
 
   const sorted = useMemo(() => {
     const list = [...filtered]

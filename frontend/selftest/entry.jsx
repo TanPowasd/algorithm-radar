@@ -16,9 +16,11 @@ if (!fixturePath) {
   console.error('找不到自检样本，请先执行：node scripts/make-fixture.mjs --basic')
   process.exit(1)
 }
-const raw = readFileSync(fixturePath, 'utf8')
-const snapshot = JSON.parse(raw)
+const snapshot = JSON.parse(readFileSync(fixturePath, 'utf8'))
 snapshot.models = snapshot.models || []
+snapshot.cacheSchema = 4
+snapshot.scope = 'public'
+const raw = JSON.stringify(snapshot)
 console.log(`样本来源：${fixturePath.split(/[\\/]/).pop()}`)
 
 const store = new Map([['radar.cache.v3', raw]])
@@ -69,6 +71,12 @@ const { renderToString } = await import('react-dom/server')
 const { MemoryRouter } = await import('react-router-dom')
 const { AppProvider, AppContext } = await import('../src/state.jsx')
 const App = (await import('../src/App.jsx')).default
+const HomePage = (await import('../src/pages/HomePage.jsx')).default
+const K4uV2Page = (await import('../src/pages/K4uV2Page.jsx')).default
+const AdminPage = (await import('../src/pages/AdminPage.jsx')).default
+const RegisterPage = (await import('../src/pages/RegisterPage.jsx')).default
+const ContributorsPage = (await import('../src/pages/ContributorsPage.jsx')).default
+const UsersPage = (await import('../src/pages/UsersPage.jsx')).default
 const ProblemDrawer = (await import('../src/components/ProblemDrawer.jsx')).default
 const RecordsTable = (await import('../src/views/RecordsTable.jsx')).default
 const RecordFormModal = (await import('../src/components/RecordFormModal.jsx')).default
@@ -331,13 +339,15 @@ check('思考等级纹理：等级越高越实、纹理越密', () => {
 })
 
 /* ---------- 3. 真实渲染冒烟（SSR，导入已在第 2 节顶部完成） ---------- */
-const renderAt = (href) => {
+const renderComponentAt = (Component, href = '/') => {
   const html = renderToString(
     React.createElement(MemoryRouter, { initialEntries: [href] },
-      React.createElement(AppProvider, null, React.createElement(App))),
+      React.createElement(AppProvider, null, React.createElement(Component))),
   )
   return html
 }
+// Legacy analysis components retain their contracts without restoring the old route.
+const renderAt = (href) => renderComponentAt(HomePage, href)
 
 check('渲染 /（矩阵默认视图）', () => {
   const html = renderAt('/?v=matrix')
@@ -542,14 +552,13 @@ check('题面补全：编辑模式可重抓 + 管理台批量补全端点（静�
 })
 
 check('渲染后台/注册/贡献者页（全站统一不崩）', () => {
-  for (const path of ['/admin', '/users', '/register', '/contributors']) {
-    const html = renderAt(path)
+  for (const [path, Component] of [['/admin', AdminPage], ['/users', UsersPage], ['/register', RegisterPage], ['/contributors', ContributorsPage]]) {
+    const html = renderComponentAt(Component, path)
     assert.ok(html.length > 500, `${path} 渲染过短`)
   }
 })
 
 /* ---------- 用户管理页的角色门控（v3.8：管理员可删贡献者、站长可清任意非站长账号） ---------- */
-const UsersPage = (await import('../src/pages/UsersPage.jsx')).default
 const usersCtxBase = {
   session: { loggedIn: false, username: '', nickname: '', role: '', admin: false, canSetup: false, configured: true },
   data: snapshot, models: snapshot.models || [], nicknames: {},
@@ -562,7 +571,7 @@ const usersCtxBase = {
   refreshModels: async () => {}, refreshNicknames: async () => {}, retryNow: async () => true,
   isOwner: false, isAdmin: false, isContributor: false,
 }
-const renderUsersAs = (role) => {
+const renderUsersAs = (role, href = '/users') => {
   const isAdmin = role === 'admin' || role === 'owner'
   const ctx = {
     ...usersCtxBase,
@@ -570,14 +579,14 @@ const renderUsersAs = (role) => {
     isOwner: role === 'owner', isAdmin, isContributor: isAdmin || role === 'contributor',
   }
   return renderToString(
-    React.createElement(MemoryRouter, null,
+    React.createElement(MemoryRouter, { initialEntries: [href] },
       React.createElement(AppContext.Provider, { value: ctx }, React.createElement(UsersPage))),
   )
 }
 
 check('/users 门控：游客只见访问门槛', () => {
   const html = renderUsersAs('guest')
-  assert.ok(html.includes('仅管理员及以上可访问'), '游客应看到访问门槛文案')
+  assert.ok(html.includes('用户管理') && !html.includes('mg-tabs'), '游客不应看到管理分区')
   assert.ok(html.includes('>登录<'), '未登录应提供登录入口')
   assert.ok(!html.includes('操作审计'), '游客不应看到审计卡片')
   const contrib = renderUsersAs('contributor')
@@ -586,34 +595,37 @@ check('/users 门控：游客只见访问门槛', () => {
 
 check('/users 门控：管理员只见贡献者列表 + 删除（无待审/任免）', () => {
   const html = renderUsersAs('admin')
-  assert.ok(html.includes('删除贡献者账号'), '管理员视角应标注能力范围')
-  assert.ok(html.includes('审核注册与任免仅站长可见'), '贡献者卡片应标注权限边界')
+  assert.ok(html.includes('贡献者账号'), '管理员视角应只显示贡献者账号')
   assert.ok(html.includes('操作审计'), '管理员也应看到操作审计')
   assert.ok(!html.includes('待审核注册'), '管理员不应看到待审核注册卡片')
   assert.ok(!html.includes('任命管理员'), '管理员不应有任免按钮')
   assert.ok(!html.includes('全部用户'), '管理员不应看到全量用户表')
+  assert.ok(!renderUsersAs('admin', '/users?users:tab=pending').includes('待审核注册'), '管理员不能通过 URL 切到注册审核分区')
 })
 
 check('/users 门控：站长有完整管理面 + 审计卡片', () => {
   const html = renderUsersAs('owner')
-  assert.ok(html.includes('待审核注册'), '站长应看到待审核注册')
+  assert.ok(html.includes('注册申请'), '站长应看到注册申请入口')
   assert.ok(html.includes('全部用户'), '站长应看到全量用户表')
-  assert.ok(html.includes('清理任意非站长账号'), '站长视角应标注可清理任意状态账号')
+  assert.ok(html.includes('注册审核与账号权限'), '站长视角应显示完整账号管理入口')
   assert.ok(html.includes('操作审计'), '站长应看到操作审计')
+  assert.ok(renderUsersAs('owner', '/users?users:tab=pending').includes('待审核注册'), '站长注册审核分区未接通')
+  assert.ok(renderUsersAs('owner', '/users?users:tab=audit').includes('最近 100 条'), '站长审计分区未接通')
 })
 
 check('/users 删除与审计接线（静态源码契约）', () => {
   const src = readFileSync(new URL('../src/pages/UsersPage.jsx', import.meta.url), 'utf8')
   // 删除走 DELETE /api/admin/users/:id（不是 POST role 端点）
   assert.ok(/method:\s*'DELETE'/.test(src), '删除账号必须用 DELETE 方法')
-  assert.ok(src.includes('/api/admin/users/${u.id}`'), '删除端点路径不对')
+  assert.ok(src.includes('/api/admin/users/${r.id}`'), '删除端点路径不对')
   // 确认框必须写明不可恢复 + 记录保留（防误删口径）
   assert.ok(src.includes('不可恢复') && src.includes('测评记录会保留'), '删除确认框缺风险与保留说明')
   // 待审/已拒行也要有删除入口（站长清理注册垃圾）
-  assert.ok((src.match(/deleteConfirm\(u\)/g) || []).length >= 4, '待审/已拒行缺删除入口')
+  assert.ok(src.includes('deleteConfirm(r)') && src.includes("r.role !== 'owner'"), '所有非站长状态应共用受保护的删除入口')
+  assert.ok(src.includes("isOwner && r.status === 'pending'"), '注册审核行缺站长角色门控')
   // 审计走管理端点且有中文动作映射
   assert.ok(src.includes('/api/admin/audit'), '审计卡片没接 /api/admin/audit')
-  assert.ok(src.includes("ACTION_LABEL[a.action] || a.action"), '未知审计动作应原样展示')
+  assert.ok(src.includes("ACTION_LABEL[r.action] || r.action"), '未知审计动作应原样展示')
 })
 
 /* ---------- 洞察口径（v3.9）：模型稳定性 / 题目区分度 / 思考等级收益 ---------- */
@@ -928,13 +940,13 @@ check('矩阵点「+ 提交测评」打开时，题名与难度就已带入（�
   assert.ok(html.includes('已按你点击的格子锁定题目'), '从格子进入时题目下拉未锁定/未提示')
 })
 
-check('题名与难度对提交者只读，且提示写明不可修改', () => {
+check('题名与难度对提交者只读，且提示写明题目目录锁定', () => {
   const pid = Object.keys(snapshot.problems).find((p) => Number(snapshot.problems[p].difficulty) > 0)
   const html = wrap(React.createElement(RecordFormModal, { lockPid: pid, onClose() {} }), 'contributor')
-  assert.equal((html.match(/不可修改/g) || []).length, 2, '题名与难度应各有一条「不可修改」提示')
+  assert.equal((html.match(/已按题目目录锁定/g) || []).length, 2, '题名与难度应各有一条目录锁定提示')
   assert.ok(/<input[^>]*disabled[^>]*readonly/i.test(html), '题名输入框必须 disabled + readonly')
   assert.ok(/<select[^>]*disabled/.test(html), '难度选择框必须 disabled')
-  assert.ok(html.includes('题目目录带入'), '缺少「来自题目目录」的说明')
+  assert.ok(html.includes('题目目录锁定'), '缺少来自题目目录的说明')
 })
 
 check('表单里题目/目录字段不可被手改绕过（提交值以目录为准）', () => {
@@ -947,6 +959,100 @@ check('表单里题目/目录字段不可被手改绕过（提交值以目录为
 })
 
 /* ---------- 3.8 刷新协调器（挂载一次拉全 / 变更后必补拉） ---------- */
+const { weightedRoundScore, V2_CUTOFF_ISO } = await import('../src/score.js')
+const { toV2Dataset } = await import('../src/v2data.js')
+const currentSnapshot = {
+  revision: 8, epoch: 'selftest-epoch', scope: 'public',
+  problems: { P1001: { pid: 'P1001', title: 'Current benchmark', difficulty: 2, categories: ['simulation'] } },
+  records: [
+    { id: 'current-a', model: 'Current-A', pid: 'P1001', thinking: 'high', status: 'approved', createdAt: V2_CUTOFF_ISO,
+      submissions: [{ score: 80, timeMs: 1000, memoryMb: 125, result: 'WA' }] },
+    { id: 'current-b', model: 'Current-B', pid: 'P1001', thinking: 'high', status: 'approved', createdAt: '2026-09-06T00:00:00Z',
+      submissions: [{ score: 100, timeMs: 1000, memoryMb: 125, result: 'AC' }] },
+    { id: 'old', model: 'Old-only', pid: 'P1001', thinking: 'high', status: 'approved', createdAt: '2026-09-04T00:00:00Z',
+      submissions: [{ score: 99, result: 'WA' }] },
+    { id: 'no-perf', model: 'No-perf', pid: 'P1001', thinking: 'high', status: 'approved', createdAt: '2026-09-06T00:00:00Z',
+      submissions: [{ score: 100, result: 'AC' }] },
+  ],
+}
+const renderCurrent = (href = '/', Component = K4uV2Page) => renderToString(
+  React.createElement(MemoryRouter, { initialEntries: [href] },
+    React.createElement(AppContext.Provider, { value: {
+      ...ctxValue('guest'), data: currentSnapshot, focusContributor: null,
+      openAuth() {}, closeAuth() {}, retryNow() {},
+    } }, React.createElement(Component))))
+
+check('当前首页默认 rating，四页签保留 URL 状态与键盘入口', () => {
+  const html = renderCurrent()
+  assert.match(html, /id="benchmark-tab-rating" role="tab" aria-selected="true"/)
+  assert.match(html, /role="tabpanel" aria-labelledby="benchmark-tab-rating"/)
+  for (const view of ['score', 'rating', 'table', 'arena']) {
+    assert.match(renderCurrent(`/?v=${view}`), new RegExp(`id="benchmark-tab-${view}" role="tab" aria-selected="true"`))
+  }
+  assert.match(renderCurrent('/?v=unknown'), /id="benchmark-tab-rating" role="tab" aria-selected="true"/)
+  const source = srcOf('pages/K4uV2Page.jsx')
+  assert.ok(source.includes('ArrowLeft') && source.includes('ArrowRight') && source.includes("event.key === 'End'"))
+  assert.ok(source.includes("url.set('v', nextView"))
+})
+
+check('当前 rating 使用加权分与时间线；原始分页保留全部历史记录', () => {
+  const rating = renderCurrent()
+  const original = renderCurrent('/?v=score')
+  assert.ok(rating.includes('<span class="mname">Current-A</span>'))
+  assert.ok(!rating.includes('<span class="mname">Old-only</span>'))
+  assert.ok(!rating.includes('<span class="mname">No-perf</span>'))
+  assert.ok(original.includes('<span class="mname">Old-only</span>'))
+  assert.ok(original.includes('<span class="mname">No-perf</span>'))
+  assert.ok(original.includes('80.00'))
+  assert.ok(!original.includes('80.00000'))
+  assert.ok(rating.includes(weightedRoundScore(80, { timeMs: 1000, memoryMb: 125 }).toFixed(5)))
+  const weighted = toV2Dataset(currentSnapshot)
+  assert.equal(weighted.records.length, 3)
+  assert.equal(weighted.records.find((record) => record.id === 'no-perf').submissions[0].score, null)
+  assert.equal(currentSnapshot.records[0].submissions[0].score, 80, '加权转换不能覆盖原始测评分')
+})
+
+check('当前 App 保留首页别名、旧链接重定向及全部辅助路由', () => {
+  for (const path of ['/', '/v2', '/missing-route']) {
+    assert.match(renderCurrent(path, App), /id="benchmark-tab-rating" role="tab" aria-selected="true"/)
+  }
+  const source = srcOf('App.jsx')
+  for (const path of ['/admin', '/users', '/register', '/contributors', '/arena', '/arena/:slug', '/prompts']) {
+    assert.ok(source.includes(`path="${path}"`), `${path} 路由丢失`)
+  }
+  assert.match(source, /path="\/old" element=\{<Navigate to="\/" replace \/>\}/)
+  assert.ok(!source.includes('HomePage'), '旧分析页只做组件回归，不重新接回现行路由')
+  assert.ok(source.includes('lazy(() => import(') && source.includes('<Suspense'))
+})
+
+check('当前评分页不重复拉数据，rating 只通过后台增量 hook 计算', () => {
+  const page = srcOf('pages/K4uV2Page.jsx')
+  const matrix = srcOf('views/MatrixView.jsx')
+  assert.ok(page.includes('const source = app.data'))
+  assert.ok(!page.includes("api('/api/data')"), '首页应共享全局数据与刷新协调器')
+  assert.ok(matrix.includes('useIncrementalRating'))
+  assert.ok(!matrix.includes('arenaRating('), 'BT/bootstrap 不能回到渲染线程')
+  assert.ok(matrix.includes('cachePublic: publicDefault') && matrix.includes('epoch: data.epoch'))
+  assert.ok(matrix.includes('requestAnimationFrame'))
+  assert.ok(matrix.includes('visibleProblems.map') && !matrix.includes('VirtualRows'), '矩阵必须按所有可见题目自然展开')
+})
+
+check('公共离线缓存采用 schema 4，拒绝旧 schema', async () => {
+  const { useApp } = await import('../src/state.jsx')
+  // eslint-disable-next-line react/only-export-components -- Node SSR test probe.
+  function CacheProbe() { return React.createElement('output', null, useApp().data.records.length) }
+  const renderCache = () => renderToString(React.createElement(AppProvider, null, React.createElement(CacheProbe)))
+  const previous = store.get('radar.cache.v3')
+  try {
+    store.set('radar.cache.v3', JSON.stringify({ ...snapshot, cacheSchema: undefined }))
+    assert.equal(renderCache(), '<output>0</output>')
+    assert.equal(store.has('radar.cache.v3'), false)
+    store.set('radar.cache.v3', raw)
+    assert.equal(renderCache(), `<output>${snapshot.records.length}</output>`)
+  } finally { store.set('radar.cache.v3', previous) }
+  assert.ok(stateText.includes('cacheSchema: 4') && stateText.includes("record.status === 'approved'"))
+})
+
 const delay = (ms) => new Promise((r) => setTimeout(r, ms))
 
 check('sync：并发只跑一轮（StrictMode 双挂载不会重复打接口）', async () => {

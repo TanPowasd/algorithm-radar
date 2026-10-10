@@ -1,10 +1,23 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, RefreshCw, Upload } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useApp } from '../state'
 import { api } from '../api/client'
 import ArenaImportCard from '../components/ArenaImportCard'
 import ArenaRenameCard from '../components/ArenaRenameCard'
 import { THINKING_LEVELS, thinkingLabel, entityLabel, packEntity, unpackEntity } from '../arenaMeta'
+import { useUrlState } from '../hooks/useUrlState'
+
+const PAGE_SIZE = 30
+function ArenaPager({ count, page, onChange, size = PAGE_SIZE }) {
+  const pages = Math.max(1, Math.ceil(count / size))
+  const current = Math.min(page, pages - 1)
+  return <div className="mg-pager"><span>{count} 条 · {current + 1} / {pages}</span><button className="icon-btn" title="上一页" aria-label="上一页" disabled={!current} onClick={() => onChange(current - 1)}><ChevronLeft size={16} /></button><button className="icon-btn" title="下一页" aria-label="下一页" disabled={current >= pages - 1} onClick={() => onChange(current + 1)}><ChevronRight size={16} /></button></div>
+}
+const pageSlice = (rows, page, size = PAGE_SIZE) => {
+  const current = Math.min(page, Math.max(0, Math.ceil(rows.length / size) - 1))
+  return rows.slice(current * size, (current + 1) * size)
+}
 
 /** 数字展示：空值显示破折号，千分位 */
 function num(v, digits = 0) {
@@ -33,9 +46,8 @@ function TimeCell({ iso }) {
   )
 }
 
-const WINNER_LABEL = { A: 'A 胜', B: 'B 胜', draw: '平局' }
-
 const EMPTY_FORM = { aName: '', bName: '', winner: 'A', aCash: '', bCash: '', margin: '', games: '1', aWins: '', bWins: '', aThinking: '', bThinking: '', note: '' }
+const EMPTY_ROWS = []
 
 /**
  * 农场对抗赛战绩：登记"谁和谁打、谁赢了、赢了多少"，并自动聚合积分榜。
@@ -51,25 +63,76 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
-  const [replays, setReplays] = useState([])
+  const [loading, setLoading] = useState(true)
+  const loadId = useRef(0)
+  const activeScope = useRef('')
+  const url = useUrlState('arena')
+  const [tab, setTab] = useState(() => ['standings', 'h2h', 'matches', 'replays', 'manage'].includes(url.get('tab')) ? url.get('tab') : 'standings')
+  const [matchQuery, setMatchQuery] = useState('')
+  const [matchPage, setMatchPage] = useState(0)
+  const [replayPage, setReplayPage] = useState(0)
+  const [h2hPage, setH2hPage] = useState(0)
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const historyId = useRef(0)
 
   // 对抗赛数据只有站长可写（admin/contributor 均只读）
   const canWrite = session?.role === 'owner'
   const isAdmin = session?.role === 'owner' || session?.role === 'admin'
+  const activeTab = tab === 'manage' && (!showAdmin || !canWrite) ? 'standings' : tab
+  const selectTab = (next) => { setTab(next); url.set('tab', next) }
 
   // 一个比赛一个页面：数据按 URL 里的比赛短名取（缺省 = 农场对抗赛）
   const load = useCallback(() => {
-    api('/api/competitions/' + encodeURIComponent(slug))
+    if (activeScope.current !== slug) return Promise.resolve()
+    const id = ++loadId.current
+    historyId.current++
+    setLoading(true)
+    setError('')
+    setHistoryBusy(false)
+    setHistoryError('')
+    return api('/api/competitions/' + encodeURIComponent(slug))
       .then((d) => {
+        if (id !== loadId.current) return
         setComp(d.competition || null)
-        setData({ matches: d.matches || [], standings: d.standings || [] })
-        setReplays(d.replays || [])
+        setData({ slug, matches: d.matches || [], standings: d.standings || [], pagination: d.pagination || null, replays: d.replays || [] })
         setError('')
       })
-      .catch((e) => { setError(e.message); setComp(null); setData(null); setReplays([]) })
+      .catch((e) => { if (id === loadId.current) { setError(e.message); setComp(null); setData(null) } })
+      .finally(() => { if (id === loadId.current) setLoading(false) })
   }, [slug])
 
-  useEffect(() => { load() }, [load])
+  const loadHistory = async () => {
+    const cursor = data?.slug === slug ? data.pagination?.nextCursor : null
+    if (!cursor || historyBusy || loading || activeScope.current !== slug) return
+    const request = ++historyId.current
+    const generation = loadId.current
+    setHistoryBusy(true)
+    setHistoryError('')
+    try {
+      const result = await api('/api/arena/matches?competition=' + encodeURIComponent(slug) + '&limit=300&cursor=' + encodeURIComponent(cursor))
+      if (generation !== loadId.current || request !== historyId.current) return
+      setData((current) => {
+        if (!current || current.slug !== slug) return current
+        const combined = new Map((current.matches || []).map((match) => [match.id, match]))
+        for (const match of result.matches || []) combined.set(match.id, match)
+        return { ...current, matches: [...combined.values()], pagination: result.pagination || null }
+      })
+    } catch (e) {
+      if (generation === loadId.current && request === historyId.current) setHistoryError(e.message)
+    } finally {
+      if (generation === loadId.current && request === historyId.current) setHistoryBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    activeScope.current = slug
+    load()
+    setMatchPage(0)
+    setReplayPage(0)
+    setForm(EMPTY_FORM)
+    return () => { activeScope.current = ''; loadId.current++ }
+  }, [load, slug])
 
   // 比赛列表：多于一个时才显示切换按钮（主界面页签里用它切比赛）
   useEffect(() => {
@@ -78,20 +141,15 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
       .catch(() => setComps([]))
   }, [])
 
-  // 双方现金都填了就自动算"赢了多少"（净胜额）
-  useEffect(() => {
-    if (form.aCash === '' || form.bCash === '') return
-    const a = Number(form.aCash)
-    const b = Number(form.bCash)
-    if (!Number.isFinite(a) || !Number.isFinite(b)) return
-    const m = String(Math.abs(a - b))
-    setForm((f) => (f.margin === m ? f : { ...f, margin: m }))
-  }, [form.aCash, form.bCash])
-
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+  const set = (k) => (e) => setForm((f) => {
+    const next = { ...f, [k]: e.target.value }
+    if ((k === 'aCash' || k === 'bCash') && next.aCash !== '' && next.bCash !== '' && Number.isFinite(Number(next.aCash)) && Number.isFinite(Number(next.bCash))) next.margin = String(Math.abs(Number(next.aCash) - Number(next.bCash)))
+    return next
+  })
 
   const submit = async (e) => {
     e.preventDefault()
+    if (busy || loading || activeScope.current !== slug) return
     setError('')
     if (!form.aName.trim() || !form.bName.trim()) { setError('请填写 A、B 双方名称'); return }
     if (form.winner !== 'draw' && form.margin === '' && form.aCash === '' && form.bCash === '') {
@@ -99,6 +157,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
       return
     }
     setBusy(true)
+    const requestScope = slug
     try {
       await api('/api/arena/matches', {
         method: 'POST',
@@ -121,10 +180,9 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
         },
       })
       toast('战绩已登记')
-      setForm(EMPTY_FORM)
-      load()
+      if (activeScope.current === requestScope) { setForm(EMPTY_FORM); await load() }
     } catch (err) {
-      setError(err.message)
+      if (activeScope.current === requestScope) setError(err.message)
     } finally {
       setBusy(false)
     }
@@ -135,74 +193,90 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
+    if (busy || loading || activeScope.current !== slug) return
     setError('')
     if (file.size > 8 * 1024 * 1024) { setError('回放文件超过 8 MB 上限'); return }
     setBusy(true)
+    const requestScope = slug
     try {
       const replay = JSON.parse(await file.text())
       const d = await api('/api/arena/replays', { method: 'POST', body: { replay, competition: slug } })
       toast('回放已上传：' + (d.replay?.aName || '?') + ' vs ' + (d.replay?.bName || '?'))
-      load()
+      if (activeScope.current === requestScope) await load()
     } catch (err) {
-      setError(err instanceof SyntaxError ? '这个文件不是合法 JSON' : err.message)
+      if (activeScope.current === requestScope) setError(err instanceof SyntaxError ? '这个文件不是合法 JSON' : err.message)
     } finally {
       setBusy(false)
     }
   }
 
   const removeReplay = async (r) => {
+    if (busy || loading || activeScope.current !== slug) return
     if (!window.confirm('删除这份回放？R2 里的文件也会一起删掉。')) return
+    setBusy(true)
+    const requestScope = slug
     try {
       await api('/api/arena/replays/' + r.id, { method: 'DELETE' })
       toast('回放已删除')
-      load()
+      if (activeScope.current === requestScope) await load()
     } catch (err) {
-      setError(err.message)
+      if (activeScope.current === requestScope) setError(err.message)
+    } finally {
+      setBusy(false)
     }
   }
 
   const remove = async (m) => {
+    if (busy || loading || activeScope.current !== slug) return
     if (!window.confirm('删除这条战绩？删掉后积分榜会立即重算。')) return
+    setBusy(true)
+    const requestScope = slug
     try {
       await api('/api/arena/matches/' + m.id, { method: 'DELETE' })
       toast('已删除')
-      load()
+      if (activeScope.current === requestScope) await load()
     } catch (err) {
-      setError(err.message)
+      if (activeScope.current === requestScope) setError(err.message)
+    } finally {
+      setBusy(false)
     }
   }
 
-  const matches = data?.matches || []
-  const standings = data?.standings || []
+  const currentData = data?.slug === slug ? data : null
+  const currentComp = comp?.slug === slug ? comp : null
+  const matches = currentData?.matches || EMPTY_ROWS
+  const standings = currentData?.standings || EMPTY_ROWS
+  const replays = currentData?.replays || EMPTY_ROWS
+  const filteredMatches = useMemo(() => matches.filter((m) => [m.aName, m.bName, m.note, m.author].join(' ').toLowerCase().includes(matchQuery.trim().toLowerCase())), [matches, matchQuery])
   const totalMargin = useMemo(() => matches.reduce((a, m) => a + (Number(m.margin) || 0), 0), [matches])
 
   // 两两对比：任选两个模型看历史交锋
   const [h2hA, setH2hA] = useState('')
   const [h2hB, setH2hB] = useState('')
-  const [h2h, setH2h] = useState(null)
-  const [h2hError, setH2hError] = useState('')
+  const [h2hResult, setH2hResult] = useState(null)
   const [replayQuery, setReplayQuery] = useState('')
 
-  // 默认选实力榜前两名
-  useEffect(() => {
-    const ents = standings.map((s) => packEntity(s.name, s.thinking))
-    if (!h2hA && ents[0]) setH2hA(ents[0])
-    if (!h2hB && ents[1]) setH2hB(ents[1])
-  }, [standings, h2hA, h2hB])
+  const entities = useMemo(() => standings.map((s) => packEntity(s.name, s.thinking)), [standings])
+  const selectedA = entities.includes(h2hA) ? h2hA : entities[0] || ''
+  const selectedB = entities.includes(h2hB) ? h2hB : entities[1] || ''
+  const pairKey = `${slug}\u0000${selectedA}\u0000${selectedB}`
+  const h2h = h2hResult?.key === pairKey ? h2hResult.data : null
+  const h2hError = h2hResult?.key === pairKey ? h2hResult.error : ''
 
   useEffect(() => {
-    if (!h2hA || !h2hB || h2hA === h2hB) { setH2h(null); return }
-    const ea = unpackEntity(h2hA)
-    const eb = unpackEntity(h2hB)
+    if (activeTab !== 'h2h') return undefined
+    if (!selectedA || !selectedB || selectedA === selectedB) return undefined
+    const ea = unpackEntity(selectedA)
+    const eb = unpackEntity(selectedB)
     let alive = true
     api('/api/arena/h2h?competition=' + encodeURIComponent(slug)
       + '&a=' + encodeURIComponent(ea.name) + '&aThinking=' + encodeURIComponent(ea.thinking)
       + '&b=' + encodeURIComponent(eb.name) + '&bThinking=' + encodeURIComponent(eb.thinking)
       + '&strict=1')
-      .then((d) => { if (alive) { setH2h(d); setH2hError('') } })
-      .catch((e) => { if (alive) { setH2h(null); setH2hError(e.message) } })
+      .then((d) => { if (alive) setH2hResult({ key: pairKey, data: d, error: '' }) })
+      .catch((e) => { if (alive) setH2hResult({ key: pairKey, data: null, error: e.message }) })
     return () => { alive = false }
-  }, [h2hA, h2hB, slug, matches])
+  }, [selectedA, selectedB, pairKey, slug, matches, activeTab])
 
   const h2hGames = (h2h?.series || []).reduce((acc, s) => ({ a: acc.a + s.aWins, b: acc.b + s.bWins }), { a: 0, b: 0 })
 
@@ -215,13 +289,12 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
   }, [replays, replayQuery])
 
   return (
-    <>
+    <div className="arena-workspace management-layout">
         <div className="page-head">
-          <h2>{comp?.name || '比赛'} · 战绩</h2>
+          <h2>{currentComp?.name || '比赛'}</h2>
+          {currentComp?.rulesUrl && <a className="btn small ghost" href={currentComp.rulesUrl} target="_blank" rel="noopener noreferrer">比赛规则</a>}
           {!onSelect && <Link className="btn small ghost" style={{ marginLeft: 'auto' }} to="/arena">← 全部比赛</Link>}
-          <span className="desc">{showAdmin
-            ? '登记"谁和谁打、谁赢了、赢了多少" · 局级 ELO 实力榜自动聚合 · 仅站长可写'
-            : '局级 ELO 实力榜 · 任选两个模型看历史交锋 · 对战记录 · 回放'}</span>
+          <span className="desc">{currentComp?.subtitle || '局级 ELO'}</span>
         </div>
 
         {!showAdmin && (canWrite || isAdmin) && (
@@ -241,20 +314,25 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
           </div>
         )}
 
-        <div className="stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-          <div className="stat"><div className="s-label"><span className="tone-dot tone-accent" />已登记对局</div><div className="s-value">{matches.length}</div></div>
+        <div className="stats mg-stats">
+          <div className="stat"><div className="s-label"><span className="tone-dot tone-accent" />已登记对局</div><div className="s-value">{currentData?.pagination?.total ?? matches.length}</div></div>
           <div className="stat"><div className="s-label"><span className="tone-dot tone-green" />参战 agent</div><div className="s-value">{standings.length}</div></div>
-          <div className="stat"><div className="s-label"><span className="tone-dot tone-purple" />战绩总净胜</div><div className="s-value">{num(totalMargin)}</div></div>
+          <div className="stat"><div className="s-label"><span className="tone-dot tone-purple" />已载入战绩净胜</div><div className="s-value">{num(totalMargin)}</div></div>
           <div className="stat"><div className="s-label"><span className="tone-dot tone-orange" />登记人</div><div className="s-value" style={{ fontSize: 'var(--fs-lg)', paddingTop: 6 }}>{!showAdmin ? '游客视图（只读）' : canWrite ? (session.nickname || session.username) : '未登录（只读）'}</div></div>
         </div>
 
-        {error && <div className="form-error">{error}</div>}
+        <nav className="mg-tabs" aria-label="比赛分区">
+          {[['standings', '实力榜'], ['h2h', '历史交锋'], ['matches', '对战记录'], ['replays', '回放'], ...(showAdmin && canWrite ? [['manage', '登记与管理']] : [])].map(([key, label]) => <button key={key} type="button" className={activeTab === key ? 'active' : ''} aria-current={activeTab === key ? 'page' : undefined} onClick={() => selectTab(key)}>{label}</button>)}
+        </nav>
+        {error && <div className="form-error" role="alert">{error}<button className="icon-btn" title="重试比赛" aria-label="重试比赛" onClick={load}><RefreshCw size={16} /></button></div>}
+        {loading && !currentData && <div className="empty" role="status">加载中…</div>}
 
-        {showAdmin && canWrite ? (
-          <div className="card">
+        {activeTab === 'manage' && showAdmin && canWrite ? (
+          <section className="mg-section">
             <div className="card-head"><h3>登记一场对战</h3></div>
-            <form onSubmit={submit} style={{ padding: '0 var(--sp-4) var(--sp-4)' }}>
-              <div className="filters" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 'var(--sp-3)' }}>
+            <form onSubmit={submit}>
+              <fieldset className="mg-fieldset" disabled={busy || loading}>
+              <div className="mg-form-grid">
                 <div className="field">
                   <label>A 方（先手 / 挑战者）</label>
                   <input value={form.aName} onChange={set('aName')} placeholder="例：dsf" maxLength={40} list="arena-agents" />
@@ -307,29 +385,28 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                   <label>局数（可选，填了局比分可留空）</label>
                   <input value={form.games} onChange={set('games')} inputMode="numeric" placeholder="1" />
                 </div>
-                <div className="field" style={{ gridColumn: 'span 2' }}>
+                <div className="field mg-span-two">
                   <label>备注（可选，例：8 种子双座位 / 冠军对照组）</label>
                   <input value={form.note} onChange={set('note')} maxLength={200} placeholder="例：4 种子 × 双方座位，8:0" />
                 </div>
               </div>
               <datalist id="arena-agents">
-                {standings.map((s) => <option key={s.name} value={s.name} />)}
+                {[...new Set(standings.map((s) => s.name))].map((name) => <option key={name} value={name} />)}
               </datalist>
               <div style={{ marginTop: 'var(--sp-3)', display: 'flex', gap: 'var(--sp-2)', alignItems: 'center' }}>
                 <button className="btn primary" type="submit" disabled={busy}>{busy ? '提交中…' : '登记战绩'}</button>
                 <span className="chain">净胜额 = 赢家终局现金 − 输家终局现金；只填净胜额也可以。</span>
               </div>
+              </fieldset>
             </form>
-          </div>
-        ) : showAdmin ? (
-          <div className="card"><div className="empty">对抗赛战绩只有站长可以登记与修改；其他账号为只读视图</div></div>
+          </section>
         ) : null}
 
-        {showAdmin && <ArenaImportCard slug={slug} canWrite={canWrite} toast={toast} onDone={load} />}
+        {activeTab === 'manage' && showAdmin && <ArenaImportCard key={slug} slug={slug} canWrite={canWrite} toast={toast} onDone={load} />}
 
-        {showAdmin && <ArenaRenameCard slug={slug} standings={standings} canWrite={canWrite} toast={toast} onDone={load} />}
+        {activeTab === 'manage' && showAdmin && <ArenaRenameCard key={slug} slug={slug} standings={standings} canWrite={canWrite} toast={toast} onDone={load} />}
 
-        <div className="card">
+        {activeTab === 'standings' && <section className="mg-section">
           <div className="card-head"><h3>实力榜（局级 ELO）</h3><span className="chain" style={{ marginLeft: 'auto' }}>按局级 ELO 排序 · 每轮 16 局逐局计入，赢强对手涨得多</span></div>
           {!standings.length && <div className="empty">还没有战绩，先登记一场</div>}
           {!!standings.length && (
@@ -344,7 +421,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                 </thead>
                 <tbody>
                   {standings.map((s, i) => (
-                    <tr key={s.name}>
+                    <tr key={packEntity(s.name, s.thinking)}>
                       <td className="lb-rank">{i + 1}</td>
                       <td className="lb-model">{s.name}</td>
                       <td>{thinkingLabel(s.thinking)}</td>
@@ -362,21 +439,21 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
               </table>
             </div>
           )}
-        </div>
+        </section>}
 
-        <div className="card">
+        {activeTab === 'h2h' && <section className="mg-section">
           <div className="card-head"><h3>两两对比（历史交锋）</h3><span className="chain" style={{ marginLeft: 'auto' }}>任选两个模型，看他们的全部交手记录</span></div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 'var(--sp-3)', padding: '0 var(--sp-4)' }}>
+          <div className="mg-form-grid mg-two-columns">
             <div className="field">
               <label>模型 A</label>
-              <select value={h2hA} onChange={(e) => setH2hA(e.target.value)}>
+              <select aria-label="模型 A" value={selectedA} onChange={(e) => { setH2hA(e.target.value); setH2hPage(0) }}>
                 <option value="">（请选择）</option>
                 {standings.map((s) => <option key={packEntity(s.name, s.thinking)} value={packEntity(s.name, s.thinking)}>{entityLabel(s.name, s.thinking)}（ELO {num(s.elo)}）</option>)}
               </select>
             </div>
             <div className="field">
               <label>模型 B</label>
-              <select value={h2hB} onChange={(e) => setH2hB(e.target.value)}>
+              <select aria-label="模型 B" value={selectedB} onChange={(e) => { setH2hB(e.target.value); setH2hPage(0) }}>
                 <option value="">（请选择）</option>
                 {standings.map((s) => <option key={packEntity(s.name, s.thinking)} value={packEntity(s.name, s.thinking)}>{entityLabel(s.name, s.thinking)}（ELO {num(s.elo)}）</option>)}
               </select>
@@ -385,7 +462,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
           {h2hError && <div className="form-error">{h2hError}</div>}
           {h2h && (
             <>
-              <div className="stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)', padding: '0 var(--sp-4)' }}>
+              <div className="stats mg-stats">
                 <div className="stat"><div className="s-label">交手轮次</div><div className="s-value">{h2h.series.length}</div></div>
                 <div className="stat"><div className="s-label">{entityLabel(h2h.a.name, h2h.a.thinking)} 轮次战绩</div><div className="s-value" style={{ fontSize: 16 }}>{h2h.a.seriesWins} 胜 {h2h.a.seriesLosses} 负</div></div>
                 <div className="stat"><div className="s-label">局比分合计</div><div className="s-value">{h2hGames.a} : {h2hGames.b}</div></div>
@@ -401,7 +478,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                       </tr>
                     </thead>
                     <tbody>
-                      {h2h.series.map((s, i) => (
+                      {pageSlice(h2h.series, h2hPage).map((s, i) => (
                         <tr key={i}>
                           <td><TimeCell iso={s.playedAt} /></td>
                           <td className="lb-model">{s.aName}</td>
@@ -416,16 +493,18 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                       ))}
                     </tbody>
                   </table>
+                  <ArenaPager count={h2h.series.length} page={h2hPage} onChange={setH2hPage} />
                 </div>
               )}
               {!h2h.series.length && <div className="empty">这两个模型还没有交手记录</div>}
             </>
           )}
-          {!h2h && !h2hError && <div className="empty">选择两个不同的模型后显示历史交锋</div>}
-        </div>
+          {!h2h && !h2hError && <div className="empty">{selectedA && selectedB && selectedA !== selectedB ? '加载交锋…' : '选择两个不同的模型后显示历史交锋'}</div>}
+        </section>}
 
-        <div className="card">
-          <div className="card-head"><h3>对战记录</h3><span className="chain" style={{ marginLeft: 'auto' }}>新 → 旧，最多 300 条</span></div>
+        {activeTab === 'matches' && <section className="mg-section">
+          <div className="card-head"><h3>对战记录</h3><span className="chain" style={{ marginLeft: 'auto' }}>已载入 {matches.length} / {currentData?.pagination?.total ?? matches.length} 条</span></div>
+          <div className="mg-toolbar"><input className="filter-search" aria-label="筛选对战记录" value={matchQuery} placeholder="选手、登记人、备注" onChange={(e) => { setMatchQuery(e.target.value); setMatchPage(0) }} /></div>
           {!matches.length && <div className="empty">还没有记录</div>}
           {!!matches.length && (
             <div className="table-scroll">
@@ -438,7 +517,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                   </tr>
                 </thead>
                 <tbody>
-                  {matches.map((m) => (
+                  {pageSlice(filteredMatches, matchPage).map((m) => (
                     <tr key={m.id}>
                       <td><TimeCell iso={m.playedAt} /></td>
                       <td className="lb-model">{m.aName}</td>
@@ -454,34 +533,38 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                       <td className="num">{m.games}</td>
                       <td>{m.note || <span className="chain">—</span>}</td>
                       <td>{m.author || <span className="chain">—</span>}</td>
-                      {showAdmin && isAdmin && <td className="actions"><button className="btn small ghost" onClick={() => remove(m)}>删除</button></td>}
+                      {showAdmin && isAdmin && <td className="actions"><button className="btn small ghost" disabled={busy} onClick={() => remove(m)}>删除</button></td>}
                     </tr>
                   ))}
+                  {!filteredMatches.length && <tr><td colSpan={showAdmin && isAdmin ? 11 : 10}><div className="empty">没有匹配战绩</div></td></tr>}
                 </tbody>
               </table>
             </div>
           )}
-        </div>
+          <ArenaPager count={filteredMatches.length} page={matchPage} onChange={setMatchPage} />
+          {historyError && <div className="form-error" role="alert">{historyError}</div>}
+          {currentData?.pagination?.nextCursor && <div className="mg-toolbar"><button className="btn small" disabled={historyBusy || loading} onClick={loadHistory}>{historyBusy ? '加载中…' : '加载更多历史'}</button></div>}
+        </section>}
 
-        <div className="card">
+        {activeTab === 'replays' && <section className="mg-section">
           <div className="card-head">
             <h3>对局回放</h3>
             <span className="chain" style={{ marginLeft: 'auto' }}>
-              棋盘动画 + 现金曲线 + 每步动作{replays.length ? ' · 共 ' + replays.length + ' 份' : ''}
+              {replays.length ? replays.length + ' 份回放' : '对局回放'}{replays.length >= 200 ? ' · 最近 200 份' : ''}
             </span>
           </div>
           {showAdmin && canWrite && (
             <div className="filters">
               <label className="btn small">
-                上传回放 JSON
-                <input type="file" accept=".json,application/json" hidden onChange={uploadReplay} />
+                <Upload size={15} /> 上传回放 JSON
+                <input type="file" accept=".json,application/json" disabled={busy} hidden onChange={uploadReplay} />
               </label>
               <span className="chain">把 kaggriculture/organizer/scripts/record_replay.py 录出来的 replays/*.json 传上来（≤ 8 MB），全站可看</span>
             </div>
           )}
           {!!replays.length && (
             <div style={{ padding: '0 var(--sp-4) var(--sp-3)' }}>
-              <input value={replayQuery} onChange={(e) => setReplayQuery(e.target.value)}
+              <input aria-label="筛选回放" value={replayQuery} onChange={(e) => { setReplayQuery(e.target.value); setReplayPage(0) }}
                 placeholder="按选手名 / 上传人筛选（例如 qwen、gptsol）" style={{ width: '100%', maxWidth: 340 }} />
             </div>
           )}
@@ -490,9 +573,9 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
             <div className="empty">没有匹配「{replayQuery}」的回放</div>
           )}
           {!!shownReplays.length && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(272px, 1fr))', gap: 'var(--sp-3)', padding: '0 var(--sp-4) var(--sp-4)' }}>
-              {shownReplays.map((r) => (
-                <div key={r.id} style={{ border: '1px solid var(--line, rgba(255,255,255,.15))', borderRadius: 10, padding: 'var(--sp-3)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div className="arena-replay-grid">
+              {pageSlice(shownReplays, replayPage, 18).map((r) => (
+                <article key={r.id} className="arena-replay-item">
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
                     <strong className="lb-model">{r.aName}</strong>
                     <span className="chain">vs</span>
@@ -509,13 +592,14 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
                   <div className="chain"><TimeCell iso={r.createdAt} />{r.author ? ' · ' + r.author : ''}</div>
                   <div style={{ marginTop: 'auto', display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', paddingTop: 6 }}>
                     <a className="btn small primary" href={'/replay#src=/api/arena/replays/' + r.id} target="_blank" rel="noreferrer">看回放</a>
-                    {showAdmin && canWrite && <button className="btn small ghost" onClick={() => removeReplay(r)}>删除</button>}
+                    {showAdmin && canWrite && <button className="btn small ghost" disabled={busy} onClick={() => removeReplay(r)}>删除</button>}
                   </div>
-                </div>
+                </article>
               ))}
             </div>
           )}
-        </div>
-    </>
+          <ArenaPager count={shownReplays.length} page={replayPage} onChange={setReplayPage} size={18} />
+        </section>}
+    </div>
   )
 }

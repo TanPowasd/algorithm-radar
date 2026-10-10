@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApp } from '../state'
 import Topbar from '../components/Topbar'
@@ -8,6 +8,16 @@ import { api } from '../api/client'
 import { difficultyName, seriesKey, isPending, isApproved, providerLabel, fmtClock, fmtDateTime, promptOf } from '../aggregate'
 import PromptCopyButton from '../components/PromptCopyButton'
 import PidLink from '../components/PidLink'
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import { useUrlState } from '../hooks/useUrlState'
+
+const PAGE_SIZE = 30
+function PageControls({ count, page, onChange }) {
+  const pages = Math.max(1, Math.ceil(count / PAGE_SIZE))
+  const current = Math.min(page, pages - 1)
+  return <div className="mg-pager"><span>{count} 条 · {current + 1} / {pages}</span><button className="icon-btn" title="上一页" aria-label="上一页" disabled={!current} onClick={() => onChange(current - 1)}><ChevronLeft size={16} /></button><button className="icon-btn" title="下一页" aria-label="下一页" disabled={current >= pages - 1} onClick={() => onChange(current + 1)}><ChevronRight size={16} /></button></div>
+}
+const pageSlice = (rows, page) => rows.slice(Math.min(page, Math.max(0, Math.ceil(rows.length / PAGE_SIZE) - 1)) * PAGE_SIZE, (Math.min(page, Math.max(0, Math.ceil(rows.length / PAGE_SIZE) - 1)) + 1) * PAGE_SIZE)
 
 /**
  * 回收站：软删除的记录（deleted_at 非空）统一在这里管理。
@@ -18,16 +28,24 @@ function TrashManager({ onChanged }) {
   const [records, setRecords] = useState(null) // null=加载中
   const [sel, setSel] = useState(new Set())
   const [busy, setBusy] = useState(false)
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(0)
+  const [error, setError] = useState('')
+  const filtered = (records || []).filter((r) => [r.model, r.pid, r.title, r.author].join(' ').toLowerCase().includes(query.trim().toLowerCase()))
+  const shown = pageSlice(filtered, page)
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const res = await api('/api/trash')
       setRecords(res.records || [])
+      setSel((prev) => new Set([...prev].filter((id) => (res.records || []).some((r) => r.id === id))))
+      setError('')
     } catch (e) {
+      setError(e.message)
       toast(e.message, 'err')
     }
-  }
-  useEffect(() => { load() }, [])
+  }, [toast])
+  useEffect(() => { load() }, [load])
 
   const toggle = (id) => {
     setSel((prev) => {
@@ -38,7 +56,12 @@ function TrashManager({ onChanged }) {
     })
   }
   const toggleAll = () => {
-    setSel((prev) => prev.size === records.length ? new Set() : new Set((records || []).map((r) => r.id)))
+    setSel((prev) => {
+      const next = new Set(prev)
+      const all = shown.length && shown.every((r) => next.has(r.id))
+      shown.forEach((r) => all ? next.delete(r.id) : next.add(r.id))
+      return next
+    })
   }
 
   const restore = async (ids) => {
@@ -50,7 +73,7 @@ function TrashManager({ onChanged }) {
       setSel(new Set())
       await load()
       await refreshAll()
-      onChanged && onChanged()
+      if (onChanged) onChanged()
     } catch (e) {
       toast(e.message, 'err')
     } finally {
@@ -68,6 +91,7 @@ function TrashManager({ onChanged }) {
       setSel(new Set())
       await load()
       await refreshAll()
+      if (onChanged) onChanged()
     } catch (e) {
       toast(e.message, 'err')
     } finally {
@@ -85,7 +109,7 @@ function TrashManager({ onChanged }) {
       setSel(new Set())
       setRecords([])
       await refreshAll()
-      onChanged && onChanged()
+      if (onChanged) onChanged()
     } catch (e) {
       toast(e.message, 'err')
     } finally {
@@ -94,31 +118,33 @@ function TrashManager({ onChanged }) {
   }
 
   return (
-    <div className="card" id="trash-card">
+    <section className="mg-section" id="trash-card">
       <div className="card-head">
         <h2>回收站</h2>
-        <span className="hint">被删除/拒绝的记录暂存于此，可恢复或永久清除（防止误删）</span>
+        <input aria-label="筛选回收站" className="filter-search" value={query} placeholder="题号、模型、提供者" onChange={(e) => { setQuery(e.target.value); setPage(0) }} />
         <div className="card-tools">
-          <button className="btn small ghost" onClick={toggleAll} disabled={!records?.length}>
-            {sel.size === records?.length && records?.length ? '取消全选' : '全选'}
+          <button className="btn small ghost" onClick={toggleAll} disabled={!shown.length || busy}>
+            {shown.length && shown.every((r) => sel.has(r.id)) ? '取消本页' : '选择本页'}
           </button>
           <button className="btn small" onClick={() => restore([...sel])} disabled={!sel.size || busy}>恢复所选</button>
           <button className="btn small danger" onClick={() => purge([...sel])} disabled={!sel.size || busy}>永久删除所选</button>
           <button className="btn small danger" onClick={empty} disabled={!records?.length || busy}>清空回收站</button>
         </div>
       </div>
+      {error && <div className="form-error" role="alert">{error}<button className="icon-btn" title="重试" aria-label="重试" onClick={load}><RefreshCw size={16} /></button></div>}
+      {!!sel.size && <div className="mg-selection" role="status">已选择 {sel.size} 条<button className="btn small ghost" disabled={busy} onClick={() => setSel(new Set())}>取消选择</button></div>}
       <div className="table-scroll">
         <table className="data">
           <thead>
             <tr>
-              <th><input type="checkbox" checked={!!records?.length && sel.size === records.length} onChange={toggleAll} /></th>
+              <th><input aria-label="选择本页" type="checkbox" checked={!!shown.length && shown.every((r) => sel.has(r.id))} disabled={busy} onChange={toggleAll} /></th>
               <th>模型</th><th>题目</th><th>时间</th><th>提供者</th><th>删除时间</th><th>原因</th>
             </tr>
           </thead>
           <tbody>
-            {(records || []).map((r) => (
+            {shown.map((r) => (
               <tr key={r.id}>
-                <td><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
+                <td><input aria-label={`选择 ${r.model} ${r.pid}`} type="checkbox" checked={sel.has(r.id)} disabled={busy} onChange={() => toggle(r.id)} /></td>
                 <td style={{ fontWeight: 600 }}>{r.model}</td>
                 <td><PidLink pid={r.pid} /><span className="chain"> {r.title}</span></td>
                 <td>
@@ -135,13 +161,15 @@ function TrashManager({ onChanged }) {
             {records !== null && records.length === 0 && (
               <tr><td colSpan={7}><div className="empty">回收站是空的</div></td></tr>
             )}
+            {records?.length > 0 && !shown.length && <tr><td colSpan={7}><div className="empty">没有匹配记录</div></td></tr>}
             {records === null && (
               <tr><td colSpan={7}><div className="empty">加载中…</div></td></tr>
             )}
           </tbody>
         </table>
       </div>
-    </div>
+      <PageControls count={filtered.length} page={page} onChange={setPage} />
+    </section>
   )
 }
 
@@ -150,6 +178,9 @@ function ModelManager({ onChanged }) {
   const [form, setForm] = useState({ name: '', vendor: '', note: '' })
   const [editing, setEditing] = useState(null) // 正在编辑的模型 id（null=新增模式）
   const [busy, setBusy] = useState(false)
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(0)
+  const filtered = models.filter((m) => [m.name, m.vendor, m.note].join(' ').toLowerCase().includes(query.trim().toLowerCase()))
 
   const startEdit = (m) => {
     setEditing(m.id)
@@ -177,7 +208,7 @@ function ModelManager({ onChanged }) {
         cancelEdit()
       }
       await refreshAll()
-      onChanged && onChanged()
+      if (onChanged) onChanged()
     } catch (err) {
       toast(err.message, 'err')
     } finally {
@@ -190,23 +221,26 @@ function ModelManager({ onChanged }) {
     if (!window.confirm(used
       ? `从目录删除模型「${m.name}」？\n该模型下的历史记录将隐藏（保留在库，重新收录模型后恢复显示）。`
       : `从目录删除模型「${m.name}」？`)) return
+    setBusy(true)
     try {
       await api(`/api/models/${m.id}`, { method: 'DELETE' })
       toast(`已删除 ${m.name}`)
       await refreshAll()
-      onChanged && onChanged()
+      if (onChanged) onChanged()
     } catch (err) {
       toast(err.message, 'err')
+    } finally {
+      setBusy(false)
     }
   }
 
   const editingLabel = editing ? (models.find((m) => m.id === editing)?.name || '') : ''
 
   return (
-    <div className="card" id="models-card">
+    <section className="mg-section" id="models-card">
       <div className="card-head">
         <h2>AI 模型管理</h2>
-        <span className="hint">可改名（历史记录同步跟随新名）· 可编辑厂商/备注 · 删除只移出目录不删记录</span>
+        <input className="filter-search" aria-label="筛选模型" placeholder="模型、厂商" value={query} onChange={(e) => { setQuery(e.target.value); setPage(0) }} />
       </div>
       <div className="table-scroll">
         <table className="data">
@@ -214,27 +248,29 @@ function ModelManager({ onChanged }) {
             <tr><th>模型名</th><th>厂商</th><th>备注</th><th>操作</th></tr>
           </thead>
           <tbody>
-            {models.map((m) => (
+            {pageSlice(filtered, page).map((m) => (
               <tr key={m.id}>
                 <td style={{ fontWeight: 600 }}>{m.name}</td>
                 <td>{m.vendor || <span className="chain">—</span>}</td>
                 <td>{m.note || <span className="chain">—</span>}</td>
                 <td className="actions">
-                  <button className="btn small ghost" onClick={() => startEdit(m)}>编辑</button>
-                  <button className="btn small danger" onClick={() => remove(m)}>删除</button>
+                  <button className="btn small ghost" disabled={busy} onClick={() => startEdit(m)}>编辑</button>
+                  <button className="btn small danger" disabled={busy} onClick={() => remove(m)}>删除</button>
                 </td>
               </tr>
             ))}
             {!models.length && <tr><td colSpan={4}><div className="empty">还没有模型，用下方表单添加</div></td></tr>}
+            {!!models.length && !filtered.length && <tr><td colSpan={4}><div className="empty">没有匹配模型</div></td></tr>}
           </tbody>
         </table>
       </div>
-      <form onSubmit={submit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr auto', gap: 10, marginTop: 12 }}>
-        <input className="field" style={{ margin: 0 }} placeholder={editing ? `改名（当前：${editingLabel}）` : '模型名 *'} value={form.name}
+      <PageControls count={filtered.length} page={page} onChange={setPage} />
+      <form className="mg-form-grid mg-model-form" onSubmit={submit}>
+        <input aria-label="模型名" className="field" style={{ margin: 0 }} placeholder={editing ? `改名（当前：${editingLabel}）` : '模型名 *'} value={form.name}
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-        <input className="field" style={{ margin: 0 }} placeholder="厂商" value={form.vendor}
+        <input aria-label="厂商" className="field" style={{ margin: 0 }} placeholder="厂商" value={form.vendor}
           onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))} />
-        <input className="field" style={{ margin: 0 }} placeholder="备注" value={form.note}
+        <input aria-label="模型备注" className="field" style={{ margin: 0 }} placeholder="备注" value={form.note}
           onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
         {editing ? (
           <>
@@ -250,12 +286,24 @@ function ModelManager({ onChanged }) {
           <button className="btn primary" type="submit" disabled={busy || !form.name.trim()}>+ 添加模型</button>
         )}
       </form>
-    </div>
+    </section>
   )
 }
 
 export default function AdminPage() {
-  const { session, data, models, isAdmin, isOwner, toast, refreshAll, loaded, nicknameOf } = useApp()
+  const { session, data, models, isAdmin, isOwner, toast, refreshAll, loaded, nicknameOf, getProblem } = useApp()
+  const url = useUrlState('admin')
+  const [tab, setTab] = useState(() => ['pending', 'problems', 'models', 'hidden', 'trash'].includes(url.get('tab')) ? url.get('tab') : 'pending')
+  const [pendingPage, setPendingPage] = useState(0)
+  const [problemPage, setProblemPage] = useState(0)
+  const [hiddenPage, setHiddenPage] = useState(0)
+  const [hiddenProblemPage, setHiddenProblemPage] = useState(0)
+  const [hiddenModelPage, setHiddenModelPage] = useState(0)
+  const [problemQuery, setProblemQuery] = useState('')
+  const [selectedPending, setSelectedPending] = useState(new Set())
+  const [actionBusy, setActionBusy] = useState(false)
+  const [editingPid, setEditingPid] = useState('')
+  const selectTab = (next) => { setTab(next); url.set('tab', next) }
   const providerCell = (r) => providerLabel(r, nicknameOf)
   const [authOpen, setAuthOpen] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
@@ -265,9 +313,10 @@ export default function AdminPage() {
   const [collectPid, setCollectPid] = useState('') // 预填发布弹窗的题号
   const [hiddenDetail, setHiddenDetail] = useState(null) // 隐藏记录明细列表（null=未展开）
   const [trashCount, setTrashCount] = useState(0) // 回收站条数（stat 卡用）
+  const [hiddenError, setHiddenError] = useState('')
 
   // 加载未收录历史数据分组（管理员视角）
-  const loadHidden = async () => {
+  const loadHidden = useCallback(async () => {
     if (!isAdmin) return
     try {
       const [h, t] = await Promise.all([
@@ -275,9 +324,10 @@ export default function AdminPage() {
         api('/api/trash').catch(() => null),
       ])
       setHidden(h)
+      setHiddenError('')
       if (t) setTrashCount((t.records || []).length)
-    } catch { /* 静默 */ }
-  }
+    } catch (e) { setHiddenError(e.message) }
+  }, [isAdmin])
 
   /** 刷新分组 +（若展开）同步明细 */
   const reloadHidden = async () => {
@@ -300,7 +350,7 @@ export default function AdminPage() {
     }
   }
 
-  useEffect(() => { if (isAdmin) loadHidden() }, [isAdmin])
+  useEffect(() => { if (isAdmin) loadHidden() }, [isAdmin, loadHidden])
   const pending = useMemo(() => (data.records || []).filter(isPending), [data.records])
   const problems = useMemo(() => {
     const list = Object.values(data.problems || {})
@@ -318,6 +368,15 @@ export default function AdminPage() {
     if (!kw) return pending
     return pending.filter((r) => [r.model, r.pid, r.title, r.author, r.agent].join(' ').toLowerCase().includes(kw))
   }, [pending, filter])
+  const pendingRows = pageSlice(shownPending, pendingPage)
+  const selectedRows = pending.filter((r) => selectedPending.has(r.id))
+  const shownProblems = problems.filter((p) => [p.pid, p.title, ...(p.tags || [])].join(' ').toLowerCase().includes(problemQuery.trim().toLowerCase()))
+  const togglePendingPage = () => setSelectedPending((prev) => {
+    const next = new Set(prev)
+    const all = pendingRows.length && pendingRows.every((r) => next.has(r.id))
+    pendingRows.forEach((r) => all ? next.delete(r.id) : next.add(r.id))
+    return next
+  })
 
   const stats = useMemo(() => ({
     pending: pending.length,
@@ -325,51 +384,68 @@ export default function AdminPage() {
   }), [data.records, pending])
 
   const setStatus = async (r, status) => {
+    setActionBusy(true)
     try {
       await api(`/api/records/${r.id}/status`, { method: 'POST', body: { status } })
       toast(status === 'approved' ? '已通过' : '已退回待审')
       await refreshAll()
     } catch (e) {
       toast(e.message, 'err')
+    } finally {
+      setActionBusy(false)
     }
   }
 
   const removeRecord = async (r) => {
     if (!window.confirm(`删除该记录（移入回收站）？\n${r.model} · ${r.pid} · ${r.author || '—'}\n可在回收站恢复。`)) return
+    setActionBusy(true)
     try {
       await api(`/api/records/${r.id}`, { method: 'DELETE' })
       toast('已移入回收站')
       await refreshAll()
+      await reloadHidden()
     } catch (e) {
       toast(e.message, 'err')
+    } finally {
+      setActionBusy(false)
     }
   }
 
-  const bulk = async (action) => {
-    if (!shownPending.length) return
+  const bulk = async (action, selected = false) => {
+    const rows = selected ? selectedRows : shownPending
+    if (!rows.length || actionBusy) return
     const label = action === 'approve' ? '通过' : '拒绝并移入回收站'
-    if (!window.confirm(`批量${label}当前筛选出的 ${shownPending.length} 条待审记录？\n（回收站内可恢复）`)) return
+    if (!window.confirm(`批量${label}${selected ? '所选' : '当前筛选出的'} ${rows.length} 条待审记录？\n（回收站内可恢复）`)) return
+    setActionBusy(true)
     try {
       const res = await api('/api/records/bulk', {
         method: 'POST',
-        body: { ids: shownPending.map((r) => r.id), action },
+        body: { ids: rows.map((r) => r.id), action },
       })
       toast(`批量${label}完成（${res.affected} 条）`)
       await refreshAll()
+      setSelectedPending(new Set())
+      await reloadHidden()
     } catch (e) {
       toast(e.message, 'err')
+    } finally {
+      setActionBusy(false)
     }
   }
 
   const deleteProblem = async (p) => {
+    if (actionBusy) return
     if (!window.confirm(`从目录移除题目 ${p.pid}？\n该题下的测评记录将隐藏（保留在库，可重新发布该题恢复）。`)) return
+    setActionBusy(true)
     try {
       await api(`/api/problems/${encodeURIComponent(p.pid)}`, { method: 'DELETE' })
       toast(`已从目录移除 ${p.pid}，记录已隐藏`)
       await refreshAll()
-      reloadHidden()
+      await reloadHidden()
     } catch (e) {
       toast(e.message, 'err')
+    } finally {
+      setActionBusy(false)
     }
   }
 
@@ -381,14 +457,22 @@ export default function AdminPage() {
   }
 
   /** 编辑题目：打开弹窗并载入题目对象（编辑模式，题号锁定） */
-  const startEditProblem = (p) => {
-    setCollectPid('')
-    setEditProblem(p)
-    setPublishOpen(true)
+  const startEditProblem = async (p) => {
+    if (editingPid) return
+    setEditingPid(p.pid)
+    try {
+      const full = await getProblem(p.pid, { force: true })
+      setCollectPid('')
+      setEditProblem(full)
+      setPublishOpen(true)
+    } catch (e) { toast(e.message, 'err') }
+    finally { setEditingPid('') }
   }
 
   /** 批量补全题面（v3.11）：为缺题面/限制的旧题目重新抓洛谷，每次最多 20 题，可续跑 */
   const backfillContent = async () => {
+    if (actionBusy) return
+    setActionBusy(true)
     try {
       const r = await api('/api/admin/backfill-content', { method: 'POST' })
       if (r.remaining > 0) {
@@ -401,24 +485,32 @@ export default function AdminPage() {
       if (r.updated) await refreshAll()
     } catch (e) {
       toast(e.message, 'err')
+    } finally {
+      setActionBusy(false)
     }
   }
 
   const collectModel = async (name) => {
+    if (actionBusy) return
+    setActionBusy(true)
     try {
       await api('/api/models', { method: 'POST', body: { name, vendor: '', note: '' } })
       toast(`模型「${name}」已收录`)
       await refreshAll()
-      reloadHidden()
+      await reloadHidden()
     } catch (e) {
       toast(e.message, 'err')
+    } finally {
+      setActionBusy(false)
     }
   }
 
   /** 把“未收录”模型对应的隐藏历史记录移入回收站 */
   const purgeHiddenModel = async (name) => {
+    if (actionBusy) return
     const grp = hidden?.models?.find((m) => m.name === name)
     if (!window.confirm(`将模型「${name}」名下 ${grp?.count ?? ''} 条隐藏历史记录移入回收站？\n（可在回收站恢复）`)) return
+    setActionBusy(true)
     try {
       const res = await api('/api/admin/purge-records', {
         method: 'POST',
@@ -426,37 +518,47 @@ export default function AdminPage() {
       })
       toast(`已移入回收站 ${res.moved} 条`)
       await refreshAll()
-      reloadHidden()
+      await reloadHidden()
     } catch (e) {
       toast(e.message, 'err')
+    } finally {
+      setActionBusy(false)
     }
   }
 
   /** 单条隐藏历史记录移入回收站 */
   const removeHiddenRecord = async (r) => {
+    if (actionBusy) return
     if (!window.confirm(`将该隐藏记录移入回收站？\n${r.model} · ${r.pid} · ${r.date}\n（可在回收站恢复）`)) return
+    setActionBusy(true)
     try {
       await api(`/api/records/${r.id}`, { method: 'DELETE' })
       toast('已移入回收站')
       setHiddenDetail((list) => (list || []).filter((x) => x.id !== r.id))
       await refreshAll()
-      reloadHidden()
+      await reloadHidden()
     } catch (e) {
       toast(e.message, 'err')
+    } finally {
+      setActionBusy(false)
     }
   }
 
   /** 站长：一键清空目录 + 记录，重新收录 */
   const resetCatalog = async () => {
+    if (actionBusy) return
     if (!window.confirm('⚠️ 清空全部记录、题目目录与模型目录？\n（建议先使用「导出 JSON」备份全量数据。此操作不可恢复）')) return
+    setActionBusy(true)
     try {
       await api('/api/catalog/reset', { method: 'POST' })
       toast('已清空，从零重新收录')
       setHiddenDetail(null)
       await refreshAll()
-      reloadHidden()
+      await reloadHidden()
     } catch (e) {
       toast(e.message, 'err')
+    } finally {
+      setActionBusy(false)
     }
   }
 
@@ -483,7 +585,7 @@ export default function AdminPage() {
   return (
     <>
       <Topbar onOpenPublish={() => { setEditProblem(null); setCollectPid(''); setPublishOpen(true) }} />
-      <main className="layout">
+      <main className="layout management-layout">
         <div className="page-head">
           <h2>审核台</h2>
           <span className="desc">审核测评记录 · 发布题目 · 管理模型</span>
@@ -495,28 +597,37 @@ export default function AdminPage() {
           <div className="stat"><div className="s-label">隐藏区（未收录）</div><div className="s-value">{hidden?.total ?? '…'}</div></div>
           <div className="stat"><div className="s-label">回收站</div><div className="s-value">{trashCount ?? '…'}</div></div>
         </div>
+        <nav className="mg-tabs" aria-label="审核管理分区">
+          {[
+            ['pending', '待审记录', pending.length], ['problems', '题目目录', problems.length],
+            ['models', '模型目录', models.length], ['hidden', '未收录', hidden?.total], ['trash', '回收站', trashCount],
+          ].map(([key, label, count]) => <button type="button" key={key} className={tab === key ? 'active' : ''} aria-current={tab === key ? 'page' : undefined} onClick={() => selectTab(key)}>{label}<span>{count ?? '…'}</span></button>)}
+        </nav>
 
-        <div className="card">
+        {tab === 'pending' && <section className="mg-section">
           <div className="card-head">
             <h2>待审核记录</h2>
             <input className="filter-search" id="admin-pending-filter"
-              placeholder="筛选 模型/题号/提交人…（输入即筛）" value={filter} onChange={(e) => setFilter(e.target.value)}
+              aria-label="筛选待审记录" placeholder="模型、题号、提交人" value={filter} onChange={(e) => { setFilter(e.target.value); setPendingPage(0) }}
               onKeyDown={(e) => { if (e.key === 'Escape') setFilter('') }} />
             <div className="card-tools">
-              <button className="btn small" onClick={() => bulk('approve')} disabled={!shownPending.length}>全部通过</button>
-              <button className="btn small danger" onClick={() => bulk('reject')} disabled={!shownPending.length}>全部拒绝</button>
+              <button className="btn small" onClick={() => bulk('approve')} disabled={!shownPending.length || actionBusy}>通过筛选结果</button>
+              <button className="btn small danger" onClick={() => bulk('reject')} disabled={!shownPending.length || actionBusy}>拒绝筛选结果</button>
             </div>
           </div>
+          {!!selectedRows.length && <div className="mg-selection" role="status"><span>已选择 {selectedRows.length} 条</span><button className="btn small" disabled={actionBusy} onClick={() => bulk('approve', true)}>通过所选</button><button className="btn small danger" disabled={actionBusy} onClick={() => bulk('reject', true)}>拒绝所选</button><button className="btn small ghost" disabled={actionBusy} onClick={() => setSelectedPending(new Set())}>取消选择</button></div>}
           <div className="table-scroll" id="pending-wrap">
             <table className="data review-table">
               <thead>
                 <tr>
+                  <th><input type="checkbox" aria-label="选择本页待审" disabled={actionBusy} checked={!!pendingRows.length && pendingRows.every((r) => selectedPending.has(r.id))} onChange={togglePendingPage} /></th>
                   <th>模型</th><th>题目</th><th>思考</th><th>Agent / Token</th><th>提交轨迹</th><th>提供者</th><th>时间</th><th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {shownPending.map((r) => (
+                {pendingRows.map((r) => (
                   <tr key={r.id}>
+                    <td><input type="checkbox" aria-label={`选择 ${r.model} ${r.pid}`} disabled={actionBusy} checked={selectedPending.has(r.id)} onChange={() => setSelectedPending((prev) => { const next = new Set(prev); if (next.has(r.id)) next.delete(r.id); else next.add(r.id); return next })} /></td>
                     <td style={{ fontWeight: 600 }}>{seriesKey(r)}{r.variant ? <div className="chain">{r.variant}</div> : null}</td>
                     <td><PidLink pid={r.pid} /><div className="chain">{r.title}</div></td>
                     <td>{r.thinking}</td>
@@ -530,25 +641,28 @@ export default function AdminPage() {
                       </div>
                     </td>
                     <td className="actions">
-                      <button className="btn small" onClick={() => setStatus(r, 'approved')}>通过</button>
-                      <button className="btn small ghost" onClick={() => setStatus(r, 'pending')} disabled={r.status === 'pending'}>退回</button>
-                      <button className="btn small danger" onClick={() => removeRecord(r)}>拒绝</button>
+                      <button className="btn small" disabled={actionBusy} onClick={() => setStatus(r, 'approved')}>通过</button>
+                      <button className="btn small ghost" onClick={() => setStatus(r, 'pending')} disabled={actionBusy || r.status === 'pending'}>退回</button>
+                      <button className="btn small danger" disabled={actionBusy} onClick={() => removeRecord(r)}>拒绝</button>
                     </td>
                   </tr>
                 ))}
                 {!shownPending.length && (
-                  <tr><td colSpan={8}><div className="empty">{loaded ? '没有待审核记录，去喝口水吧' : '加载中…'}</div></td></tr>
+                  <tr><td colSpan={9}><div className="empty">{loaded ? '没有待审核记录' : '加载中…'}</div></td></tr>
                 )}
               </tbody>
             </table>
           </div>
-        </div>
+          <PageControls count={shownPending.length} page={pendingPage} onChange={setPendingPage} />
+        </section>}
 
-        <div className="card">
+        {tab === 'problems' && <section className="mg-section">
           <div className="card-head">
             <h2>题目管理</h2>
+            <input className="filter-search" aria-label="筛选题目目录" placeholder="题号、题名、标签" value={problemQuery} onChange={(e) => { setProblemQuery(e.target.value); setProblemPage(0) }} />
             <div className="card-tools">
               <button className="btn small ghost" id="backfill-content" onClick={backfillContent}
+                disabled={actionBusy}
                 title="为缺少题面/限制的旧题目批量重新抓取洛谷（每次最多 20 题，可重复点击续跑）">
                 ⤓ 补全题面
               </button>
@@ -561,7 +675,7 @@ export default function AdminPage() {
                 <tr><th>题号</th><th>题名</th><th>难度</th><th>标签</th><th>推荐提示词</th><th>记录数</th><th>操作</th></tr>
               </thead>
               <tbody>
-                {problems.map((p) => (
+                {pageSlice(shownProblems, problemPage).map((p) => (
                   <tr key={p.pid}>
                     <td><PidLink pid={p.pid} /></td>
                     <td>{p.title}</td>
@@ -572,36 +686,39 @@ export default function AdminPage() {
                     </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, maxWidth: 340 }}>
-                        {p.prompt
+                        {p.hasPrompt || p.prompt
                           ? <span className="status-tag role-admin" title="管理员为本题定制的提示词">专属定制</span>
                           : <span className="status-tag role-contributor" title="按标准模板现场拼装（工作区指令 + 题面 + 限制）">标准模板</span>}
                         <span className="chain" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}
                           title={promptOf(p)}>
-                          {promptOf(p)}
+                          {p.hasPrompt || p.prompt ? '已配置专属提示词' : '标准测试模板'}
                         </span>
                         <PromptCopyButton problem={p} toast={toast} label="复制" okLabel="已复制" />
                       </div>
                     </td>
                     <td className="num">{recordCountByPid.get(p.pid) || 0}</td>
                     <td className="actions">
-                      <button className="btn small ghost" onClick={() => startEditProblem(p)}>编辑</button>
-                      <button className="btn small danger" onClick={() => deleteProblem(p)}>
+                      <button className="btn small ghost" disabled={!!editingPid} onClick={() => startEditProblem(p)}>{editingPid === p.pid ? '加载中…' : '编辑'}</button>
+                      <button className="btn small danger" disabled={actionBusy} onClick={() => deleteProblem(p)}>
                         移除
                       </button>
                     </td>
                   </tr>
                 ))}
                 {!problems.length && <tr><td colSpan={7}><div className="empty">还没有发布题目</div></td></tr>}
+                {!!problems.length && !shownProblems.length && <tr><td colSpan={7}><div className="empty">没有匹配题目</div></td></tr>}
               </tbody>
             </table>
           </div>
-        </div>
+          <PageControls count={shownProblems.length} page={problemPage} onChange={setProblemPage} />
+        </section>}
 
-        <div className="card" id="history-card">
+        {tab === 'hidden' && <section className="mg-section" id="history-card">
           <div className="card-head">
             <h2>未收录历史数据</h2>
             <span className="hint">导入的旧数据统一署名「全民制作人」；收录题目与模型后对应记录才显示</span>
           </div>
+          {hiddenError && <div className="form-error" role="alert">{hiddenError}<button className="icon-btn" onClick={loadHidden} title="重试" aria-label="重试"><RefreshCw size={16} /></button></div>}
           {!hidden ? (
             <div className="empty">加载中…</div>
           ) : (
@@ -618,7 +735,7 @@ export default function AdminPage() {
                     <table className="data">
                       <thead><tr><th>题号</th><th className="num">隐藏记录</th><th>操作</th></tr></thead>
                       <tbody>
-                        {hidden.problems.map((g) => (
+                        {pageSlice(hidden.problems, hiddenProblemPage).map((g) => (
                           <tr key={g.key} title={g.sample}>
                             <td><PidLink pid={g.name} /></td>
                             <td className="num">{g.count}</td>
@@ -628,6 +745,7 @@ export default function AdminPage() {
                         {!hidden.problems.length && <tr><td colSpan={3}><div className="empty">全部题目已收录</div></td></tr>}
                       </tbody>
                     </table>
+                    <PageControls count={hidden.problems.length} page={hiddenProblemPage} onChange={setHiddenProblemPage} />
                   </div>
                 </div>
                 <div>
@@ -636,19 +754,20 @@ export default function AdminPage() {
                     <table className="data">
                       <thead><tr><th>模型</th><th className="num">隐藏记录</th><th>操作</th></tr></thead>
                       <tbody>
-                        {hidden.models.map((g) => (
+                        {pageSlice(hidden.models, hiddenModelPage).map((g) => (
                           <tr key={g.key}>
                             <td style={{ fontWeight: 600 }}>{g.name}</td>
                             <td className="num">{g.count}</td>
                             <td>
-                              <button className="btn small" onClick={() => collectModel(g.name)}>收录</button>
-                              <button className="btn small danger" style={{ marginLeft: 6 }} onClick={() => purgeHiddenModel(g.name)}>移入回收站</button>
+                              <button className="btn small" disabled={actionBusy} onClick={() => collectModel(g.name)}>收录</button>
+                              <button className="btn small danger" disabled={actionBusy} style={{ marginLeft: 6 }} onClick={() => purgeHiddenModel(g.name)}>移入回收站</button>
                             </td>
                           </tr>
                         ))}
                         {!hidden.models.length && <tr><td colSpan={3}><div className="empty">全部模型已收录</div></td></tr>}
                       </tbody>
                     </table>
+                    <PageControls count={hidden.models.length} page={hiddenModelPage} onChange={setHiddenModelPage} />
                   </div>
                 </div>
               </div>
@@ -657,7 +776,7 @@ export default function AdminPage() {
                   <button className="btn small" onClick={toggleHiddenDetail}>
                     {hiddenDetail ? '收起隐藏记录' : `查看 ${hidden.total ?? 0} 条隐藏记录明细`}
                   </button>
-                  <button className="btn small danger" onClick={resetCatalog}>⚠ 清空并重新收录（站长）</button>
+                  <button className="btn small danger" disabled={actionBusy} onClick={resetCatalog}>清空并重新收录</button>
                 </div>
               )}
               {!isOwner && (hidden.total ?? 0) > 0 && (
@@ -674,7 +793,7 @@ export default function AdminPage() {
                       <tr><th>模型</th><th>题目</th><th>时间</th><th>提供者</th><th>原因</th><th>操作</th></tr>
                     </thead>
                     <tbody>
-                      {hiddenDetail.map((r) => (
+                      {pageSlice(hiddenDetail, hiddenPage).map((r) => (
                         <tr key={r.id}>
                           <td style={{ fontWeight: 600 }}>{r.model}</td>
                           <td><PidLink pid={r.pid} /><span className="chain"> {r.title}</span></td>
@@ -691,22 +810,23 @@ export default function AdminPage() {
                             {!models.some((m) => m.name === r.model) ? '模型未收录' : ''}
                           </td>
                           <td className="actions">
-                            <button className="btn small danger" onClick={() => removeHiddenRecord(r)}>移入回收站</button>
+                            <button className="btn small danger" disabled={actionBusy} onClick={() => removeHiddenRecord(r)}>移入回收站</button>
                           </td>
                         </tr>
                       ))}
                       {!hiddenDetail.length && <tr><td colSpan={6}><div className="empty">没有隐藏记录</div></td></tr>}
                     </tbody>
                   </table>
+                  <PageControls count={hiddenDetail.length} page={hiddenPage} onChange={setHiddenPage} />
                 </div>
               )}
             </>
           )}
-        </div>
+        </section>}
 
-        <TrashManager onChanged={reloadHidden} />
+        {tab === 'trash' && <TrashManager onChanged={reloadHidden} />}
 
-        <ModelManager onChanged={reloadHidden} />
+        {tab === 'models' && <ModelManager onChanged={reloadHidden} />}
 
         <footer className="foot">
           <Link to="/">← 返回总览</Link>

@@ -22,6 +22,8 @@ export function toV2Dataset(raw) {
     return { ...r, submissions }
   })
   return {
+    epoch: src.epoch || '0',
+    scope: src.scope || 'public',
     revision: typeof src.revision === 'number' ? src.revision : 0,
     updatedAt: typeof src.updatedAt === 'string' ? src.updatedAt : '',
     records,
