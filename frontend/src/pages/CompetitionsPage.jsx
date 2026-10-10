@@ -7,7 +7,8 @@ import { Link } from 'react-router-dom'
 import Topbar from '../components/Topbar'
 import { useApp } from '../state'
 import { api } from '../api/client'
-import { Plus, RefreshCw } from 'lucide-react'
+import { ArrowUpRight, Plus, RefreshCw, Trophy } from 'lucide-react'
+import PageHeading from '../components/PageHeading'
 
 const EMPTY = { slug: '', name: '', subtitle: '', rulesUrl: '', scoreModel: '1v1_cash', status: 'live', sort: '' }
 const STATUS_TEXT = { live: '进行中', soon: '即将开始', archived: '已归档' }
@@ -64,15 +65,14 @@ export default function CompetitionsPage() {
     <>
       <Topbar />
       <main className="layout management-layout competitions-layout">
-        <div className="page-head">
-          <h2>比赛</h2>
-          <span className="desc">{list.length} 场比赛</span>
+        <PageHeading title="比赛" description="进入赛场，查看模型的实力榜、历史交锋与对局回放。" eyebrow="ALGORITHM RADAR / COMPETITIONS">
+          <span className="page-meta">{loading ? '正在读取比赛' : `${list.length} 场比赛`}</span>
           {canWrite && (
-            <button className="btn small" style={{ marginLeft: 'auto' }} onClick={() => setShowNew((v) => !v)}>
+            <button className="btn small" onClick={() => setShowNew((v) => !v)}>
               <Plus size={16} />{showNew ? '收起' : '新建比赛'}
             </button>
           )}
-        </div>
+        </PageHeading>
 
         {error && <div className="form-error" role="alert">{error}<button className="icon-btn" aria-label="重试比赛列表" title="重试" onClick={load}><RefreshCw size={16} /></button></div>}
 
@@ -125,22 +125,22 @@ export default function CompetitionsPage() {
         <div className="competition-list">
         {list.map((c) => (
           <article className="card competition-item" key={c.id}>
-            <div className="card-head">
-              <h3><Link to={'/arena/' + c.slug} style={{ textDecoration: 'none', color: 'inherit' }}>{c.name}</Link></h3>
-              <span className="chain" style={{ marginLeft: 'auto' }}>
-                {STATUS_TEXT[c.status] || c.status} · {MODEL_TEXT[c.scoreModel] || c.scoreModel}
-              </span>
+            <div className="competition-heading">
+              <span className="competition-symbol" aria-hidden="true"><Trophy size={23} /></span>
+              <span className={'competition-status status-' + c.status}>{STATUS_TEXT[c.status] || c.status}</span>
+              <h2>{c.name}</h2>
+              <p>{c.subtitle || '查看参赛模型的对局成绩与表现。'}</p>
+              <span className="competition-format">{MODEL_TEXT[c.scoreModel] || c.scoreModel}</span>
             </div>
-            <div className="desc" style={{ padding: '0 var(--sp-4)' }}>{c.subtitle || '（暂无说明）'}</div>
             <div className="stats mg-stats mg-stats-three">
               <div className="stat"><div className="s-label">已登记对局</div><div className="s-value">{c.matches}</div></div>
               <div className="stat"><div className="s-label">回放</div><div className="s-value">{c.replays}</div></div>
               <div className="stat"><div className="s-label">最近一场</div><div className="s-value" style={{ fontSize: 15 }}>{c.lastPlayedAt ? String(c.lastPlayedAt).slice(0, 10) : '—'}</div></div>
             </div>
-            <div style={{ padding: 'var(--sp-3) var(--sp-4)', display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
-              <Link className="btn small primary" to={'/arena/' + c.slug}>看积分榜</Link>
+            <div className="competition-actions">
+              <Link className="btn primary" to={'/arena/' + c.slug} aria-label={'进入' + c.name}>进入比赛<ArrowUpRight size={16} aria-hidden="true" /></Link>
               {c.rulesUrl && <a className="btn small ghost" href={c.rulesUrl} target="_blank" rel="noopener noreferrer">比赛规则</a>}
-              {c.engineSha && <span className="chain" title={c.engineSha}>引擎校验值 {c.engineSha.slice(0, 12)}…</span>}
+              {c.engineSha && <details className="competition-engine"><summary>引擎版本</summary><code>{c.engineSha}</code></details>}
             </div>
           </article>
         ))}

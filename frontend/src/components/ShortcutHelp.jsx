@@ -8,7 +8,7 @@ import { CircleHelp, Copy, X } from 'lucide-react'
  * 按 ? 或点击按钮开关。
  */
 const KEYS = [
-  { k: '1 – 4', d: 'AI 分数 / rating / 测评明细 / 比赛' },
+  { k: '1 – 3', d: '评测页：AI 分数 / rating / 测评明细' },
   { k: 'T', d: '切换亮色 / 暗色（自动记住选择）' },
   { k: 'W', d: '切换版心：全宽铺满 ⇄ 限宽居中' },
   { k: 'F', d: '聚焦明细搜索框' },

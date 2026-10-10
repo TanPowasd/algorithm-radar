@@ -42,7 +42,7 @@ export default function RadarView() {
   const selectTop5 = useCallback((n = 5) => setVisible(new Set(series.slice(0, n))), [series])
   const soloSeries = useCallback((s) => setVisible(new Set([s])), [])
   const colorMap = useMemo(
-    () => seriesColorMap(approved, { vendorOf, dark: theme !== 'light' }),
+    () => seriesColorMap(approved, { vendorOf, dark: theme === 'dark' }),
     [approved, vendorOf, theme])
   const problemOptions = useMemo(() => {
     const pids = new Set(approved.map((r) => r.pid))

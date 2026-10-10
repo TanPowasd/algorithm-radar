@@ -4,6 +4,7 @@ import Topbar from '../components/Topbar'
 import { useApp } from '../state'
 import { api } from '../api/client'
 import { fmtClock, fmtDateTime } from '../aggregate'
+import PageHeading from '../components/PageHeading'
 
 const ROLE_LABEL = { owner: '站长', admin: '管理员', contributor: '贡献者', legacy: '历史数据' }
 
@@ -50,10 +51,7 @@ export default function ContributorsPage() {
     <>
       <Topbar />
       <main className="layout">
-        <div className="page-head">
-          <h2>贡献者名册</h2>
-          <span className="desc">按注册时间排序 · 展示每人已审核的贡献数据</span>
-        </div>
+        <PageHeading title="贡献者名册" description="按注册时间排序，记录每位贡献者已审核的评测贡献。" eyebrow="ALGORITHM RADAR / CONTRIBUTORS" />
 
         <div className="stats" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
           <div className="stat"><div className="s-label"><span className="tone-dot tone-accent" />贡献者人数</div><div className="s-value">{ordered.length}</div></div>

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { api, clearApiCache } from './api/client'
 import { makeVendorOf } from './palette'
 import { createRefreshCoordinator } from './refreshCoordinator'
+import { applyUiPreferences, normalizeUiPreferences, readUiPreferences, UI_STORAGE_KEY } from './uiPreferences'
 
 const LS_CACHE = 'radar.cache.v3'
 const LS_THEME = 'radar.theme'
@@ -88,14 +89,24 @@ export function AppProvider({ children }) {
     window.addEventListener('radar:identity-change', invalidate)
     return () => window.removeEventListener('radar:identity-change', invalidate)
   }, [])
-  /** 主题三态：'system' | 'light' | 'dark'（旧值 light/dark 直接兼容） */
+  /** 保留旧偏好；新访客跟随系统，暖色独立于系统明暗。 */
   const [themeMode, setThemeMode] = useState(() => {
-    const v = readLS(LS_THEME, 'light')
-    return v === 'system' || v === 'light' || v === 'dark' ? v : 'light'
+    const v = readLS(LS_THEME, 'system')
+    return ['system', 'light', 'dark', 'warm'].includes(v) ? v : 'system'
   })
   const [systemDark, setSystemDark] = useState(() => prefersDark())
+  const [uiPreferences, setUiPreferences] = useState(readUiPreferences)
+  const updateUiPreferences = useCallback((patch) => {
+    setUiPreferences((previous) => normalizeUiPreferences({ ...previous, ...patch,
+      features: { ...previous.features, ...patch.features } }))
+  }, [])
   /** 版心：'full' 全宽铺满（默认） / 'narrow' 限宽居中 */
   const [widthMode, setWidthMode] = useState(() => (readLS(LS_WIDTH, 'full') === 'narrow' ? 'narrow' : 'full'))
+  const resetUiPreferences = useCallback(() => {
+    setUiPreferences(normalizeUiPreferences(null))
+    setThemeMode('system')
+    setWidthMode('full')
+  }, [])
   /** 柱状图最小样本量（原写死 n≥5，现可自定义） */
   const [barMinSamples, setBarMinSamples] = useState(() => {
     const n = Number(readLS(LS_BARN, '5'))
@@ -279,7 +290,7 @@ export function AppProvider({ children }) {
     return () => clearInterval(timer)
   }, [offline, syncData])
 
-  /* ---------------- 主题（三态 + 跟随系统） ---------------- */
+  /* ---------------- 主题与阅读偏好 ---------------- */
   const theme = themeMode === 'system' ? (systemDark ? 'dark' : 'light') : themeMode
 
   useEffect(() => {
@@ -304,6 +315,11 @@ export function AppProvider({ children }) {
     root.setAttribute('data-theme-mode', themeMode)
     writeLS(LS_THEME, themeMode)
   }, [theme, themeMode])
+
+  useEffect(() => {
+    applyUiPreferences(document.documentElement, uiPreferences)
+    writeLS(UI_STORAGE_KEY, JSON.stringify(uiPreferences))
+  }, [uiPreferences])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-width', widthMode)
@@ -374,6 +390,9 @@ export function AppProvider({ children }) {
     themeMode,
     setThemeMode,
     toggleTheme,
+    uiPreferences,
+    updateUiPreferences,
+    resetUiPreferences,
     widthMode,
     setWidthMode,
     barMinSamples,
@@ -399,6 +418,7 @@ export function AppProvider({ children }) {
     isAdmin: session.role === 'admin' || session.role === 'owner',
     isContributor: session.role === 'contributor' || session.role === 'admin' || session.role === 'owner',
   }), [session, authOpen, openAuth, closeAuth, getProblem, data, models, nicknames, nicknameOf, nameByUid, offline, loaded, theme, themeMode, toggleTheme,
+    uiPreferences, updateUiPreferences, resetUiPreferences,
     widthMode, barMinSamples, radarSize, vendorOf, focusModels, toggleFocusModel, focusOnly,
     focusContributor, setFocusContributor, toasts, toast,
     refreshAll, syncData, refreshSession, refreshData, refreshModels, refreshNicknames, retryNow])

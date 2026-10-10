@@ -22,7 +22,7 @@ export default function RollBoardView({ onOpenDetail }) {
     (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
   const events = useMemo(() => rollEvents(approved), [approved])
   const colorMap = useMemo(
-    () => seriesColorMap(approved, { vendorOf, dark: theme !== 'light' }),
+    () => seriesColorMap(approved, { vendorOf, dark: theme === 'dark' }),
     [approved, vendorOf, theme])
 
   const total = events.length

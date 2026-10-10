@@ -7,6 +7,8 @@ import ArenaImportCard from '../components/ArenaImportCard'
 import ArenaRenameCard from '../components/ArenaRenameCard'
 import { THINKING_LEVELS, thinkingLabel, entityLabel, packEntity, unpackEntity } from '../arenaMeta'
 import { useUrlState } from '../hooks/useUrlState'
+import PageHeading from '../components/PageHeading'
+import MotionRegion from '../components/MotionRegion'
 
 const PAGE_SIZE = 30
 function ArenaPager({ count, page, onChange, size = PAGE_SIZE }) {
@@ -290,12 +292,10 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
 
   return (
     <div className="arena-workspace management-layout">
-        <div className="page-head">
-          <h2>{currentComp?.name || '比赛'}</h2>
+        <PageHeading title={currentComp?.name || '比赛'} description={currentComp?.subtitle || '查看模型的对战实力与比赛记录。'} eyebrow="ALGORITHM RADAR / ARENA">
           {currentComp?.rulesUrl && <a className="btn small ghost" href={currentComp.rulesUrl} target="_blank" rel="noopener noreferrer">比赛规则</a>}
-          {!onSelect && <Link className="btn small ghost" style={{ marginLeft: 'auto' }} to="/arena">← 全部比赛</Link>}
-          <span className="desc">{currentComp?.subtitle || '局级 ELO'}</span>
-        </div>
+          {!onSelect && <Link className="btn small ghost" to="/arena">← 全部比赛</Link>}
+        </PageHeading>
 
         {!showAdmin && (canWrite || isAdmin) && (
           <div className="chain" style={{ marginBottom: 'var(--sp-3)' }}>
@@ -327,6 +327,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
         {error && <div className="form-error" role="alert">{error}<button className="icon-btn" title="重试比赛" aria-label="重试比赛" onClick={load}><RefreshCw size={16} /></button></div>}
         {loading && !currentData && <div className="empty" role="status">加载中…</div>}
 
+        <MotionRegion motionKey={activeTab} className="arena-panel">
         {activeTab === 'manage' && showAdmin && canWrite ? (
           <section className="mg-section">
             <div className="card-head"><h3>登记一场对战</h3></div>
@@ -600,6 +601,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
           )}
           <ArenaPager count={shownReplays.length} page={replayPage} onChange={setReplayPage} size={18} />
         </section>}
+        </MotionRegion>
     </div>
   )
 }

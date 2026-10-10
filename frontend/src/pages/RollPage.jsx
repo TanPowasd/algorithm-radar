@@ -3,6 +3,7 @@ import Topbar from '../components/Topbar'
 import RollBoardView from '../views/RollBoardView'
 import ProblemDrawer from '../components/ProblemDrawer'
 import { useApp } from '../state'
+import PageHeading from '../components/PageHeading'
 
 /**
  * 滚榜页（ACM Board）· 独立路由 /roll —— 把 v1 时代的滚榜视图原样搬进新站。
@@ -25,10 +26,7 @@ export default function RollPage() {
     <>
       <Topbar hud={{ samples: total, models: 0, view: 'roll' }} />
       <main className="layout">
-        <div className="v2-head">
-          <span className="v2-badge">ACM 滚榜</span>
-          <span className="v2-sub">团队 = 模型 · 队员 = 思考等级 · 按录入时间逐笔揭晓（全部历史数据）</span>
-        </div>
+        <PageHeading title="滚榜回放" description="按录入时间逐笔揭晓全部历史成绩。团队代表模型，队员代表思考等级。" eyebrow="ALGORITHM RADAR / REPLAY" />
         <RollBoardView onOpenDetail={openDetail} />
         {drawer && (
           <ProblemDrawer

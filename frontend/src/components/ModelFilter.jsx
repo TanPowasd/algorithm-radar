@@ -33,7 +33,7 @@ export default function ModelFilter() {
     () => seriesList((data.records || []).filter((r) => r.status !== 'pending')),
     [data.records])
   const colors = useMemo(
-    () => vendorColorMap(approvedModels, vendorOf, theme !== 'light'),
+    () => vendorColorMap(approvedModels, vendorOf, theme === 'dark'),
     [approvedModels, vendorOf, theme])
 
   // 只保留仍存在的模型（避免目录变动后残留无效选择）

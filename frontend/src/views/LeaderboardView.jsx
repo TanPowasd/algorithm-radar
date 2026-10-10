@@ -21,7 +21,7 @@ export default function LeaderboardView({ onOpenDetail }) {
   const approved = useMemo(() => filterByContributor(filterByModels(
     (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
   const colorMap = useMemo(
-    () => seriesColorMap(approved, { vendorOf, dark: theme !== 'light' }),
+    () => seriesColorMap(approved, { vendorOf, dark: theme === 'dark' }),
     [approved, vendorOf, theme])
 
   const rows = useMemo(() => {

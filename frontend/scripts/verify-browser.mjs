@@ -13,8 +13,9 @@ const output = path.join(root, '.verify', 'browser')
 mkdirSync(output, { recursive: true })
 const scrollOnly = process.env.BROWSER_CHECKS === 'scroll'
 const matrixOnly = process.env.BROWSER_CHECKS === 'matrix'
+const refinementOnly = process.env.BROWSER_CHECKS === 'refinement'
 const report = { synthetic: true, startedAt: new Date().toISOString(), checks: [], screenshots: [], errors: [], performance: [], largeDatasets: [] }
-report.selection = scrollOnly ? 'scroll' : matrixOnly ? 'matrix' : 'all'
+report.selection = scrollOnly ? 'scroll' : matrixOnly ? 'matrix' : refinementOnly ? 'refinement' : 'all'
 let preview, browser, baseUrl
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const percentile = (values, p) => values.length ? [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.ceil(values.length * p) - 1)] : null
@@ -27,7 +28,7 @@ async function check(name, task) {
     console.log(`[pass] ${name}`)
     return true
   } catch (error) {
-    report.checks.push({ name, passed: false, durationMs: performance.now() - start, error: error.message })
+    report.checks.push({ name, passed: false, durationMs: performance.now() - start, error: error.message, stack: error.stack })
     console.error(`[fail] ${name}: ${error.message}`)
     return false
   }
@@ -285,11 +286,17 @@ async function openContext(state, viewport = { width: 1440, height: 1000 }) {
 
 async function goto(page, pathname) {
   await page.goto(baseUrl + pathname, { waitUntil: 'networkidle' })
-  await expect(page.locator('h1')).toHaveText('AI vs 洛谷')
+  await expect(page.locator('.workbench-shell')).toBeAttached()
+  await expect(page.locator('main.layout')).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
 }
 
 async function layout(page, name, screenshot = false) {
+  // Capture the final geometry, not an intermediate frame of a sidebar transition.
+  await page.evaluate(async () => {
+    const finite = document.getAnimations().filter((animation) => animation.playState === 'running' && animation.effect?.getTiming().iterations !== Infinity)
+    await Promise.all(finite.map((animation) => animation.finished.catch(() => {})))
+  })
   const size = await page.evaluate(() => ({ width: innerWidth, body: document.body.scrollWidth, document: document.documentElement.scrollWidth }))
   assert.ok(size.body <= size.width + 1 && size.document <= size.width + 1, `Body overflow at ${name}: ${JSON.stringify(size)}`)
   if (screenshot) {
@@ -318,7 +325,7 @@ async function performanceSamples() {
       const metrics = await page.evaluate(() => ({ ...window.__metrics, resources: performance.getEntriesByType('resource')
         .filter((entry) => entry.name.endsWith('.js')).map((entry) => ({ name: entry.name, transferSize: entry.transferSize })) }))
       const interactions = []
-      for (const [name, key] of [['AI 分数', 'score'], ['rating', 'rating'], ['测评明细', 'table'], ['比赛', 'arena']]) {
+      for (const [name, key] of [['AI 分数', 'score'], ['rating', 'rating'], ['测评明细', 'table']]) {
         const start = performance.now(); await clickTab(page, name, key); interactions.push(performance.now() - start)
       }
       const initialScripts = metrics.resources.map((entry) => path.basename(new URL(entry.name).pathname))
@@ -333,14 +340,109 @@ async function performanceSamples() {
   }
 }
 
+async function refinementChecks() {
+  const { context, page } = await openContext(fixture())
+  try {
+    await check('persistent shell, single competition entry and legacy competition URLs', async () => {
+      await goto(page, '/?v=score')
+      const shell = await page.locator('.workbench-shell').elementHandle()
+      await expect(page.getByRole('tab', { name: '比赛', exact: true })).toHaveCount(0)
+      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('link', { name: '比赛', exact: true }).click()
+      await expect(page.getByRole('heading', { name: '比赛', exact: true })).toBeVisible()
+      assert.equal(await shell.evaluate((element) => element.isConnected), true, 'Navigation must remain mounted')
+      await page.goBack()
+      await expect(page.getByRole('tab', { name: 'AI 分数', exact: true })).toHaveAttribute('aria-selected', 'true')
+      await goto(page, '/?v=arena')
+      await expect.poll(() => new URL(page.url()).pathname).toBe('/arena')
+      await goto(page, '/?v=arena&competition=kaggriculture')
+      await expect.poll(() => new URL(page.url()).pathname).toBe('/arena/kaggriculture')
+      await expect(page.getByRole('heading', { name: '农场对抗赛', exact: true })).toBeVisible()
+    })
+    await check('all styles can collapse, reload and expand from a persistent header button', async () => {
+      await goto(page, '/')
+      for (const style of ['clean', 'compact', 'vscode']) {
+        await page.getByRole('button', { name: '设置', exact: true }).click()
+        await page.getByLabel(/^界面风格/).selectOption(style)
+        await page.getByRole('button', { name: '完成', exact: true }).click()
+        await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
+        await expect(page.locator('html')).toHaveAttribute('data-sidebar', 'collapsed')
+        await page.reload({ waitUntil: 'networkidle' })
+        await expect(page.getByRole('button', { name: '展开侧栏', exact: true })).toBeVisible()
+        await expect(page.locator('.app-sidebar')).toBeVisible()
+        await expect(page.locator('.editor-tabs, .editor-activitybar')).toHaveCount(0)
+        await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
+        await expect(page.locator('html')).toHaveAttribute('data-sidebar', 'expanded')
+      }
+    })
+    await check('VS Code status bar follows light, warm and dark surfaces', async () => {
+      for (const theme of ['light', 'warm', 'dark']) {
+        await page.getByRole('button', { name: '设置', exact: true }).click()
+        await page.locator(`[data-preview-theme="${theme}"]`).click()
+        await page.getByRole('button', { name: '完成', exact: true }).click()
+        const colors = await page.locator('.editor-statusbar').evaluate((element) => ({
+          status: getComputedStyle(element).backgroundColor,
+          header: getComputedStyle(document.querySelector('.shell-topbar')).backgroundColor,
+        }))
+        assert.equal(colors.status, colors.header)
+      }
+    })
+    await check('view animations retain controls; disabling motion persists and respects reduced motion', async () => {
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      await page.evaluate(() => {
+        window.__motionCalls = []
+        const animate = Element.prototype.animate
+        Element.prototype.animate = function (...args) {
+          window.__motionCalls.push({ id: this.id, duration: args[1]?.duration })
+          return animate.apply(this, args)
+        }
+      })
+      await clickTab(page, 'AI 分数', 'score')
+      assert.ok(await page.evaluate(() => window.__motionCalls.some((item) => item.id === 'benchmark-panel' && item.duration === 220)))
+      await page.getByRole('button', { name: '设置', exact: true }).click()
+      await page.getByLabel(/^切换动画/).selectOption('off')
+      await page.getByRole('button', { name: '完成', exact: true }).click()
+      await expect(page.locator('html')).toHaveAttribute('data-motion', 'off')
+      await page.evaluate(() => { window.__motionCalls.length = 0 })
+      await clickTab(page, 'rating', 'rating')
+      assert.deepEqual(await page.evaluate(() => window.__motionCalls), [])
+      assert.equal(await page.locator('main.layout').evaluate((element) => getComputedStyle(element).animationName), 'none')
+      await page.reload({ waitUntil: 'networkidle' })
+      await expect(page.locator('html')).toHaveAttribute('data-motion', 'off')
+      await page.getByRole('button', { name: '设置', exact: true }).click()
+      await page.getByLabel(/^切换动画/).selectOption('system')
+      await page.getByRole('button', { name: '完成', exact: true }).click()
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await clickTab(page, 'AI 分数', 'score')
+      assert.equal(await page.locator('main.layout').evaluate((element) => getComputedStyle(element).animationName), 'none')
+      assert.equal(await page.locator('#benchmark-panel').evaluate((element) => element.getAnimations().length), 0)
+    })
+    await check('320px layout with 20px text retains settings, navigation and contained tables', async () => {
+      await page.getByRole('button', { name: '设置', exact: true }).click()
+      await page.getByLabel(/^文字大小/).selectOption('20')
+      await page.getByRole('button', { name: '完成', exact: true }).click()
+      await page.setViewportSize({ width: 320, height: 720 })
+      for (const pathname of ['/', '/arena', '/arena/kaggriculture', '/contributors', '/prompts']) {
+        await goto(page, pathname)
+        await layout(page, `refinement-20px-${pathname.replaceAll('/', '-') || 'home'}`, true)
+        await page.getByRole('button', { name: '打开导航', exact: true }).click()
+        await expect(page.getByRole('navigation', { name: '主导航', exact: true })).toBeVisible()
+        await page.getByRole('button', { name: '设置', exact: true }).click()
+        await expect(page.getByRole('button', { name: '完成', exact: true })).toBeInViewport({ ratio: 1 })
+        await page.getByRole('button', { name: '完成', exact: true }).click()
+      }
+    })
+  } finally { await context.close() }
+}
+
 async function websiteChecks() {
   const { context, page, state } = await openContext(fixture())
   try {
-    await check('four tabs and browser back preserve the previous view', async () => {
+    await check('three assessment tabs, one competition entry and browser back preserve the previous view', async () => {
       await goto(page, '/?v=score')
       await clickTab(page, 'rating', 'rating')
       await clickTab(page, '测评明细', 'table')
-      await clickTab(page, '比赛', 'arena')
+      await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('link', { name: '比赛', exact: true }).click()
+      await expect(page.getByRole('heading', { name: '比赛', exact: true })).toBeVisible()
       await page.goBack()
       await expect(page.getByRole('tab', { name: '测评明细', exact: true })).toHaveAttribute('aria-selected', 'true')
     })
@@ -388,6 +490,7 @@ async function websiteChecks() {
       }, { model: state.models[1].name, contributor: users[0].id })
       const params = new URLSearchParams({ v: 'score', models: JSON.stringify([selectedModel]), contributor: String(selectedContributor) })
       await goto(page, '/?' + params)
+      await page.locator('.benchmark-filters > summary').click()
       await expect(page.locator('.matrix thead .model-col')).toHaveCount(1)
       await expect(page.locator('.matrix thead .model-col')).toContainText(selectedModel)
       await expect(page.getByLabel('选择贡献者', { exact: true })).toHaveValue(String(selectedContributor))
@@ -411,6 +514,7 @@ async function websiteChecks() {
           localStorage.setItem('radar.focusContributor', '987654')
         })
         await goto(ghost.page, '/?v=rating')
+        await ghost.page.locator('.benchmark-filters > summary').click()
         await expect(ghost.page.locator('#matrix-card .empty')).toContainText('暂无已审核')
         await expect(ghost.page.locator('#model-filter').getByRole('button', { name: '查看全部', exact: true })).toBeVisible()
         await expect(ghost.page.locator('#contributor-filter')).toContainText('#987654')
@@ -442,13 +546,82 @@ async function websiteChecks() {
     for (const width of [390, 768, 1440, 1920]) await check(`light and dark layout screenshots at ${width}px`, async () => {
       await page.setViewportSize({ width, height: width < 500 ? 844 : 1080 })
       await goto(page, '/?v=rating')
-      if (await page.getByRole('button', { name: '切换到亮色', exact: true }).count()) await page.getByRole('button', { name: '切换到亮色', exact: true }).click()
+      if (width <= 760) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+      await page.getByRole('button', { name: '设置', exact: true }).click()
+      await page.locator('[data-preview-theme="light"]').click()
+      await page.getByRole('button', { name: '完成', exact: true }).click()
       await layout(page, `home-light-${width}`, true)
-      await page.getByRole('button', { name: '切换到暗色', exact: true }).click()
+      if (width <= 760) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+      await page.getByRole('button', { name: '设置', exact: true }).click()
+      await page.locator('[data-preview-theme="dark"]').click()
+      await page.getByRole('button', { name: '完成', exact: true }).click()
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
       await layout(page, `home-dark-${width}`, true)
     })
     await page.setViewportSize({ width: 1440, height: 1000 })
+    await check('VS Code layout: themes, persisted style, animated sidebar and reduced motion', async () => {
+      await goto(page, '/prompts')
+      await page.getByRole('button', { name: '设置', exact: true }).click()
+      await page.getByLabel(/^界面风格/).selectOption('vscode')
+      await page.getByRole('button', { name: '完成', exact: true }).click()
+      await expect(page.getByRole('navigation', { name: '主导航', exact: true })).toBeVisible()
+      await expect(page.locator('.editor-tabs, .editor-activitybar')).toHaveCount(0)
+      await page.reload({ waitUntil: 'networkidle' })
+      await expect(page.locator('html')).toHaveAttribute('data-ui-style', 'vscode')
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      const duration = await page.locator('.app-sidebar').evaluate((element) => getComputedStyle(element).transitionDuration)
+      assert.ok(duration.includes('0.18s'), 'The sidebar must animate over 180ms')
+      await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
+      await expect(page.locator('html')).toHaveAttribute('data-sidebar', 'collapsed')
+      await expect(page.locator('.app-sidebar')).toBeVisible()
+      await expect(page.getByRole('button', { name: '展开侧栏', exact: true })).toBeVisible()
+      await layout(page, 'vscode-collapsed', true)
+      await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
+      await expect(page.locator('.app-sidebar')).toBeVisible()
+      for (const width of [390, 1440]) {
+        await page.setViewportSize({ width, height: 900 })
+        for (const theme of ['light', 'warm', 'dark']) {
+          if (width <= 760) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+          await page.getByRole('button', { name: '设置', exact: true }).click()
+          await page.locator(`[data-preview-theme="${theme}"]`).click()
+          await page.getByRole('button', { name: '完成', exact: true }).click()
+          await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+          if (theme === 'dark') assert.equal(await page.locator('body').evaluate((element) => getComputedStyle(element).backgroundColor), 'rgb(0, 0, 0)')
+          const statusColors = await page.locator('.editor-statusbar').evaluate((element) => ({
+            background: getComputedStyle(element).backgroundColor,
+            surface: getComputedStyle(document.querySelector('.shell-topbar')).backgroundColor,
+          }))
+          assert.equal(statusColors.background, statusColors.surface, 'Status bar must follow the page theme')
+          await layout(page, `vscode-${theme}-${width}`, true)
+        }
+      }
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      assert.equal(await page.locator('.app-sidebar').evaluate((element) => getComputedStyle(element).transitionProperty), 'none')
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await page.getByRole('button', { name: '设置', exact: true }).click()
+      await page.getByRole('button', { name: '恢复默认', exact: true }).click()
+      await page.getByRole('button', { name: '完成', exact: true }).click()
+      await expect(page.locator('html')).toHaveAttribute('data-ui-style', 'clean')
+    })
+    await check('prompt index: default disclosures, bounded rows, pagination, search and explicit expansion', async () => {
+      const large = await openContext(fixture(1000))
+      try {
+        await goto(large.page, '/prompts')
+        await expect(large.page.locator('.prompt-workspace details')).not.toHaveAttribute('open')
+        await expect(large.page.locator('.prompt-guide')).not.toHaveAttribute('open')
+        await expect(large.page.locator('tbody tr')).toHaveCount(20)
+        const firstPage = await large.page.locator('tbody tr').first().innerText()
+        await large.page.getByRole('button', { name: '下一页题目', exact: true }).click()
+        await expect(large.page.locator('tbody tr')).toHaveCount(20)
+        assert.notEqual(await large.page.locator('tbody tr').first().innerText(), firstPage)
+        await large.page.getByLabel('搜索提示词题目', { exact: true }).fill('P1250')
+        await expect(large.page.locator('tbody tr')).toHaveCount(1)
+        await large.page.getByRole('button', { name: '查看 P1250 提示词', exact: true }).click()
+        await expect(large.page.locator('.prompt-workspace details')).toHaveAttribute('open', '')
+        await expect(large.page.locator('.prompt-workspace pre')).toContainText('FULL_DETAIL_P1250')
+        await layout(large.page, 'prompts-filtered-expanded', true)
+      } finally { await large.context.close() }
+    })
     for (const role of ['guest', 'contributor', 'admin', 'owner']) await check(`${role}: main routes and permission views`, async () => {
       state.role = role
       for (const pathname of ['/?v=score', '/?v=rating', '/?v=table', '/?v=arena', '/contributors', '/prompts', '/arena', '/arena/kaggriculture', '/register', '/admin', '/users']) {
@@ -615,6 +788,13 @@ async function recordFormScrollChecks() {
         assert.equal(backgroundAfter.overflow, backgroundBefore.overflow, 'Escape must restore background overflow')
         assert.equal(backgroundAfter.scrollY, backgroundBefore.scrollY, 'Closing the form must preserve background scroll position')
         await page.mouse.move(viewport.width - 24, viewport.height / 2)
+        const backgroundWheelTarget = await page.evaluate(({ x, y }) => ({
+          target: document.elementFromPoint(x, y)?.outerHTML.slice(0, 500),
+          scrollHeight: document.documentElement.scrollHeight, clientHeight: document.documentElement.clientHeight,
+          bodyHeight: document.body.scrollHeight, bodyOverflow: getComputedStyle(document.body).overflow,
+        }), { x: viewport.width - 24, y: viewport.height / 2 })
+        report.scrollDiagnostics ||= []
+        report.scrollDiagnostics.push({ viewport, backgroundBefore, backgroundAfter, backgroundWheelTarget })
         await page.mouse.wheel(0, 500)
         await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(backgroundAfter.scrollY)
         assert.equal(state.mutations.length, 0, 'Scroll verification must not submit or mutate synthetic records')
@@ -723,16 +903,21 @@ async function largeDataChecks() {
         const start = performance.now()
         await goto(page, '/?v=rating&mx%3Alayout=matrix')
         await expect(page.locator('.matrix')).toBeVisible()
-        await page.getByRole('group', { name: '单元格口径' }).getByRole('button', { name: '最佳分数', exact: true }).click()
-        const computing = await page.locator('.rating-progress').innerText()
+        await page.getByRole('combobox', { name: '单元格口径', exact: true }).selectOption('bestScore')
+        const computing = (await page.locator('.rating-progress').allTextContents()).join('')
         const input = page.getByPlaceholder('题号 / 题名', { exact: true })
         const interactions = []
         const progressDuringInput = []
         for (const text of ['P', 'P1', 'P10', 'P100', 'P1001']) {
-          progressDuringInput.push(await page.locator('.rating-progress').innerText())
+          progressDuringInput.push((await page.locator('.rating-progress').allTextContents()).join(''))
           const at = performance.now(); await input.fill(text); await expect(input).toHaveValue(text); interactions.push(performance.now() - at)
         }
         await input.fill('')
+        await input.fill('P1001')
+        await input.press('Escape')
+        await expect(input).toHaveValue('')
+        await expect.poll(() => new URL(page.url()).searchParams.get('mx:q')).toBe(null)
+        await expect.poll(() => new URL(page.url()).searchParams.get('mx:mode')).toBe('bestScore')
         const total = await page.locator('.matrix-count').innerText()
         const problemCount = Object.keys(state.problems).length
         await expect(page.locator('.matrix tbody tr')).toHaveCount(problemCount + 1)
@@ -892,7 +1077,7 @@ try {
   report.scriptGzip = readdirSync(assetDir).filter((file) => file.endsWith('.js')).map((file) => {
     const bytes = readFileSync(path.join(assetDir, file)); return { file, bytes: bytes.length, gzipBytes: gzipSync(bytes).length }
   })
-  if (!scrollOnly && !matrixOnly) {
+  if (!scrollOnly && !matrixOnly && !refinementOnly) {
   await performanceSamples()
   await check('synthetic first-screen performance budgets', async () => {
     assert.ok(report.performance.every((sample) => sample.lcpMs > 0 && sample.lcpMs < 2500), 'Synthetic LCP must be below 2.5 seconds')
@@ -903,11 +1088,12 @@ try {
   await identityFailureChecks()
   await replayChecks()
   }
-  if (!scrollOnly) {
+  if (!scrollOnly && !matrixOnly) await refinementChecks()
+  if (!scrollOnly && !refinementOnly) {
     await matrixLayoutChecks()
     await largeDataChecks()
   }
-  if (!matrixOnly) await recordFormScrollChecks()
+  if (!matrixOnly && !refinementOnly) await recordFormScrollChecks()
   await check('no browser console errors or uncaught exceptions', async () => assert.deepEqual(report.errors, []))
 } catch (error) {
   report.checks.push({ name: 'verification runner', passed: false, error: error.stack })
@@ -925,7 +1111,7 @@ try {
   report.notes = ['All API data is synthetic and no real database is contacted.',
     'Gzip sizes are computed from production assets; preview HTTP transfer is not representative of Cloudflare compression.',
     'Automated interaction latency measures click to URL/selected-tab update, including Playwright overhead; it is not a field INP measurement.']
-  const reportName = scrollOnly ? 'report-scroll' : matrixOnly ? 'report-matrix' : 'report'
+  const reportName = scrollOnly ? 'report-scroll' : matrixOnly ? 'report-matrix' : refinementOnly ? 'report-refinement' : 'report'
   writeFileSync(path.join(output, reportName + '.json'), JSON.stringify(report, null, 2))
   writeFileSync(path.join(output, reportName + '.md'), `# Browser Verification\n\n${JSON.stringify(report.summary, null, 2)}\n\n` +
     report.checks.map((item) => `- ${item.passed ? 'PASS' : 'FAIL'} ${item.name}${item.error ? `: ${item.error.split('\n')[0]}` : ''}`).join('\n') +

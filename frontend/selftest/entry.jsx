@@ -355,7 +355,7 @@ check('渲染 /（矩阵默认视图）', () => {
   assert.ok(html.includes('最佳等级'), '缺「最佳等级」口径按钮')
   assert.ok(html.includes('最佳分数'), '缺「最佳分数」口径按钮')
   assert.ok(html.includes('id="model-filter"'), '缺模型筛选器')
-  assert.ok(html.includes('数据与设置'), '缺数据导出与显示设置入口')
+  assert.ok(html.includes('<span>设置</span>'), '缺集中管理外观、功能与数据的设置入口')
   // 十字高亮依赖的坐标属性必须落在 DOM 上
   assert.ok(/data-c="c0"/.test(html), '单元格缺 data-c 列坐标')
   assert.ok(/data-r="r0"/.test(html), '单元格缺 data-r 行坐标')
@@ -786,14 +786,15 @@ check('首屏预涂主题/版心，避免刷新闪一下', () => {
   assert.ok(/@fontsource\/(chakra-petch|jetbrains-mono)/.test(mainText), '字体未自托管导入（CSP font-src 会拦）')
 })
 
-check('主题三态：跟随系统 + 监听系统切换', () => {
+check('主题四态：暖色、跟随系统与系统切换监听', () => {
   assert.ok(stateText.includes("'system'"), '缺 system 态')
   assert.ok(stateText.includes("prefers-color-scheme: dark"), '未读取系统偏好')
   assert.ok(/addEventListener\('change'/.test(stateText), '系统主题切换时不会跟随')
   assert.ok(stateText.includes('toggleTheme'), '缺主题循环入口')
+  assert.ok(stateText.includes("'warm'"), '缺暖色主题')
 })
 
-check('首次访问默认亮色，已有明暗选择继续保留', async () => {
+check('首次访问跟随系统，已有明暗和暖色选择继续保留', async () => {
   const { useApp } = await import('../src/state.jsx')
   // eslint-disable-next-line react/only-export-components -- Node SSR 自检探针，不是热更新入口。
   function ThemeProbe() {
@@ -804,13 +805,15 @@ check('首次访问默认亮色，已有明暗选择继续保留', async () => {
   const previous = store.get('radar.theme')
   try {
     store.delete('radar.theme')
-    assert.ok(renderTheme().includes('light/light'), '即使系统是暗色，新访客也应默认亮色')
+    assert.ok(renderTheme().includes('system/dark'), '新访客应跟随系统明暗')
     store.set('radar.theme', 'dark')
     assert.ok(renderTheme().includes('dark/dark'), '已有暗色选择不能被覆盖')
     store.set('radar.theme', 'light')
     assert.ok(renderTheme().includes('light/light'))
     store.set('radar.theme', 'invalid')
-    assert.ok(renderTheme().includes('light/light'), '损坏的偏好应回退亮色')
+    assert.ok(renderTheme().includes('system/dark'), '损坏的偏好应回退跟随系统')
+    store.set('radar.theme', 'warm')
+    assert.ok(renderTheme().includes('warm/warm'), '暖色偏好不能被系统暗色覆盖')
     store.set('radar.theme', 'system')
     assert.ok(renderTheme().includes('system/dark'), '保留显式跟随系统的功能')
   } finally {
@@ -982,17 +985,18 @@ const renderCurrent = (href = '/', Component = K4uV2Page) => renderToString(
       openAuth() {}, closeAuth() {}, retryNow() {},
     } }, React.createElement(Component))))
 
-check('当前首页默认 rating，四页签保留 URL 状态与键盘入口', () => {
+check('当前首页默认 rating，三个评测页签保留 URL 状态与键盘入口', () => {
   const html = renderCurrent()
   assert.match(html, /id="benchmark-tab-rating" role="tab" aria-selected="true"/)
   assert.match(html, /role="tabpanel" aria-labelledby="benchmark-tab-rating"/)
-  for (const view of ['score', 'rating', 'table', 'arena']) {
+  for (const view of ['score', 'rating', 'table']) {
     assert.match(renderCurrent(`/?v=${view}`), new RegExp(`id="benchmark-tab-${view}" role="tab" aria-selected="true"`))
   }
   assert.match(renderCurrent('/?v=unknown'), /id="benchmark-tab-rating" role="tab" aria-selected="true"/)
   const source = srcOf('pages/K4uV2Page.jsx')
   assert.ok(source.includes('ArrowLeft') && source.includes('ArrowRight') && source.includes("event.key === 'End'"))
   assert.ok(source.includes("url.set('v', nextView"))
+  assert.ok(!html.includes('benchmark-tab-arena'), '比赛统一由侧栏进入')
 })
 
 check('当前 rating 使用加权分与时间线；原始分页保留全部历史记录', () => {

@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 /**
@@ -7,6 +7,8 @@ import { useSearchParams } from 'react-router-dom'
  */
 export function useUrlState(prefix = '') {
   const [params, setParams] = useSearchParams()
+  const latestParams = useRef(params)
+  useEffect(() => { latestParams.current = params }, [params])
 
   const key = useCallback((k) => (prefix ? `${prefix}:${k}` : k), [prefix])
 
@@ -23,18 +25,18 @@ export function useUrlState(prefix = '') {
 
   /** 一次写多个：值为 ''/null/undefined/false 的键会被删除，保持链接干净 */
   const setMany = useCallback((patch, { replace = true } = {}) => {
-    setParams((prev) => {
-      const next = new URLSearchParams(prev)
-      for (const [k, v] of Object.entries(patch)) {
-        const name = key(k)
-        if (v === null || v === undefined || v === '' || v === false) next.delete(name)
-        else next.set(name, String(v))
-      }
-      return next
-    }, { replace })
+    // Router query setters do not queue functional updates like React state.
+    const next = new URLSearchParams(latestParams.current)
+    for (const [k, v] of Object.entries(patch)) {
+      const name = key(k)
+      if (v === null || v === undefined || v === '' || v === false) next.delete(name)
+      else next.set(name, String(v))
+    }
+    latestParams.current = next
+    setParams(next, { replace })
   }, [setParams, key])
 
   const set = useCallback((k, v, options) => setMany({ [k]: v }, options), [setMany])
 
-  return { get, getNum, set, setMany, params }
+  return useMemo(() => ({ get, getNum, set, setMany, params }), [get, getNum, set, setMany, params])
 }

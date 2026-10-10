@@ -1,13 +1,18 @@
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useMemo, useRef, useState } from 'react'
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import Topbar from '../components/Topbar'
 import PromptCopyButton from '../components/PromptCopyButton'
 import PidLink from '../components/PidLink'
+import PageHeading from '../components/PageHeading'
 import { useApp } from '../state'
 import { useProblem } from '../hooks/useProblem'
 import { difficultyName, luoguUrl, promptOf, standardPrompt, DIFFICULTY_NAMES } from '../aggregate'
 
 export default function PromptsPage() {
   const { data, toast } = useApp()
+  const workspaceRef = useRef(null)
+  const [expandedPid, setExpandedPid] = useState('')
+  const [page, setPage] = useState(0)
 
   // 题目列表，从 data.problems 取出
   const problemList = useMemo(() => {
@@ -40,12 +45,13 @@ export default function PromptsPage() {
 
   // 过滤状态
   const [keyword, setKeyword] = useState('')
+  const deferredKeyword = useDeferredValue(keyword)
   const [diffFilter, setDiffFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all') // all | custom | standard
 
   // 筛选后的题目列表
   const filteredList = useMemo(() => {
-    const q = keyword.trim().toLowerCase()
+    const q = deferredKeyword.trim().toLowerCase()
     return problemList.filter((p) => {
       if (diffFilter !== 'all' && String(p.difficulty ?? '') !== diffFilter) return false
       const hasCustom = Boolean(p.prompt && p.prompt.trim())
@@ -58,7 +64,10 @@ export default function PromptsPage() {
       const matchTags = (p.tags || []).some((t) => String(t).toLowerCase().includes(q))
       return matchPid || matchTitle || matchTags
     })
-  }, [problemList, keyword, diffFilter, typeFilter])
+  }, [problemList, deferredKeyword, diffFilter, typeFilter])
+  const pages = Math.max(1, Math.ceil(filteredList.length / 20))
+  const currentPage = Math.min(page, pages - 1)
+  const visibleProblems = filteredList.slice(currentPage * 20, (currentPage + 1) * 20)
 
   // 计算当前聚焦题目的详细信息（raw 供 PromptCopyButton 判断附件与拼装模板）
   const activeProblem = useMemo(() => {
@@ -91,8 +100,9 @@ export default function PromptsPage() {
 
   const handleSelectPid = (pid) => {
     setSelectedPid(pid)
+    setExpandedPid(pid)
     setInputPid('')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    workspaceRef.current?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
   }
 
   const handleCustomInputSubmit = (e) => {
@@ -100,20 +110,14 @@ export default function PromptsPage() {
     const raw = inputPid.trim().toUpperCase()
     if (!raw) return
     setSelectedPid(raw)
+    setExpandedPid(raw)
   }
 
   return (
     <>
       <Topbar />
-      <main className="layout">
-        <div className="page-head">
-          <div>
-            <h2>推荐提示词库</h2>
-            <span className="desc">
-              统一测试口径 · 向所有人开放 · 支持按题号快速查阅与一键复制标准评测提示词
-            </span>
-          </div>
-        </div>
+      <main className="layout" aria-busy={keyword !== deferredKeyword}>
+        <PageHeading title="推荐提示词库" description="选题、复制，开始评测。完整模板与使用说明按需展开。" eyebrow="ALGORITHM RADAR / PROMPTS" />
 
         {/* 顶部统计卡片 */}
         <div className="stats" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
@@ -132,7 +136,7 @@ export default function PromptsPage() {
         </div>
 
         {/* 核心工作区：当前选中题目的推荐提示词展示与复制 */}
-        <div className="card" style={{ border: '1px solid var(--accent-soft)', boxShadow: 'var(--glow)' }}>
+        <div className="card prompt-workspace" ref={workspaceRef} style={{ scrollMarginTop: 'calc(var(--shell-height) + 16px)' }}>
           <div className="card-head" style={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -180,6 +184,7 @@ export default function PromptsPage() {
             <form onSubmit={handleCustomInputSubmit} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <input
                 type="text"
+                aria-label="查阅题号"
                 placeholder="输入任意题号如 P1002"
                 value={inputPid}
                 onChange={(e) => setInputPid(e.target.value)}
@@ -189,54 +194,64 @@ export default function PromptsPage() {
             </form>
           </div>
 
-          <div className="callout prompt-box" style={{ marginTop: 'var(--sp-2)' }}>
+          <div className="prompt-box" style={{ marginTop: 'var(--sp-2)' }}>
             {detail.error && <div className="form-error" role="alert">{detail.error}<button className="btn small" onClick={detail.retry}>重试</button></div>}
             <div className="prompt-head">
-              <span className="prompt-title">该题推荐提示词内容</span>
-              <span className="chain">（建立工作区文件夹后发送给待测 AI 模型；发送前把 <code>{'{模型id}'}</code> 占位符替换为实际模型名）</span>
+              <span className="chain">复制时可选择模型，自动填入工作区名称。</span>
               <PromptCopyButton
                 problem={activeProblem.raw || { pid: activeProblem.pid }}
                 toast={toast}
-                label="一键复制本题提示词"
+                label="复制本题提示词"
+                kind="primary"
                 okLabel="已复制提示词"
               />
             </div>
-            <pre style={{ maxHeight: 280, overflowY: 'auto', padding: '12px 16px', background: 'var(--surface-3)', borderRadius: 'var(--r-sm)' }}>
-              {detail.loading ? '加载题面...' : detail.error || activeProblem.prompt}
-            </pre>
+            <p className="prompt-preview">{detail.loading ? '加载题面…' : activeProblem.prompt.split('\n').filter(Boolean).slice(0, 2).join(' ').slice(0, 130) + (activeProblem.prompt.length > 130 ? '…' : '')}</p>
+            <details key={activeProblem.pid} className="content-disclosure" open={expandedPid === activeProblem.pid} onToggle={(event) => {
+              if (event.currentTarget.open !== (expandedPid === activeProblem.pid)) setExpandedPid(event.currentTarget.open ? activeProblem.pid : '')
+            }}>
+              <summary><ChevronDown size={16} /><span>完整提示词</span><small>{activeProblem.prompt.length.toLocaleString()} 字 · 可直接复制</small></summary>
+              <pre>{detail.loading ? '加载题面…' : activeProblem.prompt}</pre>
+            </details>
           </div>
         </div>
 
         {/* 规范指南 Callout */}
-        <div className="callout" style={{ fontSize: 'var(--fs-sm)', lineHeight: 1.6 }}>
+        <details className="content-disclosure prompt-guide">
+          <summary><ChevronDown size={16} /><span>使用步骤与统一评测口径</span><small>首次评测时阅读</small></summary>
+          <div className="disclosure-body" style={{ fontSize: 'var(--fs-sm)' }}>
+          建立工作区文件夹后发送给待测 AI；保留占位符时，先把 <code>{'{模型id}'}</code> 替换为实际模型名。
           <strong>统一口径说明：</strong>
           为确保不同模型在算法题上的横向对比公平客观，雷达站建议评测者使用上述统一推荐提示词。提示词要求被测模型：
           ① 在限定的 <code>{'{模型id}_{题号}'}</code> 工作区文件夹内独立完成（禁止联网、搜索、网页抓取与读取工作区外的本地文件，禁止背题）；
           ② 直接以站点录入的题面 markdown 与时间/内存限制作答依据；
           ③ 给出最终可交付的文件（含附件的题请先从洛谷下载附件放入工作区）。
           题号旁的「{activeProblem.isCustom ? '专属定制' : '标准统一模板'}」标记表示该题使用管理员定制提示词还是标准模板。
-        </div>
+          </div>
+        </details>
 
         {/* 全量题目提示词检索表 */}
         <div className="card">
           <div className="card-head" style={{ flexWrap: 'wrap', gap: 12 }}>
             <div>
-              <h2 style={{ margin: 0 }}>题目索引与提示词快捷复制</h2>
-              <span className="hint">点击「复制」快速获取提示词，点击「聚焦」查看完整内容</span>
+              <h2 style={{ margin: 0 }}>题目索引</h2>
+              <span className="hint">直接复制，或查看完整提示词。</span>
             </div>
 
             {/* 筛选栏 */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <input
                 type="search"
+                aria-label="搜索提示词题目"
                 placeholder="搜索题号 / 题名 / 标签…"
                 value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
+                onChange={(e) => {setKeyword(e.target.value); setPage(0)}}
                 style={{ width: 200, padding: '4px 10px', fontSize: 'var(--fs-sm)' }}
               />
               <select
                 value={diffFilter}
-                onChange={(e) => setDiffFilter(e.target.value)}
+                aria-label="题目难度"
+                onChange={(e) => {setDiffFilter(e.target.value); setPage(0)}}
                 style={{ padding: '4px 8px', fontSize: 'var(--fs-sm)' }}
               >
                 <option value="all">全部难度</option>
@@ -246,7 +261,8 @@ export default function PromptsPage() {
               </select>
               <select
                 value={typeFilter}
-                onChange={(e) => setTypeFilter(e.target.value)}
+                aria-label="提示词类型"
+                onChange={(e) => {setTypeFilter(e.target.value); setPage(0)}}
                 style={{ padding: '4px 8px', fontSize: 'var(--fs-sm)' }}
               >
                 <option value="all">全部类型</option>
@@ -265,14 +281,12 @@ export default function PromptsPage() {
                   <th style={{ width: 100 }}>难度</th>
                   <th>标签</th>
                   <th style={{ width: 110 }}>口径类型</th>
-                  <th style={{ minWidth: 260 }}>提示词预览</th>
                   <th style={{ width: 140, textAlign: 'right' }}>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredList.map((p) => {
+                {visibleProblems.map((p) => {
                   const hasCustom = Boolean(p.prompt && p.prompt.trim())
-                  const finalPrompt = promptOf(p)
                   const isCurrent = activeProblem.pid === p.pid
 
                   return (
@@ -304,30 +318,16 @@ export default function PromptsPage() {
                           <span className="status-tag role-contributor" style={{ fontSize: 'var(--fs-xs)' }}>统一模板</span>
                         )}
                       </td>
-                      <td>
-                        <div
-                          style={{
-                            maxWidth: 320,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            color: 'var(--text-2)',
-                            fontSize: 'var(--fs-xs)',
-                          }}
-                          title={finalPrompt}
-                        >
-                          {finalPrompt}
-                        </div>
-                      </td>
                       <td className="actions" style={{ textAlign: 'right' }}>
                         <div style={{ display: 'inline-flex', gap: 6 }}>
                           <button
                             type="button"
                             className="btn small ghost"
                             onClick={() => handleSelectPid(p.pid)}
+                            aria-label={`查看 ${p.pid} 提示词`}
                             title="在顶部卡片中展开并查看此题提示词"
                           >
-                            聚焦
+                            查看
                           </button>
                           <PromptCopyButton
                             problem={p}
@@ -344,7 +344,7 @@ export default function PromptsPage() {
                 })}
                 {!filteredList.length && (
                   <tr>
-                    <td colSpan={7}>
+                    <td colSpan={6}>
                       <div className="empty">没有匹配的题目</div>
                     </td>
                   </tr>
@@ -352,6 +352,10 @@ export default function PromptsPage() {
               </tbody>
             </table>
           </div>
+          <div className="prompt-pager"><span role="status">{filteredList.length} 道题 · 第 {currentPage + 1} / {pages} 页</span><div>
+            <button className="btn small ghost" aria-label="上一页题目" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={16} />上一页</button>
+            <button className="btn small ghost" aria-label="下一页题目" disabled={currentPage >= pages - 1} onClick={() => setPage(currentPage + 1)}>下一页<ChevronRight size={16} /></button>
+          </div></div>
         </div>
       </main>
     </>

@@ -6,6 +6,8 @@ import ErrorBoundary from './components/ErrorBoundary'
 import ToastHost from './components/ToastHost'
 import BackTop from './components/BackTop'
 import ShortcutHelp from './components/ShortcutHelp'
+import ShellLayout from './components/ShellLayout'
+import { DEFAULT_UI_PREFERENCES } from './uiPreferences'
 
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const UsersPage = lazy(() => import('./pages/UsersPage'))
@@ -18,9 +20,10 @@ const RollPage = lazy(() => import('./pages/RollPage'))
 const AuthModal = lazy(() => import('./components/AuthModal'))
 
 export default function App() {
-  const { authOpen, closeAuth } = useApp()
+  const { authOpen, closeAuth, uiPreferences = DEFAULT_UI_PREFERENCES } = useApp()
   return (
     <ErrorBoundary>
+      <ShellLayout>
       <Suspense fallback={<main className="layout route-loading" role="status">加载中...</main>}>
       <Routes>
         <Route path="/" element={<K4uV2Page />} />
@@ -38,10 +41,11 @@ export default function App() {
         <Route path="*" element={<K4uV2Page />} />
       </Routes>
       </Suspense>
+      </ShellLayout>
       {authOpen && <Suspense fallback={null}><AuthModal onClose={closeAuth} /></Suspense>}
       <ToastHost />
       <BackTop />
-      <ShortcutHelp />
+      {uiPreferences.features.shortcuts && <ShortcutHelp />}
     </ErrorBoundary>
   )
 }

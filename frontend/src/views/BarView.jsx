@@ -106,7 +106,7 @@ export default function BarView() {
     (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
 
   const seriesColors = useMemo(
-    () => vendorColorMap(seriesList(approved), vendorOf, theme !== 'light', { shade: false }),
+    () => vendorColorMap(seriesList(approved), vendorOf, theme === 'dark', { shade: false }),
     [approved, vendorOf, theme])
 
   /** 全部组合（不筛阈值）：用于「满足 X / 共 Y」实时计数 */

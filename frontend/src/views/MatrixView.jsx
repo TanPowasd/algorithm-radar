@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, memo, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { ListOrdered, Columns3, Table2, RefreshCw } from 'lucide-react'
 import { useApp } from '../state'
 import {
@@ -6,9 +6,11 @@ import {
   seriesColorMap, seriesKey, seriesList, filterByModels, filterByContributor, THINKING_LABELS,
 } from '../aggregate'
 import { useIncrementalRating } from '../hooks/useIncrementalRating'
-import ScoreLayouts from './ScoreLayouts'
 import PidLink from '../components/PidLink'
 import { useUrlState } from '../hooks/useUrlState'
+import { DEFAULT_UI_PREFERENCES } from '../uiPreferences'
+import MotionRegion from '../components/MotionRegion'
+const ScoreLayouts = lazy(() => import('./ScoreLayouts'))
 
 /**
  * 单元格口径。默认「最佳思考等级」= 该题该模型只取思考等级最高那条记录的成绩（需求 10）；
@@ -32,8 +34,8 @@ function RankBadge({ rank }) {
  */
 const fmtScore = (v, decimal) => (decimal ? Number(v).toFixed(typeof decimal === 'number' ? decimal : 5) : Math.round(v))
 
-export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decimal = false, blankEmpty = false, onlyWithScore = false, unitScore = false, rawScores = false }) {
-  const { data, loaded, focusModels, focusContributor, theme, vendorOf } = useApp()
+export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decimal = false, blankEmpty = false, onlyWithScore = false, unitScore = false, rawScores = false, compactHeader = false, toolbarExtra }) {
+  const { data, loaded, focusModels, focusContributor, theme, vendorOf, uiPreferences = DEFAULT_UI_PREFERENCES } = useApp()
   const url = useUrlState('mx')
   /** v2：算不出加权分的格子直接留空（不显示「—」占位、更不出现原始分）；老版 blankEmpty=false → 原样 */
   const emptyCell = blankEmpty ? '' : '—'
@@ -53,6 +55,19 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
   const requestedLayout = url.get('layout', mobile ? 'ranking' : 'matrix')
   const layout = ['ranking', 'compare', 'matrix'].includes(requestedLayout) ? requestedLayout : 'matrix'
   const query = url.get('q', '')
+  const [searchInput, setSearchInput] = useState(query)
+  const pendingSearch = useRef(null)
+  useEffect(() => {
+    if (pendingSearch.current !== null && pendingSearch.current !== query) return
+    pendingSearch.current = null
+    setSearchInput(query)
+  }, [query])
+  const deferredQuery = useDeferredValue(searchInput)
+  const clearSearch = () => {
+    pendingSearch.current = null
+    setSearchInput('')
+    url.set('q', '')
+  }
 
   const setMode = useCallback((m) => {
     url.set('mode', m)
@@ -62,7 +77,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
     (data.records || []).filter(isApproved), focusModels), focusContributor), [data.records, focusModels, focusContributor])
 
   const colorMap = useMemo(
-    () => seriesColorMap(approved, { vendorOf, dark: theme !== 'light' }),
+    () => seriesColorMap(approved, { vendorOf, dark: theme === 'dark' }),
     [approved, vendorOf, theme])
 
   /** (model,pid) 分组索引：避免每格全表 filter */
@@ -141,10 +156,10 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
 
   // 只缩小可见行，不改变整体统计、题目排名或其他视图的数据。
   const visibleProblems = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase()
+    const keyword = deferredQuery.trim().toLocaleLowerCase()
     return problems.map((problem, index) => ({ problem, rank: index + 1 }))
       .filter(({ problem }) => !keyword || `${problem.pid} ${problem.title || ''}`.toLocaleLowerCase().includes(keyword))
-  }, [problems, query])
+  }, [problems, deferredQuery])
 
   const summary = useMemo(() => {
     const byModel = new Map()
@@ -186,15 +201,15 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
     if (table.dataset.cx === cell.dataset.c && table.dataset.rx === cell.dataset.r) return
     cancelAnimationFrame(hoverFrame.current)
     hoverFrame.current = requestAnimationFrame(() => {
+      if (!table.isConnected || !cell.isConnected) return
       clearHits(table)
       table.dataset.cx = cell.dataset.c
       table.dataset.rx = cell.dataset.r
-      const esc = (v) => (window.CSS && window.CSS.escape ? window.CSS.escape(v) : v)
-      const column = [...table.querySelectorAll(`[data-c="${esc(cell.dataset.c)}"]`)]
-      const row = [...table.querySelectorAll(`[data-r="${esc(cell.dataset.r)}"]`)]
+      const column = [...table.rows].map((item) => item.cells[cell.cellIndex]).filter(Boolean)
+      const row = [...cell.parentElement.cells]
       column.forEach((el) => el.setAttribute('data-cx-hit', ''))
       row.forEach((el) => el.setAttribute('data-rx-hit', ''))
-      const heads = [table.querySelector(`thead th[data-c="${esc(cell.dataset.c)}"]`), table.querySelector(`tbody th[data-r="${esc(cell.dataset.r)}"]`)].filter(Boolean)
+      const heads = [table.tHead?.rows[0]?.cells[cell.cellIndex], cell.parentElement.cells[0]].filter(Boolean)
       heads.forEach((el) => el.classList.add('on'))
       hoverNodes.current = [...column, ...row, ...heads]
     })
@@ -206,64 +221,52 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
   }, [])
   useEffect(() => () => cancelAnimationFrame(hoverFrame.current), [])
 
-  const cellKeyboard = (pid, model) => ({
-    tabIndex: 0,
-    onKeyDown: (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault()
-        onOpenDetail?.(pid, model)
-      }
-    },
-    'aria-description': `${pid} · ${model}，按回车查看测评详情`,
-  })
-
   const active = MODES.find((m) => m.key === mode) || MODES[0]
   const isBest = active.best === 'level' || active.best === 'score'
 
   return (
-    <div className="matrix-surface" id="matrix-card">
-      <div className="card-head">
-        <h2>AI × 题目矩阵</h2>
-        <span className="hint">{blankEmpty ? '点击成绩查看该轮明细' : '点击成绩查看原始测评'}</span>
-        <span className="matrix-count">{visibleProblems.length} / {problems.length} 题 · {series.length} 个模型</span>
+    <div className={'matrix-surface' + (compactHeader ? ' compact-summary' : '')} id="matrix-card">
+      <div className={'card-head' + (compactHeader ? ' matrix-accessible-heading' : '')}>
+        <div className="matrix-heading-copy"><h2>{layout === 'ranking' ? '模型排名' : layout === 'compare' ? '模型对比' : 'AI × 题目矩阵'}</h2>
+          <p>{blankEmpty ? '点击成绩查看该轮明细' : '点击成绩查看原始测评'}</p></div>
+        {!compactHeader && <span className="matrix-count">{visibleProblems.length} / {problems.length} 题 · {series.length} 个模型</span>}
       </div>
       <div className="matrix-toolbar">
         <div className="seg layout-seg" role="group" aria-label="展示布局">
           {[['ranking', '排名', ListOrdered], ['compare', '对比', Columns3], ['matrix', '矩阵', Table2]].map(([key, label, Icon]) =>
             <button key={key} aria-pressed={layout === key} className={layout === key ? 'active' : ''} onClick={() => url.set('layout', key)}><Icon size={15} />{label}</button>)}
         </div>
+        {toolbarExtra}
         <label className="matrix-search">
-          查找题目
-          <input type="search" value={query} placeholder="题号 / 题名"
-            onChange={(event) => url.set('q', event.target.value)}
-            onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); url.set('q', '') } }} />
+          <span className={compactHeader ? 'control-label-hidden' : undefined}>查找题目</span>
+          <input type="search" value={searchInput} placeholder="题号 / 题名" aria-label="查找题目"
+            onChange={(event) => {
+              const value = event.target.value
+              pendingSearch.current = value
+              setSearchInput(value)
+              startTransition(() => url.set('q', value))
+            }}
+            onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); clearSearch() } }} />
         </label>
-        {query && <button className="btn small ghost" onClick={() => url.set('q', '')}>清除查找</button>}
-        <div className="seg" role="group" aria-label="单元格口径">
-          {MODES.map((m) => (
-            <button
-              key={m.key}
-              aria-pressed={mode === m.key}
-              className={mode === m.key ? 'active' : ''}
-              onClick={() => setMode(m.key)}
-              title={m.key === 'bestLevel'
-                ? '该题该模型取「思考等级最高」的记录成绩'
-                : m.key === 'bestScore'
-                  ? '该题该模型取「分数最高」的记录成绩'
-                  : undefined}
-            >{m.label}</button>
-          ))}
-        </div>
+        {searchInput && <button className="btn small ghost" onClick={clearSearch}>清除查找</button>}
+        <label className="matrix-mode-select"><span className={compactHeader ? 'control-label-hidden' : undefined}>成绩口径</span>
+          <select aria-label="单元格口径" value={mode} onChange={(event) => setMode(event.target.value)}>
+            {MODES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+          </select>
+        </label>
+        {compactHeader && <span className={'matrix-count' + (!deferredQuery && !focusModels?.size && focusContributor == null && uiPreferences.features.stats ? ' control-label-hidden' : '')}>
+          {visibleProblems.length} / {problems.length} 题 · {series.length} 个模型</span>}
       </div>
-      {unitScore && mode !== 'status' && <div className="rating-progress" role="status" aria-live="polite">
-        {incremental.status === 'computing' ? '更新 rating...' : incremental.status === 'intervals' ? '更新置信区间...' : incremental.status === 'error' ? incremental.error : 'rating 已更新'}
+      {unitScore && mode !== 'status' && ['computing', 'intervals', 'error'].includes(incremental.status) && <div className="rating-progress" role="status" aria-live="polite">
+        {incremental.status === 'computing' ? '更新 rating...' : incremental.status === 'intervals' ? '更新置信区间...' : incremental.error}
         {incremental.status === 'error' && <button className="btn small" onClick={incremental.retry}><RefreshCw size={14} />重试</button>}
       </div>}
+      <MotionRegion motionKey={layout} className="matrix-content">
       {!series.length ? <div className="empty" role="status">{loaded === false ? '正在加载评测数据…' : '当前范围内暂无已审核的测评数据，请尝试调整模型或贡献者筛选。'}</div>
-        : !visibleProblems.length ? <div className="empty">没有匹配「{query}」的题目。<button className="btn small ghost" onClick={() => url.set('q', '')}>显示全部题目</button></div>
-        : layout !== 'matrix' ? <ScoreLayouts layout={layout} series={series} problems={visibleProblems} grouped={grouped}
+        : !visibleProblems.length ? <div className="empty">没有匹配「{searchInput}」的题目。<button className="btn small ghost" onClick={clearSearch}>显示全部题目</button></div>
+        : layout !== 'matrix' ? <Suspense fallback={<div className="empty" role="status">加载布局…</div>}><ScoreLayouts layout={layout} series={series} problems={visibleProblems} grouped={grouped}
           ratings={incremental.ratings} intervalsReady={incremental.status === 'ready'} summary={summary} mode={mode} unitScore={unitScore} decimal={decimal}
-          url={url} onOpenDetail={onOpenDetail} onQuickAdd={canSubmit ? onQuickAdd : undefined} />
+          url={url} onOpenDetail={onOpenDetail} onQuickAdd={canSubmit ? onQuickAdd : undefined} /></Suspense>
         : <div className="matrix-wrap" id="matrix-wrap" tabIndex={0} role="region" aria-label="评测矩阵，可横向滚动">
         <table className="matrix" ref={tableRef} onMouseMove={onMove} onMouseLeave={onLeave}>
           <thead>
@@ -278,7 +281,42 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
               ))}
             </tr>
           </thead>
-          <tbody>
+          <MatrixBody series={series} summary={summary} ratings={ratings} ratingStatus={incremental.status}
+          visibleProblems={visibleProblems} grouped={grouped} mode={mode} active={active} isBest={isBest}
+          unitScore={unitScore} decimal={decimal} blankEmpty={blankEmpty} emptyCell={emptyCell}
+          canSubmit={canSubmit} onQuickAdd={onQuickAdd} onOpenDetail={onOpenDetail} showThinking={uiPreferences.features.thinkingLabels} />
+        </table>
+      </div>}
+      </MotionRegion>
+      {uiPreferences.features.scoreLegend && <div className="matrix-guide">
+        {mode === 'status' ? <div className="matrix-scale" aria-label="通过状态图例">
+          <span style={{ color: 'var(--green)' }}><i />AC</span>
+          <span style={{ color: 'var(--red)' }}><i />未过</span>
+          <span style={{ color: 'var(--orange)' }}><i />放弃</span>
+          <span>· 未作答</span>
+        </div> :
+        <div className="matrix-scale" aria-label="分数颜色图例">
+          <span style={{ color: 'var(--purple)' }}><i />100</span>
+          <span style={{ color: 'var(--green)' }}><i />80–99</span>
+          <span style={{ color: 'var(--orange)' }}><i />60–79</span>
+          <span style={{ color: 'var(--red)' }}><i />0–59</span>
+          <span>· 未作答{blankEmpty ? '' : '　— 无有效分数'}</span>
+        </div>}
+      </div>}
+      <details className="matrix-hint">
+        <summary>评分口径</summary>
+        <p>最佳等级取最高思考等级记录的有效轮次均分；最佳分数取成绩最高的记录。有分数轮次才参与均分。</p>
+        {rawScores && <p>AI 分数包含全部历史记录，使用洛谷原始分。</p>}
+        {unitScore && <p>加权分使用原始成绩与每轮时间、内存。rating 按同题模型的胜势积分拟合 Bradley–Terry，锚定 1000 分，显示 200 次自举的 95% 区间。</p>}
+      </details>
+    </div>
+  )
+}
+
+// Keep the expensive cells stable while the search field receives urgent updates.
+const MatrixBody = memo(function MatrixBody({ series, summary, ratings, ratingStatus, visibleProblems, grouped,
+  mode, active, isBest, unitScore, decimal, blankEmpty, emptyCell, canSubmit, onQuickAdd, onOpenDetail, showThinking }) {
+  return (<tbody>
             <tr className="sum-row">
               <th className="row-head" data-r="sum">{unitScore ? 'rating' : '整体'}</th>
               {series.map((s, si) => {
@@ -302,7 +340,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
                   const tip = 'Arena 天梯分 ' + fmtScore(ov.rating, decimal) + '（全体锚定 1000 分）'
                     + '\n对局 ' + ov.games + ' 局 · 胜势率 ' + (ov.winShare === null ? '-' : (ov.winShare * 100).toFixed(1) + '%')
                     + '（胜势积分合计 ' + fmtScore(ov.share, decimal) + '）'
-                    + (incremental.status !== 'ready' || ov.lo === null || ov.hi === null ? '' : '\n95% 区间 ' + fmtScore(ov.lo, decimal) + ' ~ ' + fmtScore(ov.hi, decimal))
+                    + (ratingStatus !== 'ready' || ov.lo === null || ov.hi === null ? '' : '\n95% 区间 ' + fmtScore(ov.lo, decimal) + ' ~ ' + fmtScore(ov.hi, decimal))
                     + '\n' + ov.status
                   return (
                     <td key={s} className="mcell" data-r="sum" data-c={'c' + si} title={tip}>
@@ -320,8 +358,28 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
                 )
               })}
             </tr>
-            {visibleProblems.map(({ problem: p, rank }, pi) => (
-              <tr key={p.pid}>
+            {visibleProblems.map(({ problem, rank }, index) => <MatrixRow key={problem.pid} p={problem} rank={rank} pi={index}
+              series={series} grouped={grouped} mode={mode} active={active} isBest={isBest} unitScore={unitScore}
+              decimal={decimal} blankEmpty={blankEmpty} emptyCell={emptyCell} canSubmit={canSubmit}
+              onQuickAdd={onQuickAdd} onOpenDetail={onOpenDetail} showThinking={showThinking} />)}
+          </tbody>)
+})
+
+// Individual rows let React yield between rows, and rating-only updates reuse unchanged cells.
+const MatrixRow = memo(function MatrixRow({ p, rank, pi, series, grouped, mode, active, isBest,
+  unitScore, decimal, blankEmpty, emptyCell, canSubmit, onQuickAdd, onOpenDetail, showThinking }) {
+  const cellKeyboard = (pid, model) => ({
+    tabIndex: 0,
+    onKeyDown: (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        onOpenDetail?.(pid, model)
+      }
+    },
+    'aria-description': `${pid} · ${model}，按回车查看测评详情`,
+  })
+
+  return (<tr>
                 <th
                   className="row-head"
                   data-r={`r${pi}`}
@@ -385,7 +443,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
                         key={s} className={`mcell ${scoreTierClass(Math.round(c.value))}`} {...cellProps} {...cellKeyboard(p.pid, s)}
                         title={`${s} · ${p.pid}\n思考等级 ${lv}（${c.n} 条记录 / ${c.rounds} 个有分数轮次）\n同题同模型共 ${c.total} 条记录，本格只取${active.best === 'level' ? '等级最高' : '分数最高'}的那批`}
                         onClick={() => onOpenDetail && onOpenDetail(p.pid, s)}
-                      >{v}<span className="lv">{lv}</span></td>
+                      >{v}{showThinking && <span className="lv">{lv}</span>}</td>
                     )
                   }
                   const c = matrixCell(recs, s, p.pid)
@@ -400,32 +458,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
                     >{avg}</td>
                   )
                 })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>}
-      <div className="matrix-guide">
-        {mode === 'status' ? <div className="matrix-scale" aria-label="通过状态图例">
-          <span style={{ color: 'var(--green)' }}><i />AC</span>
-          <span style={{ color: 'var(--red)' }}><i />未过</span>
-          <span style={{ color: 'var(--orange)' }}><i />放弃</span>
-          <span>· 未作答</span>
-        </div> :
-        <div className="matrix-scale" aria-label="分数颜色图例">
-          <span style={{ color: 'var(--purple)' }}><i />100</span>
-          <span style={{ color: 'var(--green)' }}><i />80–99</span>
-          <span style={{ color: 'var(--orange)' }}><i />60–79</span>
-          <span style={{ color: 'var(--red)' }}><i />0–59</span>
-          <span>· 未作答{blankEmpty ? '' : '　— 无有效分数'}</span>
-        </div>}
-      </div>
-      <details className="matrix-hint">
-        <summary>评分口径</summary>
-        <p>最佳等级取最高思考等级记录的有效轮次均分；最佳分数取成绩最高的记录。有分数轮次才参与均分。</p>
-        {rawScores && <p>AI 分数包含全部历史记录，使用洛谷原始分。</p>}
-        {unitScore && <p>加权分使用原始成绩与每轮时间、内存。rating 按同题模型的胜势积分拟合 Bradley–Terry，锚定 1000 分，显示 200 次自举的 95% 区间。</p>}
-      </details>
-    </div>
-  )
-}
+              </tr>)
+}, (previous, next) => Object.keys(next).every((key) => key === 'series'
+  ? previous.series.length === next.series.length && previous.series.every((value, index) => value === next.series[index])
+  : Object.is(previous[key], next[key])))
