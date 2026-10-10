@@ -10,10 +10,10 @@
  * ⚠️ 长期方案是官方 D1 migrations（wrangler d1 migrations apply）+ 部署脚本，
  * 这里保留运行时兜底是为了让"零迁移上云/手改库"仍然可用（详见 docs/BACKEND_REVIEW.md P2-1）。
  */
-import { SCHEMA_STATEMENTS } from "./schema";
+import { POST_MIGRATION_STATEMENTS, SCHEMA_STATEMENTS } from "./schema";
 
 /** 与下方 MIGRATIONS 一一对应的版本号；改动迁移列表就必须 +1 */
-export const SCHEMA_VERSION = "v3.16";
+export const SCHEMA_VERSION = "v3.17";
 
 let ready: Promise<void> | null = null;
 
@@ -45,18 +45,19 @@ const MIGRATIONS: Array<[string, string, string]> = [
 async function migrate(db: D1Database): Promise<void> {
     await db.batch(SCHEMA_STATEMENTS.map((s) => db.prepare(s)));
     // 一次 batch 拿回全部 PRAGMA 结果（结果顺序与语句顺序一致），避免 11 次串行往返
-    const probes = await db.batch(MIGRATIONS.map(([table]) => db.prepare(`PRAGMA table_info(${table})`)));
+    const tables = [...new Set(MIGRATIONS.map(([table]) => table))];
+    const probes = await db.batch(tables.map((table) => db.prepare(`PRAGMA table_info(${table})`)));
+    const columns = new Map(tables.map((table, i) => [table, new Set((probes[i]?.results || []).map((c: any) => c.name))]));
     const missing = new Set<string>();
-    probes.forEach((res, i) => {
-        const [, column] = MIGRATIONS[i];
-        const has = (res?.results || []).some((c: any) => c.name === column);
-        if (!has) missing.add(`${MIGRATIONS[i][0]}.${column}`);
-    });
+    for (const [table, column] of MIGRATIONS) {
+        if (!columns.get(table)?.has(column)) missing.add(`${table}.${column}`);
+    }
     const alters = MIGRATIONS
         .filter(([table, column]) => missing.has(`${table}.${column}`))
         .map(([, , ddl]) => db.prepare(ddl));
     if (alters.length) await db.batch(alters);
     await db.batch([
+        ...POST_MIGRATION_STATEMENTS.map((s) => db.prepare(s)),
         db.prepare("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)").bind(SCHEMA_VERSION),
         db.prepare("UPDATE meta SET value = ?1 WHERE key = 'schema_version'").bind(SCHEMA_VERSION),
     ]);

@@ -22,6 +22,7 @@ export interface Snapshot {
     updatedAt: string;
     records: Rec[];
     problems: Record<string, ProblemEntry>;
+    models?: ModelView[];
 }
 
 function mapRec(row: any): Rec {
@@ -54,6 +55,7 @@ function mapProblem(row: any): ProblemEntry {
         tags, categories, manual: Boolean(row.manual),
         prompt: row.prompt ?? "",
         content: row.content ?? "",
+        ...(row.has_content === undefined ? {} : { hasContent: Boolean(row.has_content) }),
         timeLimit: row.time_limit ?? null,
         memoryLimit: row.memory_limit ?? null,
         hasAttachments: Boolean(row.has_attachments),
@@ -128,6 +130,7 @@ export async function getRevision(db: D1Database): Promise<number> {
 export interface SnapshotOpts {
     /** 记录可见性过滤：true=全量（管理员导出）；false=收录制可见（已审核且题目/模型均已收录） */
     all?: boolean;
+    compact?: boolean;
 }
 
 /**
@@ -153,25 +156,26 @@ export async function loadCatalog(db: D1Database): Promise<{ problemPids: string
     return { problemPids: [...visible.problems], modelNames: [...visible.models] };
 }
 
-export async function snapshot(db: D1Database, username: string | null, adminLike: boolean, opts: SnapshotOpts = {}): Promise<Snapshot> {
-    // 查询范围：管理员=全部行（待审全部可见）；登录用户=已通过+自己的待审；游客=仅已通过
-    let recStmt: D1PreparedStatement;
-    if (adminLike) {
-        recStmt = db.prepare("SELECT * FROM records WHERE deleted_at IS NULL ORDER BY created_at, id");
-    } else if (username) {
-        recStmt = db.prepare("SELECT * FROM records WHERE deleted_at IS NULL AND (status = 'approved' OR author = ?1) ORDER BY created_at, id").bind(username);
-    } else {
-        recStmt = db.prepare("SELECT * FROM records WHERE deleted_at IS NULL AND status = 'approved' ORDER BY created_at, id");
-    }
-    const full = opts.all === true;
-    // meta 一次取回 revision + updatedAt；收录制需要模型目录（题目目录已随 probs 取回，不再重复查）
-    const [recs, probs, meta, mods] = await Promise.all([
-        recStmt.all<any>(),
-        db.prepare("SELECT * FROM problems").all<any>(),
-        db.prepare("SELECT key, value FROM meta WHERE key IN ('revision', 'updatedAt', 'cache_epoch')").all<{ key: string; value: string }>(),
-        full ? Promise.resolve(null as D1Result<{ name: string }> | null)
-            : db.prepare("SELECT name FROM models").all<{ name: string }>(),
-    ]);
+export async function snapshot(db: D1Database, userId: number | null, adminLike: boolean, opts: SnapshotOpts = {}): Promise<Snapshot> {
+    const published = "r.status = 'approved' AND EXISTS (SELECT 1 FROM problems p WHERE p.pid = r.pid) " +
+        "AND EXISTS (SELECT 1 FROM models m WHERE m.name = r.model)";
+    const pending = adminLike ? "r.status = 'pending'"
+        : userId !== null ? "r.status = 'pending' AND r.author_id = ?1" : "0";
+    const condition = opts.all === true && adminLike ? "1"
+        : adminLike || userId !== null ? `(${published}) OR (${pending})` : published;
+    let recStmt = db.prepare(`SELECT r.* FROM records r WHERE r.deleted_at IS NULL AND (${condition}) ORDER BY r.created_at, r.id`);
+    if (userId !== null && !adminLike) recStmt = recStmt.bind(userId);
+    const problemColumns = opts.compact
+        ? "pid, title, difficulty, tags, categories, manual, prompt, time_limit, memory_limit, has_attachments, fetched_at, (content <> '') AS has_content"
+        : "*";
+    // D1 batch reads the rows and their validator in one transaction.
+    const statements = [
+        recStmt,
+        db.prepare(`SELECT ${problemColumns} FROM problems`),
+        db.prepare("SELECT key, value FROM meta WHERE key IN ('revision', 'updatedAt', 'cache_epoch')"),
+    ];
+    if (opts.all && adminLike) statements.push(db.prepare("SELECT id, name, vendor, note, created_at FROM models ORDER BY name COLLATE NOCASE"));
+    const [recs, probs, meta, mods] = await db.batch<any>(statements);
     const metaMap = new Map((meta.results || []).map((r) => [r.key, r.value]));
     const revision = Number(metaMap.get("revision") ?? 0) || 0;
     const epoch = metaMap.get("cache_epoch") || "0";
@@ -181,19 +185,10 @@ export async function snapshot(db: D1Database, username: string | null, adminLik
         const p = mapProblem(row);
         problems[p.pid] = p;
     }
-    let records = (recs.results || []).map(mapRec);
-    if (!full) {
-        // 收录制过滤（只对 approved 生效）：pending 走审核流程可见性
-        const pset = new Set(Object.keys(problems));
-        const mset = new Set((mods?.results || []).map((r) => r.name));
-        records = records.filter((r) => {
-            if (r.status === "pending") {
-                return adminLike || (username !== null && r.author === username);
-            }
-            return isRecordVisible(r, pset, mset);
-        });
-    }
-    return { revision, epoch, updatedAt, records, problems };
+    const records = (recs.results || []).map(mapRec);
+    return { revision, epoch, updatedAt, records, problems,
+        ...(mods ? { models: mods.results.map(mapModel) } : {}),
+    };
 }
 
 /** 贡献者名册聚合：一条 SQL 出「每位 author 的记录数 / 覆盖题数 / 覆盖模型数 / 最近日期」，
@@ -250,6 +245,10 @@ async function requirePublished(db: D1Database, pid: string) {
 async function findProblem(db: D1Database, pid: string): Promise<ProblemEntry | null> {
     const row = await db.prepare("SELECT * FROM problems WHERE pid = ?1").bind(pid).first();
     return row ? mapProblem(row) : null;
+}
+
+export async function getPublishedProblem(db: D1Database, pid: string): Promise<ProblemEntry | null> {
+    return findProblem(db, String(pid).trim().toUpperCase());
 }
 
 /** 保存记录时把题目信息并入已发布条目（不新建条目：题目目录由管理员发布维护）。
@@ -548,13 +547,15 @@ export async function backfillProblemContent(
 // ---------------------------------------------------------------- AI 模型目录（收录制下即“已收录模型”）
 export interface ModelView { id: number; name: string; vendor: string; note: string; createdAt: string }
 
+function mapModel(r: any): ModelView {
+    return { id: r.id, name: r.name, vendor: r.vendor ?? "", note: r.note ?? "", createdAt: r.created_at };
+}
+
 export async function listModels(db: D1Database): Promise<ModelView[]> {
     const { results } = await db
         .prepare("SELECT id, name, vendor, note, created_at FROM models ORDER BY name COLLATE NOCASE")
         .all<any>();
-    return (results || []).map((r) => ({
-        id: r.id, name: r.name, vendor: r.vendor ?? "", note: r.note ?? "", createdAt: r.created_at,
-    }));
+    return (results || []).map(mapModel);
 }
 
 function checkModelFields(name: string, vendor: string, note: string) {
@@ -840,7 +841,7 @@ export async function importBundle(db: D1Database, raw: any, mode: string): Prom
 /** 管理员全量导出（含隐藏历史数据与完整 problems/models），供备份/迁移 */
 export async function exportBundle(db: D1Database): Promise<Snapshot & { models: ModelView[] }> {
     const snap = await snapshot(db, null, true, { all: true });
-    return { ...snap, models: await listModels(db) };
+    return { ...snap, models: snap.models ?? [] };
 }
 
 /** 全部隐藏（approved 但题目或模型未收录）记录的明细，收录管理页“查看隐藏记录”用 */
@@ -1017,6 +1018,28 @@ export interface Competition {
 
 /** 缺省比赛：历史战绩与回放都归到它名下（迁移时的默认值） */
 export const DEFAULT_COMPETITION = "kaggriculture";
+
+const bumpCounterStmt = (db: D1Database, key: string): D1PreparedStatement => db.prepare(
+    "INSERT INTO meta(key, value) VALUES (?1, '1') ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
+).bind(key);
+
+const bumpArenaStmts = (db: D1Database, competitionId: string): D1PreparedStatement[] => [
+    bumpCounterStmt(db, `arena_revision:${competitionId}`),
+    bumpCounterStmt(db, "competitions_revision"),
+];
+
+export async function readCompetitionRevision(db: D1Database, competitionId?: string): Promise<number> {
+    const key = competitionId ? `arena_revision:${competitionId}` : "competitions_revision";
+    const row = await db.prepare("SELECT value FROM meta WHERE key = ?1").bind(key).first<{ value: string }>();
+    return Number(row?.value) || 0;
+}
+
+export async function lookupCompetitionId(db: D1Database, key: string): Promise<string | null> {
+    const row = await db.prepare("SELECT id FROM competitions WHERE (id = ?1 OR slug = ?1) AND deleted_at IS NULL")
+        .bind(key.trim().toLowerCase()).first<{ id: string }>();
+    return row?.id ?? null;
+}
+
 export const COMPETITION_MAX_ROWS = 50;
 export const COMPETITION_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,31}$/;
 const COMPETITION_SCORE_MODELS = ["1v1_cash", "weighted_rank", "other"];
@@ -1045,6 +1068,14 @@ export async function listCompetitions(db: D1Database): Promise<Competition[]> {
     return (results || []).map(mapCompetitionRow);
 }
 
+export async function competitionCatalogSnapshot(db: D1Database): Promise<{ competitions: Competition[]; revision: number }> {
+    const [rows, meta] = await db.batch<any>([
+        db.prepare(COMPETITION_SELECT + "WHERE c.deleted_at IS NULL ORDER BY c.sort ASC, c.created_at ASC"),
+        db.prepare("SELECT value FROM meta WHERE key = 'competitions_revision'"),
+    ]);
+    return { competitions: (rows.results || []).map(mapCompetitionRow), revision: Number(meta.results?.[0]?.value) || 0 };
+}
+
 export async function getCompetition(db: D1Database, key: string): Promise<Competition | null> {
     const k = String(key ?? "").trim().toLowerCase();
     if (!k) return null;
@@ -1071,9 +1102,12 @@ export async function addCompetition(db: D1Database, raw: any): Promise<Competit
     if (await getCompetition(db, slug)) throw badRequest("短名 " + slug + " 已被占用");
     const countRow = await db.prepare("SELECT COUNT(*) AS n FROM competitions WHERE deleted_at IS NULL").first<{ n: number }>();
     if ((countRow?.n ?? 0) >= COMPETITION_MAX_ROWS) throw badRequest("比赛数量已达上限（" + COMPETITION_MAX_ROWS + " 个）");
-    await db.prepare("INSERT INTO competitions (id, slug, name, subtitle, rules_url, engine_sha, score_model, status, sort, created_at) " +
-        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)")
-        .bind(slug, slug, name, subtitle, rulesUrl, engineSha, scoreModel, status, sort, nowIso()).run();
+    await db.batch([
+        db.prepare("INSERT INTO competitions (id, slug, name, subtitle, rules_url, engine_sha, score_model, status, sort, created_at) " +
+            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)")
+            .bind(slug, slug, name, subtitle, rulesUrl, engineSha, scoreModel, status, sort, nowIso()),
+        ...bumpArenaStmts(db, slug),
+    ]);
     const created = await getCompetition(db, slug);
     if (!created) throw badRequest("比赛创建失败，请重试");
     return created;
@@ -1230,11 +1264,13 @@ export async function addArenaMatch(db: D1Database, raw: any,
         aThinking, bThinking, sourceKey, note,
         playedAt, author: user.username, authorId: user.uid ?? null, createdAt: nowIso(),
     };
-    await db.prepare("INSERT INTO arena_matches (id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id, a_wins, b_wins, a_thinking, b_thinking, source_key) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)")
-        .bind(row.id, row.aName, row.bName, row.winner, row.aCash, row.bCash, row.margin, row.games,
-            row.note, row.playedAt, row.author, row.authorId, row.createdAt, row.competitionId,
-            row.aWins, row.bWins, row.aThinking, row.bThinking, row.sourceKey)
-        .run();
+    await db.batch([
+        db.prepare("INSERT INTO arena_matches (id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id, a_wins, b_wins, a_thinking, b_thinking, source_key) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)")
+            .bind(row.id, row.aName, row.bName, row.winner, row.aCash, row.bCash, row.margin, row.games,
+                row.note, row.playedAt, row.author, row.authorId, row.createdAt, row.competitionId,
+                row.aWins, row.bWins, row.aThinking, row.bThinking, row.sourceKey),
+        ...bumpArenaStmts(db, competitionId),
+    ]);
     return row;
 }
 
@@ -1243,15 +1279,69 @@ export async function listArenaMatches(db: D1Database, limit = 300,
     const size = Math.max(1, Math.min(1000, Math.round(limit) || 300));
     const { results } = await db.prepare(
         "SELECT id, a_name, b_name, winner, a_cash, b_cash, margin, games, note, played_at, author, author_id, created_at, competition_id, a_wins, b_wins, a_thinking, b_thinking, source_key " +
-        "FROM arena_matches WHERE deleted_at IS NULL AND competition_id = ?2 ORDER BY played_at DESC, created_at DESC LIMIT ?1")
+        "FROM arena_matches WHERE deleted_at IS NULL AND competition_id = ?2 ORDER BY played_at DESC, created_at DESC, id DESC LIMIT ?1")
         .bind(size, competitionId).all<any>();
     return (results || []).map(mapArenaRow);
 }
 
 export async function deleteArenaMatch(db: D1Database, id: string): Promise<boolean> {
-    const r = await db.prepare("UPDATE arena_matches SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL")
-        .bind(nowIso(), String(id)).run();
-    return (((r as any).meta?.changes) ?? 0) > 0;
+    const row = await db.prepare("SELECT competition_id FROM arena_matches WHERE id = ?1 AND deleted_at IS NULL")
+        .bind(String(id)).first<{ competition_id: string }>();
+    if (!row) return false;
+    const [r] = await db.batch([
+        db.prepare("UPDATE arena_matches SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL").bind(nowIso(), String(id)),
+        ...bumpArenaStmts(db, row.competition_id),
+    ]);
+    return (r.meta?.changes ?? 0) > 0;
+}
+
+export interface ArenaDataSnapshot {
+    matches: ArenaMatch[];
+    replays: ArenaReplay[];
+    revision: number;
+}
+
+export async function arenaSnapshot(db: D1Database, competitionId: string, includeReplays = false): Promise<ArenaDataSnapshot> {
+    const statements = [
+        db.prepare("SELECT * FROM arena_matches WHERE deleted_at IS NULL AND competition_id = ?1 ORDER BY played_at DESC, created_at DESC, id DESC").bind(competitionId),
+        db.prepare("SELECT value FROM meta WHERE key = ?1").bind(`arena_revision:${competitionId}`),
+    ];
+    if (includeReplays) statements.push(db.prepare(
+        "SELECT * FROM arena_replays WHERE deleted_at IS NULL AND competition_id = ?1 ORDER BY created_at DESC, id DESC",
+    ).bind(competitionId));
+    const [matches, meta, replays] = await db.batch<any>(statements);
+    return {
+        matches: (matches.results || []).map(mapArenaRow),
+        replays: (replays?.results || []).map(mapArenaReplayRow),
+        revision: Number(meta.results?.[0]?.value) || 0,
+    };
+}
+
+export function arenaMatchPage(rows: ArenaMatch[], rawLimit: string | null, cursor: string | null) {
+    const limit = rawLimit === null ? 300 : Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw badRequest("limit 必须是 1-1000 的整数");
+    let after: string[] | null = null;
+    if (cursor) {
+        try {
+            const bytes = Uint8Array.from(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+            const value = JSON.parse(new TextDecoder().decode(bytes));
+            if (!Array.isArray(value) || value.length !== 3 || value.some((v) => typeof v !== "string" || v.length > 100)) throw new Error();
+            after = value;
+        } catch { throw badRequest("分页 cursor 不合法"); }
+    }
+    const following = after ? rows.filter((row) => {
+        const values = [row.playedAt, row.createdAt, row.id];
+        for (let i = 0; i < 3; i++) {
+            if (values[i] !== after![i]) return values[i] < after![i];
+        }
+        return false;
+    }) : rows;
+    const matches = following.slice(0, limit);
+    const hasMore = following.length > limit;
+    const last = matches[matches.length - 1];
+    const nextCursor = hasMore && last ? btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify([last.playedAt, last.createdAt, last.id]))))
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : null;
+    return { matches, pagination: { limit, nextCursor, hasMore, total: rows.length } };
 }
 
 /** 由战绩聚合积分榜（纯函数） */
@@ -1342,6 +1432,24 @@ export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
     out.sort((x, y) => (y.elo - x.elo) || (y.gameWinRate - x.gameWinRate)
         || (y.netAvg - x.netAvg) || x.name.localeCompare(y.name) || x.thinking.localeCompare(y.thinking));
     return out;
+}
+
+const standingsCache = new WeakMap<D1Database, Map<string, { revision: number; standings: ArenaStanding[] }>>();
+
+export function cachedArenaStandings(db: D1Database, competitionId: string, snapshot: ArenaDataSnapshot): ArenaStanding[] {
+    let cache = standingsCache.get(db);
+    if (!cache) { cache = new Map(); standingsCache.set(db, cache); }
+    const previous = cache.get(competitionId);
+    if (previous?.revision === snapshot.revision) {
+        cache.delete(competitionId);
+        cache.set(competitionId, previous);
+        return previous.standings;
+    }
+    const standings = arenaStandings(snapshot.matches);
+    cache.delete(competitionId);
+    cache.set(competitionId, { revision: snapshot.revision, standings });
+    if (cache.size > 16) cache.delete(cache.keys().next().value!);
+    return standings;
 }
 
 export interface ArenaH2hSide {
@@ -1482,12 +1590,11 @@ export async function renameArenaAgent(db: D1Database, competitionId: string,
     const asA = await countSide("a");
     const asB = await countSide("b");
     if (dryRun || asA + asB === 0) return { asA, asB };
-    for (const side of ["a", "b"] as const) {
-        await db.prepare(
+    const updates = (["a", "b"] as const).map((side) => db.prepare(
             "UPDATE arena_matches SET " + side + "_name = ?1, " + side + "_thinking = ?2 " +
             "WHERE deleted_at IS NULL AND competition_id = ?3 AND lower(" + side + "_name) = lower(?4) AND " + side + "_thinking = ?5")
-            .bind(toName, toThinking, competitionId, fromName, fromThinking).run();
-    }
+            .bind(toName, toThinking, competitionId, fromName, fromThinking));
+    await db.batch([...updates, ...bumpArenaStmts(db, competitionId)]);
     return { asA, asB };
 }
 // ---------------------------------------------------------------- 农场对抗赛回放
@@ -1576,12 +1683,13 @@ export async function addArenaReplay(db: D1Database, bucket: R2Bucket, raw: any,
         httpMetadata: { contentType: "application/json; charset=utf-8" },
     });
     try {
-        await db.prepare("INSERT INTO arena_replays (id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at, competition_id) " +
-            "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)")
-            .bind(row.id, row.aName, row.bName, row.seed, row.winner, row.endReason, row.steps, row.frames,
-                row.bytes, row.sha256, row.engineSha, row.matchId, row.author, row.authorId, row.createdAt,
-                row.competitionId)
-            .run();
+        await db.batch([
+            db.prepare("INSERT INTO arena_replays (id, a_name, b_name, seed, winner, end_reason, steps, frames, bytes, sha256, engine_sha, match_id, author, author_id, created_at, competition_id) " +
+                "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)")
+                .bind(row.id, row.aName, row.bName, row.seed, row.winner, row.endReason, row.steps, frames.length,
+                    row.bytes, row.sha256, row.engineSha, row.matchId, row.author, row.authorId, row.createdAt, row.competitionId),
+            ...bumpArenaStmts(db, competitionId),
+        ]);
     } catch (e) {
         await bucket.delete(replayObjectKey(id));   // D1 写失败则回收 R2，避免留下孤儿对象
         throw e;
@@ -1607,8 +1715,12 @@ export async function getArenaReplay(db: D1Database, id: string): Promise<ArenaR
 }
 
 export async function deleteArenaReplay(db: D1Database, id: string): Promise<boolean> {
-    const r = await db.prepare("UPDATE arena_replays SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL")
-        .bind(nowIso(), String(id)).run();
-    return (((r as any).meta?.changes) ?? 0) > 0;
+    const row = await getArenaReplay(db, id);
+    if (!row) return false;
+    const [r] = await db.batch([
+        db.prepare("UPDATE arena_replays SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL").bind(nowIso(), String(id)),
+        ...bumpArenaStmts(db, row.competitionId),
+    ]);
+    return (r.meta?.changes ?? 0) > 0;
 }
 

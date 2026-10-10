@@ -248,9 +248,27 @@ async function maybeFetchLuogu(pid: string, info: Record<string, unknown>) {
 async function resolveCompetitionId(ctx: any, raw: unknown): Promise<string> {
     const key = String(raw ?? "").trim().toLowerCase();
     if (!key) return store.DEFAULT_COMPETITION;
-    const c = await store.getCompetition(ctx.env.DB, key);
-    if (!c) throw new ApiError(404, "没找到比赛 " + key);
-    return c.id;
+    const id = await store.lookupCompetitionId(ctx.env.DB, key);
+    if (!id) throw new ApiError(404, "没找到比赛 " + key);
+    return id;
+}
+
+function competitionEtag(kind: string, revision: number, shape: unknown): string {
+    return `"arena:${kind}:${revision}:${encodeURIComponent(JSON.stringify(shape))}"`;
+}
+
+function conditionMatches(ctx: RouteCtx, etag: string): boolean {
+    const opaque = etag.replace(/^W\//, "");
+    return (ctx.req.headers.get("If-None-Match") || "").split(",").some((value) => {
+        const candidate = value.trim();
+        return candidate === "*" || candidate.replace(/^W\//, "") === opaque;
+    });
+}
+
+function competitionResponse(payload: unknown, etag: string, status = 200): Response {
+    return new Response(status === 304 ? null : JSON.stringify(payload), {
+        status, headers: { "Content-Type": "application/json;charset=UTF-8", ETag: etag, "Cache-Control": "private, no-cache", Vary: "Cookie" },
+    });
 }
 
 const routes: Route[] = [
@@ -270,6 +288,7 @@ const routes: Route[] = [
         // canSetup 面向「唯一初始化场景」：不泄露 SETUP_TOKEN 是否已配置（渗透报告 medium-4）
         return {
             loggedIn: !!ctx.user,
+            uid: ctx.user?.uid ?? null,
             username: ctx.user?.username ?? "",
             nickname: ctx.user?.nickname ?? "",
             role: ctx.user?.role ?? "",
@@ -356,25 +375,39 @@ const routes: Route[] = [
      *  校验器 = "<cache_epoch>:<revision>-角色"，破坏性操作会换 epoch，杜绝 revision 归零撞旧 ETag */
     { method: "GET", path: "/api/data", role: null, handler: async (ctx) => {
         const adminLike = isAtLeast(ctx.user, "admin");
-        const suffix = adminLike ? "a" : "g";
-        const inm = ctx.req.headers.get("If-None-Match");
+        const scope = adminLike ? "admin" : ctx.user ? `user:${ctx.user.uid}` : "public";
+        const view = ctx.url.searchParams.get("view") === "compact" ? "compact" : "full";
+        const suffix = `${scope}:${view}`;
+        const cacheHeaders = { "Cache-Control": "private, no-cache", Vary: "Cookie" };
         const preflight = `"${await store.readValidator(ctx.env.DB)}-${suffix}"`;
-        if (inm && inm.split(",").some((t) => t.trim() === preflight)) {
-            return new Response(null, { status: 304, headers: { ETag: preflight, "Cache-Control": "no-cache" } });
+        if (conditionMatches(ctx, preflight)) {
+            return new Response(null, { status: 304, headers: { ETag: preflight, ...cacheHeaders } });
         }
-        const snap = await store.snapshot(ctx.env.DB, ctx.user?.username ?? null, adminLike);
+        const snap = await store.snapshot(ctx.env.DB, ctx.user?.uid ?? null, adminLike, { compact: view === "compact" });
         const etag = `"${snap.epoch}:${snap.revision}-${suffix}"`;
-        if (inm && inm.split(",").some((t) => t.trim() === etag)) {
-            return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-cache" } });
+        if (conditionMatches(ctx, etag)) {
+            return new Response(null, { status: 304, headers: { ETag: etag, ...cacheHeaders } });
         }
+        const problems = view === "compact" ? Object.fromEntries(Object.entries(snap.problems).map(([pid, problem]) => {
+            const { content: _content, ...summary } = problem;
+            return [pid, { ...summary, hasPrompt: Boolean(summary.prompt.trim()) }];
+        })) : snap.problems;
         return new Response(JSON.stringify({
-            revision: snap.revision, updatedAt: snap.updatedAt, records: snap.records, problems: snap.problems,
+            epoch: snap.epoch, revision: snap.revision, scope, updatedAt: snap.updatedAt, records: snap.records, problems,
         }), {
             headers: {
                 "Content-Type": "application/json;charset=UTF-8",
                 ETag: etag,
-                "Cache-Control": "no-cache",
+                ...cacheHeaders,
             },
+        });
+    } },
+
+    { method: "GET", path: "/api/problems/:pid", role: null, handler: async (ctx) => {
+        const problem = await store.getPublishedProblem(ctx.env.DB, ctx.params.pid);
+        if (!problem) throw new ApiError(404, "题目尚未发布或已移出目录");
+        return new Response(JSON.stringify({ ok: true, problem }), {
+            headers: { "Content-Type": "application/json;charset=UTF-8", "Cache-Control": "private, no-cache", Vary: "Cookie" },
         });
     } },
 
@@ -719,7 +752,10 @@ const routes: Route[] = [
 
     // ---- 比赛（同一站点承载多个比赛；缺省比赛 = 农场对抗赛）----
     { method: "GET", path: "/api/competitions", role: null, handler: async (ctx) => {
-        return { ok: true, competitions: await store.listCompetitions(ctx.env.DB) };
+        const preflight = competitionEtag("catalog", await store.readCompetitionRevision(ctx.env.DB), "public");
+        if (conditionMatches(ctx, preflight)) return competitionResponse(null, preflight, 304);
+        const snap = await store.competitionCatalogSnapshot(ctx.env.DB);
+        return competitionResponse({ ok: true, ...snap }, competitionEtag("catalog", snap.revision, "public"));
     } },
 
     { method: "POST", path: "/api/competitions", role: "owner", handler: async (ctx) => {
@@ -731,18 +767,30 @@ const routes: Route[] = [
     } },
 
     { method: "GET", path: "/api/competitions/:slug", role: null, handler: async (ctx) => {
-        const c = await store.getCompetition(ctx.env.DB, ctx.params.slug);
+        const id = await resolveCompetitionId(ctx, ctx.params.slug);
+        const shape = ["public", id, ctx.url.searchParams.get("limit") ?? "300", ctx.url.searchParams.get("cursor") ?? ""];
+        const preflight = competitionEtag("detail", await store.readCompetitionRevision(ctx.env.DB, id), shape);
+        if (conditionMatches(ctx, preflight)) return competitionResponse(null, preflight, 304);
+        const c = await store.getCompetition(ctx.env.DB, id);
         if (!c) throw new ApiError(404, "没找到这个比赛");
-        const matches = await store.listArenaMatches(ctx.env.DB, 300, c.id);
-        const replays = await store.listArenaReplays(ctx.env.DB, 200, c.id);
-        return { ok: true, competition: c, matches, standings: store.arenaStandings(matches), replays };
+        const snap = await store.arenaSnapshot(ctx.env.DB, c.id, true);
+        const page = store.arenaMatchPage(snap.matches, ctx.url.searchParams.get("limit"), ctx.url.searchParams.get("cursor"));
+        return competitionResponse({ ok: true, competition: { ...c, matches: snap.matches.length, replays: snap.replays.length,
+            lastPlayedAt: snap.matches[0]?.playedAt ?? null }, revision: snap.revision, ...page,
+            standings: store.cachedArenaStandings(ctx.env.DB, id, snap), replays: snap.replays.slice(0, 200) },
+        competitionEtag("detail", snap.revision, shape));
     } },
 
     // ---- 农场对抗赛战绩（只登记谁和谁打、谁赢了、赢了多少）----
     { method: "GET", path: "/api/arena/matches", role: null, handler: async (ctx) => {
         const cid = await resolveCompetitionId(ctx, ctx.url.searchParams.get("competition"));
-        const rows = await store.listArenaMatches(ctx.env.DB, 300, cid);
-        return { ok: true, competitionId: cid, matches: rows, standings: store.arenaStandings(rows) };
+        const shape = ["public", cid, ctx.url.searchParams.get("limit") ?? "300", ctx.url.searchParams.get("cursor") ?? ""];
+        const preflight = competitionEtag("matches", await store.readCompetitionRevision(ctx.env.DB, cid), shape);
+        if (conditionMatches(ctx, preflight)) return competitionResponse(null, preflight, 304);
+        const snap = await store.arenaSnapshot(ctx.env.DB, cid);
+        const page = store.arenaMatchPage(snap.matches, ctx.url.searchParams.get("limit"), ctx.url.searchParams.get("cursor"));
+        return competitionResponse({ ok: true, competitionId: cid, revision: snap.revision, ...page,
+            standings: store.cachedArenaStandings(ctx.env.DB, cid, snap) }, competitionEtag("matches", snap.revision, shape));
     } },
 
     { method: "POST", path: "/api/arena/matches", role: "owner", handler: async (ctx) => {
@@ -771,11 +819,17 @@ const routes: Route[] = [
         const strict = ctx.url.searchParams.get("strict") === "1";
         const ta = String(ctx.url.searchParams.get("aThinking") ?? "").trim().toLowerCase();
         const tb = String(ctx.url.searchParams.get("bThinking") ?? "").trim().toLowerCase();
-        const rows = await store.listArenaMatches(ctx.env.DB, 1000, cid);
+        const shape = ["public", cid, a, b, strict, ta, tb];
+        const preflight = competitionEtag("h2h", await store.readCompetitionRevision(ctx.env.DB, cid), shape);
+        if (conditionMatches(ctx, preflight)) return competitionResponse(null, preflight, 304);
+        const snap = await store.arenaSnapshot(ctx.env.DB, cid);
+        const rows = snap.matches;
         const h2h = store.arenaHeadToHead(rows, a, b, ta, tb, strict);
-        const boards = store.arenaStandings(rows);
-        const eloOf = (n: string) => boards.find((s) => s.name.toLowerCase() === n.toLowerCase())?.elo ?? null;
-        return { ok: true, competitionId: cid, a: h2h.a, b: h2h.b, series: h2h.series, eloA: eloOf(a), eloB: eloOf(b) };
+        const boards = store.cachedArenaStandings(ctx.env.DB, cid, snap);
+        const eloOf = (n: string, thinking: string) => boards.find((s) => s.name.toLowerCase() === n.toLowerCase()
+            && (!strict || s.thinking === thinking))?.elo ?? null;
+        return competitionResponse({ ok: true, competitionId: cid, revision: snap.revision, a: h2h.a, b: h2h.b,
+            series: h2h.series, eloA: eloOf(a, ta), eloB: eloOf(b, tb) }, competitionEtag("h2h", snap.revision, shape));
     } },
 
     // ---- 批量改选手名 / 思考强度（只有站长；dryRun 只预览影响条数）----
@@ -826,7 +880,7 @@ const routes: Route[] = [
         if (!bucket) throw new ApiError(503, "回放存储（R2）未配置");
         const etag = "\"" + meta.sha256 + "\"";
         const cache = { ETag: etag, "Cache-Control": "public, max-age=31536000, immutable" };
-        if (ctx.req.headers.get("If-None-Match") === etag) {
+        if (conditionMatches(ctx, etag)) {
             return new Response(null, { status: 304, headers: cache });
         }
         const obj = await bucket.get(store.replayObjectKey(meta.id));

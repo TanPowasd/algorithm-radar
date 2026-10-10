@@ -53,6 +53,8 @@ export interface ProblemEntry {
     prompt: string;
     /** 题面 markdown（抓取自洛谷或管理员手动维护；标准模板会原样嵌入） */
     content: string;
+    /** compact 快照省略题面，用此标记区分未加载与确实没有题面。 */
+    hasContent?: boolean;
     /** 时间限制（ms）；未知为 null */
     timeLimit: number | null;
     /** 内存限制（MB）；未知为 null */
@@ -114,6 +116,9 @@ export function text(value: unknown, limit: number, label: string): string {
         throw badRequest(`${label} 类型不正确`);
     }
     const s = String(value).replace(/\0/g, "").trim();
+    if (label === "题目名称" && s.includes("\uFFFD")) {
+        throw badRequest("题目名称包含无效编码字符，请使用 UTF-8 编码后重新提交");
+    }
     if (s.length > limit) throw badRequest(`${label} 过长（上限 ${limit} 字）`);
     return s;
 }

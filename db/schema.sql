@@ -111,7 +111,13 @@ CREATE TABLE IF NOT EXISTS arena_matches (
     author     TEXT NOT NULL DEFAULT '',
     author_id  INTEGER,
     deleted_at TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    competition_id TEXT NOT NULL DEFAULT 'kaggriculture',
+    a_wins INTEGER,
+    b_wins INTEGER,
+    a_thinking TEXT NOT NULL DEFAULT '',
+    b_thinking TEXT NOT NULL DEFAULT '',
+    source_key TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_arena_played ON arena_matches(deleted_at, played_at DESC);
 
@@ -133,9 +139,9 @@ CREATE TABLE IF NOT EXISTS arena_replays (
     author      TEXT NOT NULL DEFAULT '',
     author_id   INTEGER,
     deleted_at  TEXT,
-    created_at  TEXT NOT NULL
-)
-CREATE INDEX IF NOT EXISTS idx_arena_replay_created ON arena_replays(deleted_at, created_at DESC)
+    created_at  TEXT NOT NULL,
+    competition_id TEXT NOT NULL DEFAULT 'kaggriculture'
+);
 CREATE INDEX IF NOT EXISTS idx_arena_replay_created ON arena_replays(deleted_at, created_at DESC);
 
 -- v3.14：比赛维度（同一站点承载多个比赛；历史数据默认归入农场对抗赛）
@@ -161,3 +167,9 @@ INSERT OR IGNORE INTO competitions (id, slug, name, subtitle, rules_url, engine_
 INSERT OR IGNORE INTO meta(key, value) VALUES ('revision', '0');
 INSERT OR IGNORE INTO meta(key, value) VALUES ('cache_epoch', '0');
 INSERT OR IGNORE INTO meta(key, value) VALUES ('data_version', '3');
+INSERT OR IGNORE INTO meta(key, value) VALUES ('competitions_revision', '0');
+
+CREATE INDEX IF NOT EXISTS idx_records_owner ON records(author_id, deleted_at, status, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_arena_comp_played ON arena_matches(competition_id, deleted_at, played_at DESC, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_arena_comp_source ON arena_matches(competition_id, source_key, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_replay_comp_created ON arena_replays(competition_id, deleted_at, created_at DESC, id DESC);
