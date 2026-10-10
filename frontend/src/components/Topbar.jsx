@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { Radar, Settings2, ShieldCheck, Sun, Moon, UserRound, LogIn } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { useApp } from '../state'
 import { api, download } from '../api/client'
-import ChangePasswordModal from './ChangePasswordModal'
+const ChangePasswordModal = lazy(() => import('./ChangePasswordModal'))
 import Hud from './Hud'
 
 const ROLE_LABELS = { owner: '站长', admin: '管理员', contributor: '贡献者' }
 
 export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud }) {
   const { session, offline, isAdmin, theme, themeMode, setThemeMode, toggleTheme,
-    widthMode, setWidthMode, toast, refreshAll } = useApp()
+    widthMode, setWidthMode, toast, refreshAll, openAuth } = useApp()
   const location = useLocation()
   const [pwOpen, setPwOpen] = useState(false)
   const [menu, setMenu] = useState(null) // 'tools' | 'admin' | 'user' | null
@@ -57,16 +58,13 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
   }
 
   const nextThemeLabel = theme === 'light' ? '切换到暗色' : '切换到亮色'
-  const isSubPage = ['/admin', '/users', '/contributors', '/prompts', '/register', '/v2'].includes(location.pathname)
+  const isSubPage = ['/admin', '/users', '/contributors', '/prompts', '/register', '/v2', '/roll'].includes(location.pathname)
 
   return (
     <header className="topbar" ref={topbarRef}>
       <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }}>
         <div className="brand">
-          <svg className="brand-mark" viewBox="0 0 28 28" fill="none" aria-hidden="true">
-            <path d="M1 9V1h8M19 1h8v8M27 19v8h-8M9 27H1v-8" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M5 20l6-9 5 5 7-11" stroke="currentColor" strokeWidth="2" />
-          </svg>
+          <Radar className="brand-mark" size={28} aria-hidden="true" />
           <h1>AI vs 洛谷</h1>
           <span className="sub">解题能力对比</span>
         </div>
@@ -75,6 +73,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
       <div className="spacer" />
 
       <nav className="topbar-nav" aria-label="主导航">
+        <Link className={`btn small ${location.pathname === '/' || location.pathname === '/v2' ? 'primary' : 'ghost'}`} to="/">评测</Link>
         {/* 常驻基础导航 */}
         <Link className={`btn small ${location.pathname === '/contributors' ? 'primary' : 'ghost'}`} to="/contributors">
           贡献者
@@ -85,8 +84,8 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
         <Link className={`btn small ${location.pathname.startsWith('/arena') ? 'primary' : 'ghost'}`} to="/arena">
           比赛
         </Link>
-        <Link className={`btn small ${location.pathname === '/v2' ? 'primary' : 'ghost'}`} to="/v2">
-          k4u-V2
+        <Link className={`btn small ${location.pathname.startsWith('/roll') ? 'primary' : 'ghost'}`} to="/roll">
+          滚榜
         </Link>
         {isSubPage && location.pathname !== '/' && (
           <Link className="btn small ghost" to="/">返回总览</Link>
@@ -101,7 +100,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
             aria-expanded={menu === 'tools'}
             title="数据导出与显示布局设置"
           >
-            数据与设置 ▾
+            <Settings2 size={15} aria-hidden="true" /><span>数据与设置</span>
           </button>
           {menu === 'tools' && (
             <div className="dropdown-menu">
@@ -157,7 +156,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
               aria-expanded={menu === 'admin'}
               style={{ color: 'var(--accent)' }}
             >
-              管理 ▾
+              <ShieldCheck size={15} aria-hidden="true" />管理
             </button>
             {menu === 'admin' && (
               <div className="dropdown-menu">
@@ -200,6 +199,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
               aria-expanded={menu === 'user'}
               style={{ display: 'flex', alignItems: 'center', gap: 6 }}
             >
+              <UserRound size={15} aria-hidden="true" />
               <span className="role-tag" style={{ fontSize: 11 }}>{ROLE_LABELS[session.role] || session.role}</span>
               <span>{session.nickname || session.username}</span>
               <span style={{ fontSize: 10, opacity: 0.7 }}>▾</span>
@@ -227,7 +227,7 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
         ) : (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <Link className="btn small ghost" to="/register">注册</Link>
-            <button className="btn small primary" onClick={onOpenAuth}>登录</button>
+            <button className="btn small primary" onClick={onOpenAuth || openAuth}><LogIn size={15} aria-hidden="true" />登录</button>
           </div>
         )}
 
@@ -238,11 +238,10 @@ export default function Topbar({ onOpenAuth, onOpenPublish, onOpenImport, hud })
           title={`${nextThemeLabel}（T）· 自动记住选择`}
           aria-label={nextThemeLabel}
         >
-          <span aria-hidden="true">{theme === 'light' ? '◐' : '◑'}</span>
-          {theme === 'light' ? '暗色' : '亮色'}
+          {theme === 'light' ? <Moon size={17} aria-hidden="true" /> : <Sun size={17} aria-hidden="true" />}
         </button>
       </nav>
-      {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
+      {pwOpen && <Suspense fallback={null}><ChangePasswordModal onClose={() => setPwOpen(false)} /></Suspense>}
     </header>
   )
 }

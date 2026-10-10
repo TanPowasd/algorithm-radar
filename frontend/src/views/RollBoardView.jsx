@@ -34,9 +34,15 @@ export default function RollBoardView({ onOpenDetail }) {
   const [flash, setFlash] = useState(() => new Set())
   const boardRef = useRef(null)
 
-  // 数据刷新后收敛游标
+  // 首次拿到数据时直接停在终盘（和 v1 一致），数据刷新后收敛游标
+  const inited = useRef(false)
   useEffect(() => {
-    setK((v) => Math.min(v === total ? total : v, total))
+    if (!inited.current && total > 0) {
+      inited.current = true
+      setK(total)
+      return
+    }
+    setK((v) => Math.min(v, total))
   }, [total])
 
   const snap = useMemo(() => rollSnapshot(events, k), [events, k])
