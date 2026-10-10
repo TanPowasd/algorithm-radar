@@ -39,3 +39,6 @@ Thumbs.db
 # 本地临时目录（不入库）
 .dsh-tmp/
 .pt-tmp/
+
+# 部署日志（本地产物）
+_deploy.log

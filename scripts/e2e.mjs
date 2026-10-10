@@ -95,6 +95,24 @@ const wranglerBin = path.join(root, 'node_modules', 'wrangler', 'bin', 'wrangler
 let child = null
 let exited = false
 
+async function localSql(command, { file, persist = PERSIST } = {}) {
+  const args = [wranglerBin, 'd1', 'execute', 'DB', '--local', '--persist-to', persist, '--json',
+    ...(file ? ['--file', file] : ['--command', command])]
+  return new Promise((resolve, reject) => {
+    const proc = spawn(process.execPath, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    let output = '', errors = ''
+    proc.stdout.on('data', (chunk) => { output += chunk })
+    proc.stderr.on('data', (chunk) => { errors += chunk })
+    proc.on('error', reject)
+    proc.on('exit', (status) => {
+      if (status !== 0) reject(new Error(`隔离 D1 SQL 失败：${errors || output}`))
+      else {
+        try { resolve(JSON.parse(output)) } catch { reject(new Error(`D1 返回不是 JSON：${output}`)) }
+      }
+    })
+  })
+}
+
 function startServer() {
   // Workers 模式（wrangler.toml: main + assets）：静态资产 + /api + Cron/限流/R2 绑定全部本地模拟
   child = spawn(process.execPath, [
@@ -146,8 +164,35 @@ process.on('SIGINT', async () => { await stopServer(); process.exit(130) })
 let code = 0
 try {
   console.log(`[e2e] 启动隔离环境：端口 ${PORT}，存储 ${PERSIST}`)
+  await localSql('', { file: path.join(root, 'db', 'schema.sql'), persist: path.join(PERSIST, 'schema-check') })
+  ok('db/schema.sql 可独立执行', true)
+  await localSql(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    INSERT INTO meta VALUES ('schema_version', 'v3.16');
+    CREATE TABLE arena_matches (
+      id TEXT PRIMARY KEY, a_name TEXT NOT NULL, b_name TEXT NOT NULL, winner TEXT NOT NULL,
+      a_cash REAL, b_cash REAL, margin REAL NOT NULL DEFAULT 0, games INTEGER NOT NULL DEFAULT 1,
+      note TEXT NOT NULL DEFAULT '', played_at TEXT NOT NULL, author TEXT NOT NULL DEFAULT '',
+      author_id INTEGER, deleted_at TEXT, created_at TEXT NOT NULL
+    );
+    CREATE TABLE arena_replays (
+      id TEXT PRIMARY KEY, a_name TEXT NOT NULL, b_name TEXT NOT NULL, seed INTEGER,
+      winner TEXT NOT NULL DEFAULT '', end_reason TEXT NOT NULL DEFAULT '', steps INTEGER NOT NULL DEFAULT 0,
+      frames INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0, sha256 TEXT NOT NULL DEFAULT '',
+      engine_sha TEXT NOT NULL DEFAULT '', match_id TEXT, author TEXT NOT NULL DEFAULT '', author_id INTEGER,
+      deleted_at TEXT, created_at TEXT NOT NULL
+    );
+    INSERT INTO arena_matches (id, a_name, b_name, winner, played_at, created_at)
+      VALUES ('legacy-upgrade', 'legacy-a', 'legacy-b', 'A', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+  `)
   startServer()
   await waitReady()
+  const migrated = await localSql("SELECT name FROM pragma_table_info('arena_matches') WHERE name IN ('competition_id', 'a_wins', 'b_wins', 'a_thinking', 'b_thinking', 'source_key')")
+  ok('v3.16 旧比赛表升级补齐六列', migrated[0]?.results?.length === 6)
+  const migrationIndexes = await localSql("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_records_owner', 'idx_arena_comp_played', 'idx_arena_comp_source', 'idx_replay_comp_created')")
+  ok('补列后建立全部新索引', migrationIndexes[0]?.results?.length === 4)
+  const migratedHistory = await call(await prime(new Jar()), 'GET', '/api/arena/matches')
+  ok('升级保留旧战绩并归入默认比赛', migratedHistory.data?.matches?.some((m) => m.id === 'legacy-upgrade' && m.competitionId === 'kaggriculture'))
   console.log('[e2e] 服务器就绪，开始权限矩阵')
 
   for (const pathname of ['/', '/contributors', '/prompts', '/register']) {
@@ -185,12 +230,18 @@ try {
 
   // 3. 管理员建目录，bob 提交并过审（造一条删号后应保留的记录）
   ok('管理员建模型', (await call(admin, 'POST', '/api/models', { name: 'GPT-5', vendor: 'OpenAI' })).data?.ok)
-  ok('管理员发布题目', (await call(admin, 'POST', '/api/problems', { pid: 'B1001', title: 'Test Problem', difficulty: 2, categories: ['simulation'] })).data?.ok)
+  ok('管理员发布题目', (await call(admin, 'POST', '/api/problems', { pid: 'B1001', problem: {
+    title: 'Test Problem', difficulty: 2, categories: ['simulation'], content: 'Full problem statement', prompt: 'Custom test prompt',
+  } })).data?.ok)
   const bobId = await idOf('bob')
   ok('bob 登录并提交测评（pending）', (await call(contrib, 'POST', '/api/login', user('bob', 'bobpass12345'))).data?.ok
     && (await call(contrib, 'POST', '/api/records', { record: { model: 'GPT-5', pid: 'B1001', thinking: 'max', difficulty: 2, submissions: [{ score: 100, result: 'AC' }], date: '2026-09-05', minutes: 10 } })).data?.record?.status === 'pending')
   const recId = ((await call(admin, 'GET', '/api/data')).data?.records ?? []).find((r) => r.author === 'bob')?.id
   ok('管理员审核通过 bob 的记录', (await call(admin, 'POST', `/api/records/${recId}/status`, { status: 'approved' })).data?.ok)
+  const oldBobPending = (await call(contrib, 'POST', '/api/records', { record: {
+    model: 'GPT-5', pid: 'B1001', thinking: 'low', difficulty: 2,
+    submissions: [{ score: 40, result: 'WA' }], date: '2026-09-05', note: 'old-bob-private',
+  } })).data?.record
 
   // 4. 权限矩阵：删除账号
   ok('管理员删除已激活贡献者 bob → 允许', (await call(admin, 'DELETE', `/api/admin/users/${bobId}`)).data?.ok)
@@ -199,15 +250,60 @@ try {
     ((await call(tmp, 'GET', '/api/data')).data?.records ?? []).some((r) => r.author === 'bob' && r.status === 'approved'))
   // 不用重新注册验证 ID 释放（注册限流 6 次/小时会撞上限）：用户列表里查不到即视为已释放
   ok('被删用户名从用户列表消失（ID 已释放）', !(await listFor()).some((u) => u.username === 'bob'))
+  await call(tmp, 'POST', '/api/auth/register', { username: 'bob', nickname: 'New Bob', password: 'newbobpass123' })
+  await call(owner, 'POST', `/api/admin/users/${await idOf('bob')}/approve`)
+  const replacementBob = await prime(new Jar())
+  await call(replacementBob, 'POST', '/api/login', user('bob', 'newbobpass123'))
+  const replacementView = await call(replacementBob, 'GET', '/api/data?view=compact')
+  ok('同名重注册不能读取旧账号 pending', oldBobPending?.id && !replacementView.data?.records?.some((r) => r.id === oldBobPending.id))
   ok('管理员删站长 → 拒绝', (await call(admin, 'DELETE', `/api/admin/users/${await idOf('boss')}`)).data?.error === '不能删除站长账号')
   ok('管理员删自己 → 拒绝', (await call(admin, 'DELETE', `/api/admin/users/${await idOf('alice')}`)).data?.error === '不能删除自己的账号')
   ok('管理员删待审账号 dave → 拒绝', (await call(admin, 'DELETE', `/api/admin/users/${await idOf('dave')}`)).data?.error === '管理员只能删除已激活的贡献者账号')
 
   // 5. 贡献者权限
   ok('eve 登录', (await call(contrib, 'POST', '/api/login', user('eve', 'evepass12345'))).data?.role === 'contributor')
+  ok('真实会话返回归属判断所需的用户ID', (await call(contrib, 'GET', '/api/session')).data?.uid === await idOf('eve'))
+  ok('游客会话用户ID为空', (await call(tmp, 'GET', '/api/session')).data?.uid === null)
   ok('贡献者看用户列表 → 403', (await call(contrib, 'GET', '/api/admin/users')).status === 403)
   ok('贡献者看审计 → 403', (await call(contrib, 'GET', '/api/admin/audit')).status === 403)
   ok('贡献者删账号 → 403', (await call(contrib, 'DELETE', `/api/admin/users/${await idOf('carl')}`)).status === 403)
+
+  const other = await prime(new Jar())
+  await call(other, 'POST', '/api/login', user('carl', 'carlpass12345'))
+  const pendingRecord = (note) => ({ model: 'GPT-5', pid: 'B1001', thinking: 'high', difficulty: 2,
+    submissions: [{ score: 75, result: 'WA', timeMs: 1000, memoryMb: 125 }], date: '2026-09-05', note })
+  const ownA = (await call(contrib, 'POST', '/api/records', { record: pendingRecord('eve-pending') })).data?.record
+  const ownB = (await call(other, 'POST', '/api/records', { record: pendingRecord('carl-pending') })).data?.record
+  const compactA = await call(contrib, 'GET', '/api/data?view=compact')
+  const compactB = await call(other, 'GET', '/api/data?view=compact')
+  const compactGuest = await call(tmp, 'GET', '/api/data?view=compact')
+  ok('compact 明确源版本与身份范围', typeof compactA.data?.epoch === 'string' && typeof compactA.data?.revision === 'number'
+    && compactA.data?.scope === `user:${await idOf('eve')}` && compactGuest.data?.scope === 'public')
+  ok('compact 不带题面并保留模板标记', !('content' in (compactA.data?.problems?.B1001 || {}))
+    && compactA.data?.problems?.B1001?.hasContent === true && compactA.data?.problems?.B1001?.hasPrompt === true)
+  ok('两名贡献者仅可读自己的 pending', compactA.data?.records?.some((r) => r.id === ownA?.id)
+    && !compactA.data?.records?.some((r) => r.id === ownB?.id)
+    && compactB.data?.records?.some((r) => r.id === ownB?.id)
+    && !compactB.data?.records?.some((r) => r.id === ownA?.id))
+  ok('游客不含 pending', compactGuest.data?.records?.every((r) => r.status === 'approved'))
+  ok('不同贡献者/游客 ETag 各自隔离', compactA.headers.get('etag') !== compactB.headers.get('etag')
+    && compactA.headers.get('etag') !== compactGuest.headers.get('etag'))
+  const scoped304 = await call(contrib, 'GET', '/api/data?view=compact', undefined, { 'If-None-Match': compactA.headers.get('etag') })
+  const wrongUserTag = await call(other, 'GET', '/api/data?view=compact', undefined, { 'If-None-Match': compactA.headers.get('etag') })
+  const wrongGuestTag = await call(tmp, 'GET', '/api/data?view=compact', undefined, { 'If-None-Match': compactA.headers.get('etag') })
+  ok('同范围 ETag 返回304，跨身份强制200', scoped304.status === 304 && wrongUserTag.status === 200 && wrongGuestTag.status === 200)
+  ok('压缩响应的弱ETag仍命中304', (await call(contrib, 'GET', '/api/data?view=compact', undefined,
+    { 'If-None-Match': 'W/' + compactA.headers.get('etag') })).status === 304)
+  const fullA = await call(contrib, 'GET', '/api/data', undefined, { 'If-None-Match': compactA.headers.get('etag') })
+  ok('默认完整形状兼容，compact ETag 不混用', fullA.status === 200 && fullA.data?.problems?.B1001?.content === 'Full problem statement'
+    && fullA.headers.get('etag') !== compactA.headers.get('etag'))
+  ok('身份响应禁止共享缓存', compactA.headers.get('cache-control')?.includes('private') && compactA.headers.get('vary') === 'Cookie')
+  const detail = await call(tmp, 'GET', '/api/problems/B1001')
+  ok('公开详情含完整题面/定制模板', detail.data?.problem?.content === 'Full problem statement' && detail.data?.problem?.prompt === 'Custom test prompt')
+  ok('未发布题目详情404', (await call(tmp, 'GET', '/api/problems/P999999')).status === 404)
+  const invalidTitle = await call(owner, 'PUT', '/api/problems/B1001', { problem: { title: 'bad\uFFFDtitle' } })
+  ok('拒绝包含编码替换字符的题名', invalidTitle.status === 400 && invalidTitle.data?.error?.includes('UTF-8'))
+  ok('编码错误不覆盖已有题名', (await call(tmp, 'GET', '/api/problems/B1001')).data?.problem?.title === detail.data?.problem?.title)
 
   // 6. 改昵称
   ok('自助改昵称生效', (await call(admin, 'POST', '/api/profile/nickname', { nickname: 'Alice II' })).data?.ok
@@ -521,6 +617,8 @@ try {
   ok('回放带 ETag 与不可变缓存', !!repEtag && (getRep.headers.get('cache-control') || '').includes('immutable'), String(repEtag))
   const notMod = await fetch(apiUrl('/api/arena/replays/' + repId), { headers: { 'If-None-Match': repEtag } })
   ok('If-None-Match 命中 → 304', notMod.status === 304, 'HTTP ' + notMod.status)
+  ok('回放弱ETag命中304', (await fetch(apiUrl('/api/arena/replays/' + repId),
+    { headers: { 'If-None-Match': 'W/' + repEtag } })).status === 304)
   const badRep = await call(owner, 'POST', '/api/arena/replays', { replay: { format: 'nope', frames: [] } })
   ok('非法回放格式 → 400', badRep.status === 400, 'HTTP ' + badRep.status)
   const delRepContrib = await call(gina, 'DELETE', '/api/arena/replays/' + repId)
@@ -668,6 +766,91 @@ try {
   ok('主界面可打开', homePage.status === 200, 'HTTP ' + homePage.status)
   ok('没有交手的两个模型 → 200 且空列表', h2hNone.status === 200 && (h2hNone.data?.series || []).length === 0,
     'HTTP ' + h2hNone.status + ' ' + JSON.stringify(h2hNone.data?.series || null))
+
+  // Full-history aggregation must remain independent of the returned match page.
+  await call(owner, 'POST', '/api/competitions', { competition: { slug: 'history-lab', name: '完整历史测试' } })
+  await localSql(`
+    WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM seq WHERE n < 1101)
+    INSERT INTO arena_matches (id, competition_id, a_name, b_name, winner, games, a_wins, b_wins, played_at, created_at)
+      SELECT printf('history-%04d', n), 'history-lab',
+        CASE WHEN n = 1 THEN 'old-a' ELSE 'current-a' END,
+        CASE WHEN n = 1 THEN 'old-b' ELSE 'current-b' END,
+        'A', 1, 1, 0, strftime('%Y-%m-%dT%H:%M:%SZ', '2026-01-01', '+' || n || ' minutes'),
+        strftime('%Y-%m-%dT%H:%M:%SZ', '2026-01-01', '+' || n || ' minutes') FROM seq;
+    UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'arena_revision:history-lab';
+  `)
+  const bigHistory = await call(tmp, 'GET', '/api/competitions/history-lab')
+  ok('旧默认仍返回300条，榜单使用全部1101条', bigHistory.data?.matches?.length === 300
+    && bigHistory.data?.pagination?.total === 1101 && bigHistory.data?.standings?.some((s) => s.name === 'old-a')
+    && bigHistory.data?.standings?.find((s) => s.name === 'current-a')?.matches === 1100)
+  const historicalH2h = await call(tmp, 'GET', '/api/arena/h2h?competition=history-lab&a=old-a&b=old-b')
+  ok('H2H 不再截断最近1000条之前的交锋', historicalH2h.data?.series?.length === 1 && historicalH2h.data?.a?.gameWins === 1)
+  const page1 = await call(tmp, 'GET', '/api/arena/matches?competition=history-lab&limit=17')
+  const page2 = await call(tmp, 'GET', '/api/arena/matches?competition=history-lab&limit=17&cursor=' + encodeURIComponent(page1.data?.pagination?.nextCursor || ''))
+  ok('cursor 分页顺序稳定且无重复', page1.data?.matches?.length === 17 && page2.data?.matches?.length === 17
+    && !page2.data.matches.some((m) => page1.data.matches.some((p) => p.id === m.id))
+    && page1.data.matches[0]?.id === 'history-1101' && page2.data.matches[0]?.id === 'history-1084')
+  ok('改变列表分页不改变全历史榜单', JSON.stringify(page1.data?.standings) === JSON.stringify(page2.data?.standings))
+  ok('非法 cursor/limit 返回400', (await call(tmp, 'GET', '/api/arena/matches?competition=history-lab&cursor=bad')).status === 400
+    && (await call(tmp, 'GET', '/api/arena/matches?competition=history-lab&limit=0')).status === 400)
+  const unchangedCup = (await call(tmp, 'GET', '/api/competitions/test-cup')).data?.revision
+  await call(owner, 'POST', '/api/arena/agents/rename', {
+    competition: 'history-lab', fromName: 'current-a', toName: 'renamed-a', dryRun: true,
+  })
+  const afterPreview = (await call(tmp, 'GET', '/api/competitions/history-lab')).data?.revision
+  ok('改名预览不推进比赛 revision', afterPreview === bigHistory.data?.revision)
+  await call(owner, 'POST', '/api/arena/agents/rename', { competition: 'history-lab', fromName: 'current-a', toName: 'renamed-a' })
+  const afterRename = (await call(tmp, 'GET', '/api/competitions/history-lab')).data?.revision
+  ok('真实改名推进比赛 revision', afterRename > afterPreview)
+  await call(owner, 'DELETE', '/api/arena/matches/history-0001')
+  const afterDelete = (await call(tmp, 'GET', '/api/competitions/history-lab')).data?.revision
+  ok('删除战绩推进比赛 revision', afterDelete > afterRename)
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'history-lab', match: { aName: 'fresh-a', bName: 'fresh-b', winner: 'A' } })
+  const afterAdd = (await call(tmp, 'GET', '/api/competitions/history-lab')).data?.revision
+  ok('新增战绩推进比赛 revision', afterAdd > afterDelete)
+  const revisionReplay = await call(owner, 'POST', '/api/arena/replays', { competition: 'history-lab', replay: cupReplay })
+  const afterReplay = (await call(tmp, 'GET', '/api/competitions/history-lab')).data?.revision
+  await call(owner, 'DELETE', '/api/arena/replays/' + revisionReplay.data?.replay?.id)
+  const afterReplayDelete = (await call(tmp, 'GET', '/api/competitions/history-lab')).data?.revision
+  ok('回放增删原子推进比赛 revision', afterReplay > afterAdd && afterReplayDelete > afterReplay)
+  ok('比赛 revision 跨比赛隔离', (await call(tmp, 'GET', '/api/competitions/test-cup')).data?.revision === unchangedCup)
+
+  const conditionalPaths = ['/api/competitions', '/api/competitions/history-lab',
+    '/api/arena/matches?competition=history-lab&limit=17',
+    '/api/arena/h2h?competition=history-lab&a=renamed-a&b=current-b&strict=1&aThinking=&bThinking=']
+  const validators = []
+  for (const pathname of conditionalPaths) {
+    const first = await call(tmp, 'GET', pathname)
+    const tag = first.headers.get('etag')
+    validators.push({ pathname, tag })
+    const same = await call(tmp, 'GET', pathname, undefined, { 'If-None-Match': tag })
+    ok(`赛事条件读取304 ${pathname}`, Boolean(tag) && same.status === 304 && same.data === null
+      && same.headers.get('cache-control')?.includes('private') && same.headers.get('vary') === 'Cookie')
+    ok(`赛事弱ETag命中304 ${pathname}`, (await call(tmp, 'GET', pathname, undefined,
+      { 'If-None-Match': 'W/' + tag })).status === 304)
+  }
+  const matchesTag = validators[2].tag
+  ok('比赛分页 limit 改变不混用ETag', (await call(tmp, 'GET', '/api/arena/matches?competition=history-lab&limit=18', undefined,
+    { 'If-None-Match': matchesTag })).status === 200)
+  ok('比赛分页 cursor 改变不混用ETag', (await call(tmp, 'GET', '/api/arena/matches?competition=history-lab&limit=17&cursor='
+    + encodeURIComponent(page1.data.pagination.nextCursor), undefined, { 'If-None-Match': matchesTag })).status === 200)
+  const h2hTag = validators[3].tag
+  for (const query of [
+    'a=current-b&b=renamed-a&strict=1&aThinking=&bThinking=',
+    'a=renamed-a&b=current-b&strict=0&aThinking=&bThinking=',
+    'a=renamed-a&b=current-b&strict=1&aThinking=max&bThinking=',
+  ]) {
+    ok(`H2H 查询形状不混用ETag ${query}`, (await call(tmp, 'GET', '/api/arena/h2h?competition=history-lab&' + query,
+      undefined, { 'If-None-Match': h2hTag })).status === 200)
+  }
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'history-lab', match: { aName: 'cache-a', bName: 'cache-b', winner: 'B' } })
+  for (const { pathname, tag } of validators) {
+    const changed = await call(tmp, 'GET', pathname, undefined, { 'If-None-Match': tag })
+    ok(`比赛写入使旧ETag失效 ${pathname}`, changed.status === 200 && changed.headers.get('etag') !== tag)
+  }
+  const memoAfterWrite = (await call(tmp, 'GET', '/api/competitions/history-lab')).data
+  ok('修订号改变后积分memo包含新选手', memoAfterWrite?.standings?.some((row) => row.name === 'cache-a')
+    && memoAfterWrite?.standings?.some((row) => row.name === 'cache-b'))
 
 } catch (e) {
   failures.push(`流程异常：${e.message}`)
