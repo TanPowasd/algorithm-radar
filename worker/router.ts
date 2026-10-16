@@ -3,7 +3,7 @@
  * 页面/静态资源由 Cloudflare Pages 直接托管，这里只处理 API。
  */
 import {
-    approveUser, AuthUser, authenticate, changePassword, countUsers, createToken, csrfCookie,
+    adminSetPassword, approveUser, AuthUser, authenticate, changePassword, countUsers, createToken, csrfCookie,
     CSRF_COOKIE, CSRF_HEADER, constantTimeEqual, cookieValue, deleteUser, findById, isAtLeast,
     listActiveContributors, listUsers, newCsrfToken, registerUser, rejectUser,
     renewAfter, sessionCookie, SESSION_COOKIE, SessionData, setRole, setupOwner, updateNickname, verifyToken,
@@ -622,6 +622,14 @@ const routes: Route[] = [
         await store.logAudit(ctx.env.DB, owner, "user.role",
             `${target?.username ?? "#" + ctx.params.id} 角色 → ${role === "admin" ? "管理员" : "贡献者"}`);
         return { ok: true };
+    } },
+
+    /** 重置指定用户的密码（站长可重置任意非站长账号，管理员只能重置贡献者）：目标账号所有设备立即下线 */
+    { method: "POST", path: "/api/admin/users/:id/password", role: "admin", handler: async (ctx) => {
+        const actor = requireRole(ctx, "admin");
+        const target = await adminSetPassword(ctx.env.DB, Number(ctx.params.id), str(ctx.body?.newPassword), actor);
+        await store.logAudit(ctx.env.DB, actor, "user.password", `重置密码 ${target.username}#${target.id}`);
+        return { ok: true, message: "密码已重置，该账号在所有设备上的登录都已失效" };
     } },
 
     /** 删除账号（物理删除）：管理员可删已激活贡献者，站长可删任意非站长账号（含待审/已拒）；测评记录保留 */

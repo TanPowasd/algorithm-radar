@@ -198,6 +198,20 @@ export async function changePassword(db: D1Database, uid: number, oldPassword: s
         .bind(await hashPassword(newPassword), uid).run();
 }
 
+/** 站长/管理员重置他人密码（不需要旧密码）：更新哈希并递增 password_version，该用户所有设备立即退出登录。
+ *  权限护栏：站长账号只能在「账号设置」里自行修改；管理员账号需站长重置 —— 防止管理员越权接管更高权限账号。 */
+export async function adminSetPassword(db: D1Database, id: number, newPassword: string, actor: AuthUser): Promise<UserRow> {
+    const user = await requireUser(db, id);
+    if (user.role === "owner") throw forbidden("站长账号的密码只能在「账号设置」里自行修改");
+    if (user.role === "admin" && !isAtLeast(actor, "owner")) throw forbidden("重置管理员密码需要站长权限");
+    if (!newPassword || newPassword.length < 8 || newPassword.length > 64) {
+        throw badRequest("新密码长度需在 8–64 位之间");
+    }
+    await db.prepare("UPDATE users SET password_hash = ?1, password_version = password_version + 1 WHERE id = ?2")
+        .bind(await hashPassword(newPassword), id).run();
+    return user;
+}
+
 // ---------------------------------------------------------------- Cookie 工具
 
 export function cookieValue(req: Request, name: string): string | null {

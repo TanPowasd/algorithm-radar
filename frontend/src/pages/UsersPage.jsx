@@ -6,12 +6,13 @@ import Topbar from '../components/Topbar'
 import AuthModal from '../components/AuthModal'
 import { api } from '../api/client'
 import TimeCell from '../components/TimeCell'
+import ResetPasswordModal from '../components/ResetPasswordModal'
 import { useUrlState } from '../hooks/useUrlState'
 
 const ROLE_LABEL = { owner: '站长', admin: '管理员', contributor: '贡献者' }
 const STATUS_LABEL = { active: '已激活', pending: '待审核', rejected: '已拒绝' }
 const ACTION_LABEL = {
-  'user.delete': '删除账号', 'user.role': '任免角色', 'user.approve': '批准注册',
+  'user.delete': '删除账号', 'user.role': '任免角色', 'user.approve': '批准注册', 'user.password': '重置密码',
   'user.reject': '拒绝注册', 'record.delete': '删除记录', 'records.bulk': '批量审核',
   'trash.purge': '永久删除', 'trash.empty': '清空回收站', 'problem.delete': '删除题目',
   'model.delete': '删除模型', 'catalog.reset': '清空目录', import: '导入数据',
@@ -26,6 +27,7 @@ export default function UsersPage() {
   const [audit, setAudit] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [pwUser, setPwUser] = useState(null) // 正在重置密码的目标用户
   const [tab, setTab] = useState(() => ['pending', 'people', 'audit'].includes(url.get('tab')) ? url.get('tab') : 'people')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
@@ -130,6 +132,7 @@ export default function UsersPage() {
                     { body: { role: r.role === 'contributor' ? 'admin' : 'contributor' } },
                   )}>{r.role === 'contributor' ? '任命管理员' : '免除管理员'}</button>}
                   {r.role !== 'owner' && <button className="btn small danger" disabled={busy} onClick={() => act(`/api/admin/users/${r.id}`, deleteConfirm(r), { method: 'DELETE' })}>删除账号</button>}
+                  {r.role !== 'owner' && (isOwner || r.role === 'contributor') && <button className="btn small ghost" disabled={busy} onClick={() => setPwUser(r)}>重置密码</button>}
                   {r.role === 'owner' && <span className="chain">站长账号受保护</span>}
                 </td>
               </tr>)}
@@ -144,5 +147,6 @@ export default function UsersPage() {
       </section>
       <footer className="foot"><Link to="/">返回评测</Link></footer>
     </main>
+    {pwUser && <ResetPasswordModal user={pwUser} onClose={() => setPwUser(null)} onDone={load} />}
   </>
 }
