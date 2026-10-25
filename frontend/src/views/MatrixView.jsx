@@ -33,6 +33,7 @@ function RankBadge({ rank }) {
  * decimal 可指定显示精度；true 兼容 5 位，false 保持旧整数显示。
  */
 const fmtScore = (v, decimal) => (decimal ? Number(v).toFixed(typeof decimal === 'number' ? decimal : 5) : Math.round(v))
+const fmtDisp = (v) => (v == null ? '' : Number(v) < 10 ? Number(v).toFixed(1) : String(Math.round(Number(v))))
 
 export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decimal = false, blankEmpty = false, onlyWithScore = false, unitScore = false, rawScores = false, compactHeader = false, toolbarExtra }) {
   const { data, loaded, focusModels, focusContributor, theme, vendorOf, uiPreferences = DEFAULT_UI_PREFERENCES } = useApp()
@@ -308,7 +309,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
         <summary>评分口径</summary>
         <p>{unitScore ? '最佳等级在有有效加权分的记录中取最高思考等级；多轮提交按边际突破折现（首轮全额计入，第 k 轮刷新历史最佳的增量乘 0.85^(k-1)，尝试未提升不倒扣分）。' : '最佳等级取最高思考等级记录的有效轮次均分；最佳分数取成绩最高的记录。有分数轮次才参与均分。'}</p>
         {rawScores && <p>AI 分数包含全部历史记录，使用洛谷原始分。</p>}
-        {unitScore && <p>单轮加权分综合三次正确性效用、题限自适应时空因子与正确率门控效能；rating 按同题模型的平滑胜势率拟合 Bradley–Terry，锚定 1000 分，显示 200 次自举的 95% 区间。</p>}
+        {unitScore && <p>单轮加权分综合三次正确性效用、经验贝叶斯多测试点时空校准与正确率门控效能；rating 基于连续准 Rasch（1PL IRT）模型联合剥离题目难度与模型能力（全体均值锚定 1000 分），并通过 200 次随机化先验自举给出估计方差、标准误（±SD）与 95% 区间。</p>}
       </details>
     </div>
   )
@@ -319,7 +320,7 @@ const MatrixBody = memo(function MatrixBody({ series, summary, ratings, ratingSt
   mode, active, isBest, unitScore, decimal, blankEmpty, emptyCell, canSubmit, onQuickAdd, onOpenDetail, showThinking }) {
   return (<tbody>
             <tr className="sum-row">
-              <th className="row-head" data-r="sum">{unitScore ? 'rating' : '整体'}</th>
+              <th className="row-head" data-r="sum">{unitScore && mode !== 'status' ? <>rating<span className="sum-sub">方差 (±SD)</span></> : unitScore ? 'rating' : '整体'}</th>
               {series.map((s, si) => {
                 const info = summary.get(s)
                 if (mode === 'status') {
@@ -334,18 +335,18 @@ const MatrixBody = memo(function MatrixBody({ series, summary, ratings, ratingSt
                   if (!ov || ov.rating === null || ov.rating === undefined) {
                     return (
                       <td key={s} className="mcell score-na" data-r="sum" data-c={'c' + si} title={info.total + ' 条记录 · 暂无可比题目'}>
-                        {emptyCell}
+                        {emptyCell}<span className="sum-sub" aria-hidden="true" />
                       </td>
                     )
                   }
                   const tip = 'IRT 能力天梯分 ' + fmtScore(ov.rating, decimal) + '（全体均值锚定 1000 分）'
                     + '\n参评 ' + (ov.problems ?? 0) + ' 题（同题比较 ' + ov.games + ' 次）· 基准胜率 ' + (ov.winShare === null ? '-' : (ov.winShare * 100).toFixed(1) + '%')
                     + '（平均掌握度 ' + (ov.avgMastery == null ? '-' : (ov.avgMastery * 100).toFixed(1) + '%') + '）'
-                    + (ratingStatus !== 'ready' || ov.lo === null || ov.hi === null ? '' : '\n95% 区间 ' + fmtScore(ov.lo, decimal) + ' ~ ' + fmtScore(ov.hi, decimal))
+                    + (ratingStatus !== 'ready' || ov.lo === null || ov.hi === null ? '' : '\n估计方差 ' + fmtScore(ov.variance, decimal) + '（标准误 ±' + fmtScore(ov.sd, decimal) + '）\n95% 区间 ' + fmtScore(ov.lo, decimal) + ' ~ ' + fmtScore(ov.hi, decimal))
                     + '\n' + ov.status
                   return (
                     <td key={s} className="mcell" data-r="sum" data-c={'c' + si} title={tip}>
-                      {fmtScore(ov.rating, decimal)}{(ov.lowSample ?? (ov.status.indexOf('样本少') === 0 || ov.status.indexOf('对局少') === 0)) ? <span className="lv">样本少</span> : null}
+                      {fmtScore(ov.rating, decimal)}{(ov.lowSample ?? (ov.status.indexOf('样本少') === 0 || ov.status.indexOf('对局少') === 0)) ? <span className="lv">样本少</span> : null}<span className="sum-sub">{ratingStatus === 'ready' && ov.variance != null ? `${fmtDisp(ov.variance)} (±${fmtDisp(ov.sd)})` : ''}</span>
                     </td>
                   )
                 }

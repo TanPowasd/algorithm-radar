@@ -564,6 +564,10 @@ td.mcell.score-na { color: var(--muted); }
 .matrix-scale i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; background: currentColor; }
 tr.sum-row th, tr.sum-row td { font-weight: 700; background: var(--surface-2); border-bottom: 2px solid var(--border); }
 tr.sum-row td.sticky-col { background: var(--surface-2); }
+.sum-row .sum-sub {
+  display: block; margin-top: 2px; height: 14px; line-height: 14px;
+  font: 10.5px var(--font-mono); font-weight: 400; color: var(--muted); white-space: nowrap;
+}
 .matrix-hint, .radar-hint, .tbar-hint, .trend-hint, .lb-hint {
   color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-2); line-height: 1.7;
 }

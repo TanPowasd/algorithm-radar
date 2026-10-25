@@ -1,7 +1,7 @@
 import { bestThinkingCell, isApproved, matrixCell, seriesKey } from './aggregate.js'
 import {
   RATING_ANCHOR, RATING_BOOTSTRAP, RATING_MIN_PROBLEMS, RATING_PRIOR_TAU, RATING_SCALE,
-  arenaGaussian, arenaRandom, createIrtSolver, emptyIrtStats, ratingNormalizedScore, setIrtCell,
+  arenaGaussian, arenaRandom, bootstrapDispersion, createIrtSolver, emptyIrtStats, ratingNormalizedScore, setIrtCell,
 } from './score.js'
 import { RATING_VERSION } from './ratingVersion.js'
 
@@ -273,7 +273,7 @@ export class IncrementalRatingEngine {
       const winShare = 1 / (1 + Math.pow(10, -(rating - anchor) / scale))
       const lowSample = problems < minProblems
       return [model, {
-        rating, problems, games, share, avgMastery, winShare, lowSample, lo: null, hi: null,
+        rating, problems, games, share, avgMastery, winShare, lowSample, variance: null, sd: null, lo: null, hi: null,
         status: lowSample ? `样本少(${problems} 题)` : '正式榜',
       }]
     }))
@@ -358,12 +358,8 @@ export class IncrementalRatingEngine {
     }
     if (cancelled()) throw new RatingCancelled()
     this.ratings = new Map([...this.ratings].map(([model, row]) => {
-      const valuesForModel = values.get(model).sort((a, b) => a - b)
-      return [model, {
-        ...row,
-        lo: valuesForModel.length ? valuesForModel[Math.floor(valuesForModel.length * 0.025)] : null,
-        hi: valuesForModel.length ? valuesForModel[Math.min(valuesForModel.length - 1, Math.floor(valuesForModel.length * 0.975))] : null,
-      }]
+      const { lo, hi, variance, sd } = bootstrapDispersion(values.get(model))
+      return [model, { ...row, variance, sd, lo, hi }]
     }))
     this.ready = true
     this.lastDiagnostics = {

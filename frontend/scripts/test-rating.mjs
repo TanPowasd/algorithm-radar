@@ -197,6 +197,9 @@ test('Quasi-Rasch IRT eliminates easy-problem ceiling penalty, cherry-picking bi
   assert.ok(Math.abs(tourist.rating - 1000) < 40, `1-problem model should shrink near 1000, got ${tourist.rating}`)
   assert.ok((tourist.hi - tourist.lo) > (strong.hi - strong.lo),
     `1-problem CI width (${tourist.hi - tourist.lo}) must exceed 8-problem CI width (${strong.hi - strong.lo})`)
+  assert.ok(tourist.variance > strong.variance && tourist.sd > strong.sd,
+    `1-problem bootstrap variance (${tourist.variance}) must exceed 8-problem variance (${strong.variance})`)
+  near(Math.sqrt(tourist.variance), tourist.sd, 1e-12)
 })
 
 test('point precedes 200 deterministic bootstrap intervals', async () => {
@@ -206,7 +209,11 @@ test('point precedes 200 deterministic bootstrap intervals', async () => {
   await engine.calculate(fixture.records, fixture.problems, { emit: (event) => events.push(event) })
   assert.deepEqual(events.map((event) => event.kind), ['point', 'ready'])
   assert.equal(events[0].ratings.get('Model-0').lo, null)
+  assert.equal(events[0].ratings.get('Model-0').variance, null)
+  assert.equal(events[0].ratings.get('Model-0').sd, null)
   assert.ok(Number.isFinite(events[1].ratings.get('Model-0').lo))
+  assert.ok(events[1].ratings.get('Model-0').variance > 0)
+  near(Math.sqrt(events[1].ratings.get('Model-0').variance), events[1].ratings.get('Model-0').sd, 1e-12)
   assert.equal(engine.samples.length, 200)
   assert.ok(engine.lastDiagnostics.maxDelta < 0.0001)
   const cold = new IncrementalRatingEngine({ seed: 'default-200' })

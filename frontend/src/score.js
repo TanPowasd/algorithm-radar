@@ -575,7 +575,30 @@ export function irtFit(players, statsOrCells, opts = {}) {
   return solver.ratings()
 }
 
-/** 同步完整 IRT 评估（含随机化先验自举 95% 区间与低样本状态），供离线分析与对照测试使用 */
+/**
+ * 由自举样本序列计算 95% 分位区间 [lo, hi]、无偏样本方差 variance 与标准误 sd（= √variance）。
+ * 采用两遍中心化平方和消除大基数截断误差；样本为空时全部返回 null。
+ */
+export function bootstrapDispersion(samples) {
+  const arr = Array.isArray(samples) ? samples.filter(Number.isFinite).sort((a, b) => a - b) : []
+  const n = arr.length
+  if (!n) return { lo: null, hi: null, variance: null, sd: null }
+  const lo = arr[Math.floor(n * 0.025)]
+  const hi = arr[Math.min(n - 1, Math.floor(n * 0.975))]
+  if (n === 1) return { lo, hi, variance: 0, sd: 0 }
+  let sum = 0
+  for (let i = 0; i < n; i++) sum += arr[i]
+  const mean = sum / n
+  let sumSq = 0
+  for (let i = 0; i < n; i++) {
+    const diff = arr[i] - mean
+    sumSq += diff * diff
+  }
+  const variance = sumSq / (n - 1)
+  return { lo, hi, variance, sd: Math.sqrt(variance) }
+}
+
+/** 同步完整 IRT 评估（含随机化先验自举方差、标准误、95% 区间与低样本状态），供离线分析与对照测试使用 */
 export function irtRating(byProblem, opts = {}) {
   const entries = byProblem instanceof Map ? [...byProblem.entries()] : Object.entries(byProblem || {})
   const cells = []
@@ -623,9 +646,7 @@ export function irtRating(byProblem, opts = {}) {
   const scale = toNum(opts.scale) ?? RATING_SCALE
   const minProblems = toNum(opts.minProblems) ?? RATING_MIN_PROBLEMS
   for (const m of players) {
-    const arr = samples.get(m).slice().sort((x, y) => x - y)
-    const lo = arr.length ? arr[Math.floor(arr.length * 0.025)] : null
-    const hi = arr.length ? arr[Math.min(arr.length - 1, Math.floor(arr.length * 0.975))] : null
+    const { lo, hi, variance, sd } = bootstrapDispersion(samples.get(m))
     const mStat = stats.models.get(m)
     const problems = mStat?.problems || 0
     let games = 0
@@ -644,6 +665,8 @@ export function irtRating(byProblem, opts = {}) {
       avgMastery: problems ? share / problems : null,
       winShare,
       lowSample,
+      variance,
+      sd,
       lo,
       hi,
       status: lowSample ? `样本少(${problems} 题)` : '正式榜',

@@ -7,6 +7,7 @@ const format = (value, decimal) => {
   const digits = typeof decimal === 'number' ? decimal : decimal ? 5 : 0
   return value == null ? '' : Number(value).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
 }
+const formatDisp = (value) => value == null ? '' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: Number(value) < 10 ? 1 : 0 })
 
 export default function ScoreLayouts({ layout, series, problems, grouped, ratings, intervalsReady, summary, mode, unitScore, decimal, url, onOpenDetail, onQuickAdd }) {
   const requested = url.get('compare', '')
@@ -40,7 +41,7 @@ export default function ScoreLayouts({ layout, series, problems, grouped, rating
       return <div key={model} className="ranking-row">
         <span className="ranking-position">{index + 1}</span>
         <div className="ranking-model"><strong>{model}</strong><span className="chain">{unitScore && mode !== 'status' ? (info ? (info.problems ?? info.games) + ' 题' + (info.lowSample ? ' · 样本少' : '') : '暂无可比题目') : (raw?.total || 0) + ' 条记录'}
-          {intervalsReady && info?.lo != null && <span className="ranking-ci"> · 95% {format(info.lo, false)}–{format(info.hi, false)}</span>}</span></div>
+          {intervalsReady && info?.lo != null && <span className="ranking-ci"> · 95% {format(info.lo, false)}–{format(info.hi, false)}{info.variance != null ? ` · 方差 ${formatDisp(info.variance)} (±${formatDisp(info.sd)})` : ''}</span>}</span></div>
         <span className="ranking-value num">{mode === 'status' && value != null ? Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 5 }) + '%' : format(value, decimal)}</span>
         <button className="icon-btn" aria-label={'比较 ' + model} title={'比较 ' + model}
           onClick={() => url.setMany({ layout: 'compare', compare: JSON.stringify([model, ...series.filter((name) => name !== model).slice(0, 1)]) })}><ChevronRight size={18} /></button>
