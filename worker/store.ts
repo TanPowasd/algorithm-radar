@@ -57,6 +57,8 @@ function mapProblem(row: any): ProblemEntry {
         content: row.content ?? "",
         ...(row.has_content === undefined ? {} : { hasContent: Boolean(row.has_content) }),
         timeLimit: row.time_limit ?? null,
+        totalTimeLimit: row.total_time_limit ?? null,
+        testCases: row.test_cases ?? null,
         memoryLimit: row.memory_limit ?? null,
         hasAttachments: Boolean(row.has_attachments),
         fetchedAt: row.fetched_at ?? "",
@@ -80,14 +82,14 @@ const updateRecStmt = (db: D1Database, r: Rec) => db.prepare(
     "status=?16, author=?17, author_id=?18, reviewer_id=?19, reviewed_at=?20, deleted_at=?21, created_at=?22, updated_at=?23 WHERE id=?1").bind(...recParams(r));
 
 const saveProblemStmt = (db: D1Database, p: ProblemEntry) => db.prepare(
-    "INSERT INTO problems(pid, title, difficulty, tags, categories, manual, prompt, content, time_limit, memory_limit, has_attachments, fetched_at) " +
-    "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) " +
+    "INSERT INTO problems(pid, title, difficulty, tags, categories, manual, prompt, content, time_limit, total_time_limit, test_cases, memory_limit, has_attachments, fetched_at) " +
+    "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) " +
     "ON CONFLICT(pid) DO UPDATE SET title=excluded.title, difficulty=excluded.difficulty, tags=excluded.tags, " +
     "categories=excluded.categories, manual=excluded.manual, prompt=excluded.prompt, content=excluded.content, " +
-    "time_limit=excluded.time_limit, memory_limit=excluded.memory_limit, has_attachments=excluded.has_attachments, " +
-    "fetched_at=excluded.fetched_at")
+    "time_limit=excluded.time_limit, total_time_limit=excluded.total_time_limit, test_cases=excluded.test_cases, " +
+    "memory_limit=excluded.memory_limit, has_attachments=excluded.has_attachments, fetched_at=excluded.fetched_at")
     .bind(p.pid, p.title, p.difficulty, JSON.stringify(p.tags), JSON.stringify(p.categories),
-        p.manual ? 1 : 0, p.prompt ?? "", p.content ?? "", p.timeLimit, p.memoryLimit,
+        p.manual ? 1 : 0, p.prompt ?? "", p.content ?? "", p.timeLimit, p.totalTimeLimit, p.testCases, p.memoryLimit,
         p.hasAttachments ? 1 : 0, p.fetchedAt);
 
 /** updatedAt 的两条 meta 语句（INSERT OR IGNORE 兜底建行 + 写当前时间） */
@@ -166,7 +168,7 @@ export async function snapshot(db: D1Database, userId: number | null, adminLike:
     let recStmt = db.prepare(`SELECT r.* FROM records r WHERE r.deleted_at IS NULL AND (${condition}) ORDER BY r.created_at, r.id`);
     if (userId !== null && !adminLike) recStmt = recStmt.bind(userId);
     const problemColumns = opts.compact
-        ? "pid, title, difficulty, tags, categories, manual, prompt, time_limit, memory_limit, has_attachments, fetched_at, (content <> '') AS has_content"
+        ? "pid, title, difficulty, tags, categories, manual, prompt, time_limit, total_time_limit, test_cases, memory_limit, has_attachments, fetched_at, (content <> '') AS has_content"
         : "*";
     // D1 batch reads the rows and their validator in one transaction.
     const statements = [
@@ -270,6 +272,8 @@ async function mergeProblemFromRecord(prev: ProblemEntry | null, rec: Rec, raw: 
         prompt: prev?.prompt || "",
         content: prev?.content ?? "",
         timeLimit: prev?.timeLimit ?? null,
+        totalTimeLimit: prev?.totalTimeLimit ?? null,
+        testCases: prev?.testCases ?? null,
         memoryLimit: prev?.memoryLimit ?? null,
         hasAttachments: Boolean(prev?.hasAttachments),
         fetchedAt: prev?.fetchedAt || (src && typeof src === "object" ? String(src.fetchedAt ?? "") : ""),
@@ -456,6 +460,8 @@ function mergeProblem(prev: ProblemEntry | null, clean: ProblemEntry, provided: 
         prompt: clean.prompt || prev?.prompt || "",
         content: clean.content || prev?.content || "",
         timeLimit: clean.timeLimit ?? prev?.timeLimit ?? null,
+        totalTimeLimit: clean.totalTimeLimit ?? prev?.totalTimeLimit ?? null,
+        testCases: clean.testCases ?? prev?.testCases ?? null,
         memoryLimit: clean.memoryLimit ?? prev?.memoryLimit ?? null,
         hasAttachments: bool("hasAttachments"),
         fetchedAt: clean.fetchedAt || prev?.fetchedAt || "",
@@ -493,6 +499,8 @@ export async function updateProblem(db: D1Database, pid: string, info: any): Pro
     const clean = sanitizeProblem(key, info);
     if (!clean) throw badRequest("题目信息格式不正确");
     if (!clean.title) throw badRequest("题名不能为空");
+    const provided = new Set(info && typeof info === "object" ? Object.keys(info) : []);
+    const sameSingleLimit = clean.timeLimit === prev.timeLimit;
     const merged: ProblemEntry = {
         pid: clean.pid,
         title: clean.title,
@@ -503,6 +511,8 @@ export async function updateProblem(db: D1Database, pid: string, info: any): Pro
         prompt: clean.prompt, // 编辑全量覆盖（留空即清空推荐提示词）
         content: clean.content, // 编辑全量覆盖（留空即清空题面）
         timeLimit: clean.timeLimit,
+        totalTimeLimit: provided.has("totalTimeLimit") ? clean.totalTimeLimit : (sameSingleLimit ? prev.totalTimeLimit : null),
+        testCases: provided.has("testCases") ? clean.testCases : (sameSingleLimit ? prev.testCases : null),
         memoryLimit: clean.memoryLimit,
         hasAttachments: clean.hasAttachments,
         fetchedAt: clean.fetchedAt || prev.fetchedAt,
@@ -521,7 +531,7 @@ export async function backfillProblemContent(
     const { results } = await db.prepare(
         // 缺题面/限制，或题面里还没有「输入输出样例」节（v3.11 早期抓取的旧数据）都算待补；
         // 本身就没有样例的题会被每次重复抓取（有 20 题/次的批量上限，浪费可接受）
-        "SELECT pid FROM problems WHERE content = '' OR time_limit IS NULL OR memory_limit IS NULL " +
+        "SELECT pid FROM problems WHERE content = '' OR time_limit IS NULL OR total_time_limit IS NULL OR test_cases IS NULL OR memory_limit IS NULL " +
         "OR content NOT LIKE '%输入样例%' ORDER BY pid",
     ).all<{ pid: string }>();
     const missing = results || [];
@@ -533,8 +543,8 @@ export async function backfillProblemContent(
         try {
             const f = await fetchLuoguProblem(pid);
             await db.prepare(
-                "UPDATE problems SET content = ?2, time_limit = ?3, memory_limit = ?4, has_attachments = ?5, fetched_at = ?6 WHERE pid = ?1",
-            ).bind(pid, f.content, f.timeLimit, f.memoryLimit, f.hasAttachments ? 1 : 0, f.fetchedAt).run();
+                "UPDATE problems SET content = ?2, time_limit = ?3, total_time_limit = ?4, test_cases = ?5, memory_limit = ?6, has_attachments = ?7, fetched_at = ?8 WHERE pid = ?1",
+            ).bind(pid, f.content, f.timeLimit, f.totalTimeLimit, f.testCases, f.memoryLimit, f.hasAttachments ? 1 : 0, f.fetchedAt).run();
             updated += 1;
         } catch {
             failed.push(pid);

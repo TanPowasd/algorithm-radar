@@ -9,10 +9,14 @@
  *      → 100 分 → 100、90 分 → 72.9、80 分 → 51.2、60 分 → 21.6、0 分 → 0
  *      三次凸效用既拉开高分子任务难度梯度，又避免过陡幂律在低分段坍缩。
  *
- * 2) 题限自适应对称对数 Hill 因子 + 正确率门控效能 E(S, t, m | P)：
- *      参考时间 T_ref = problem.timeLimit > 0 ? problem.timeLimit : 1000ms
- *      参考内存 M_ref = problem.memoryLimit > 0 ? 0.25 · problem.memoryLimit : 125MB
- *      （缺省或标准 1000ms / 500MB 题目精确退化为 1000ms / 125MB 基准点）
+ * 2) 经验贝叶斯全测试点时间校准 + 正确率门控效能 E(S, t, m | P)：
+ *      洛谷提交耗时 t = Σ_{j=1}^C t_j 为全部测试点耗时之和，而非单点最大耗时。
+ *      客观先验锚点 T_prior(P)：优先取全测试点总时限 totalTimeLimit 的 10%（标准 10 点 × 1000ms = 10000ms → 1000ms），
+ *      次取 0.10 · testCases · timeLimit，再次回退 timeLimit 或 1000ms；
+ *      对数正态经验贝叶斯后验锚点 T_ref(P)（先验伪模型数 m_0 = 2，融合同题已过审 100 分 AC 模型的组内对数均值）：
+ *        ln T_ref(P) = (m_0 · ln T_prior(P) + Σ_{m∈AC(P)} mean_i(ln t_{m,P,i})) / (m_0 + |AC(P)|)
+ *      既消除多测试点 Ynoi 卡常题（56 点跑 54s）被单点时限误判超限，又保留小数据子任务题（74 点仅跑 120ms）的常数区分度。
+ *      参考内存 M_ref = problem.memoryLimit > 0 ? 0.25 · problem.memoryLimit : 125MB（洛谷上报峰值内存 max_j m_j）。
  *
  *      wt(t | P) = 0.75 + 0.50 / (1 + (t / T_ref)^K)  ∈ (0.75, 1.25)，t = T_ref 时 = 1
  *      ws(m | P) = 0.88 + 0.24 / (1 + (m / M_ref)^K)  ∈ (0.88, 1.12)，m = M_ref 时 = 1
@@ -68,6 +72,10 @@ export const MEM_W_MAX = 1.12
 export const MEM_W_MIN = 0.88
 /** 缺省时间参考基准：1000ms 处权重恰好 1 */
 export const TIME_ANCHOR_MS = 1000
+/** 全测试点总时间限制的先验参考比例：总时限 10% 处权重为 1（标准 10 点 × 1000ms = 10000ms → 1000ms） */
+export const TIME_TOTAL_LIMIT_RATIO = 0.10
+/** 经验贝叶斯时间锚点的先验伪模型数 m_0 = 2 */
+export const TIME_EB_PRIOR_MODELS = 2
 /** 缺省内存参考基准：125MB 处权重恰好 1（对应标准 500MB 题限的 25%） */
 export const MEM_ANCHOR_MB = 125
 /** 有题目内存限制时的中性参考比例：使用题限 25% 内存时权重恰好 = 1 */
@@ -86,10 +94,93 @@ const toNum = (v) => {
   return null
 }
 
-/** 题目时间参考锚点（ms）：优先取题目 timeLimit，缺失时回退 1000ms */
-export function timeAnchorMs(problem) {
+/**
+ * 题目先验时间参考锚点 T_prior（ms）：
+ *   1) 若有洛谷全测试点总时限 totalTimeLimit（= Σ limits.time），取 0.10 · totalTimeLimit
+ *      （标准 10 点 × 1000ms 题有 totalTimeLimit = 10000ms → T_prior = 1000ms，精确保持基准不动点）；
+ *   2) 否则若同时有单点时限 timeLimit 与测试点数 testCases，取 0.10 · testCases · timeLimit；
+ *   3) 否则若有单点时限 timeLimit（兼容未补全旧题或单参单测），回退为 timeLimit；
+ *   4) 缺省回退 TIME_ANCHOR_MS（1000ms）。
+ */
+export function priorTimeAnchorMs(problem) {
+  const total = toNum(problem && problem.totalTimeLimit)
+  if (total !== null && total > 0) return total * TIME_TOTAL_LIMIT_RATIO
   const limit = toNum(problem && problem.timeLimit)
-  return limit !== null && limit > 0 ? limit : TIME_ANCHOR_MS
+  const cases = toNum(problem && problem.testCases)
+  if (limit !== null && limit > 0 && cases !== null && cases > 0) {
+    return limit * cases * TIME_TOTAL_LIMIT_RATIO
+  }
+  if (limit !== null && limit > 0) return limit
+  return TIME_ANCHOR_MS
+}
+
+/** 题目时间参考锚点 T_ref（ms）：优先取经验贝叶斯校准锚点 problem.timeAnchor，否则回退 priorTimeAnchorMs */
+export function timeAnchorMs(problem) {
+  const calibrated = toNum(problem && problem.timeAnchor)
+  if (calibrated !== null && calibrated > 0) return calibrated
+  return priorTimeAnchorMs(problem)
+}
+
+/**
+ * 数据集级经验贝叶斯时间锚点校准（对数正态共轭收缩）：
+ *   ln T_ref(P) = (m_0 · ln T_prior(P) + Σ_{m∈AC(P)} mean_i(ln t_{m,P,i})) / (m_0 + |AC(P)|)
+ * - 仅采纳已过审（status 缺省或 'approved'）且原始测评分 ≥ 100 的满分提交轮次，杜绝 WA / RE 秒退污染；
+ * - 按 model 聚合组内对数均值（1 模型 1 票），防止单一模型多思考档位重复提交主导基准；
+ * - 无模型 AC 时平滑退化为 T_prior(P)。
+ */
+export function computeProblemTimeAnchors(records, problems = {}, opts = {}) {
+  const priorModels = Math.max(0, toNum(opts && opts.priorModels) ?? TIME_EB_PRIOR_MODELS)
+  const probs = problems && typeof problems === 'object' ? problems : {}
+  const recs = Array.isArray(records) ? records : []
+  const byPidModel = new Map()
+  const pids = new Set(Object.keys(probs))
+
+  for (let rIdx = 0; rIdx < recs.length; rIdx++) {
+    const r = recs[rIdx]
+    if (!r || typeof r.pid !== 'string' || !r.pid) continue
+    pids.add(r.pid)
+    if (r.status && r.status !== 'approved') continue
+    const subs = Array.isArray(r.submissions) ? r.submissions : []
+    const modelKey = (typeof r.model === 'string' && r.model.trim()) || `__anon_${rIdx}`
+    for (let i = 0; i < subs.length; i++) {
+      const s = subs[i]
+      const raw = toNum(s && s.score)
+      const t = toNum(s && s.timeMs)
+      if (raw === null || raw < 100 || t === null || t <= 0) continue
+      let modelMap = byPidModel.get(r.pid)
+      if (!modelMap) {
+        modelMap = new Map()
+        byPidModel.set(r.pid, modelMap)
+      }
+      let acc = modelMap.get(modelKey)
+      if (!acc) {
+        acc = { sumLog: 0, count: 0 }
+        modelMap.set(modelKey, acc)
+      }
+      acc.sumLog += Math.log(t)
+      acc.count += 1
+    }
+  }
+
+  const out = new Map()
+  for (const pid of pids) {
+    const prior = priorTimeAnchorMs(probs[pid])
+    const modelMap = byPidModel.get(pid)
+    if (!modelMap || modelMap.size === 0) {
+      out.set(pid, prior)
+      continue
+    }
+    let sumModelLog = 0
+    for (const acc of modelMap.values()) {
+      sumModelLog += acc.sumLog / acc.count
+    }
+    const denom = priorModels + modelMap.size
+    const logAnchor = denom > 0
+      ? (priorModels * Math.log(prior) + sumModelLog) / denom
+      : Math.log(prior)
+    out.set(pid, Math.exp(logAnchor))
+  }
+  return out
 }
 
 /** 题目空间参考锚点（MB）：优先取题目 memoryLimit 的 25%，缺失时回退 125MB */

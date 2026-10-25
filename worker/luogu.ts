@@ -125,8 +125,12 @@ export interface LuoguProblem {
     categories: string[];
     /** 题面 markdown（背景/描述/输入输出格式/说明提示 按节拼接；空节跳过） */
     content: string;
-    /** 时间限制（ms，取各子任务最大值）；抓不到为 null */
+    /** 单测试点最大时间限制（ms，取各测试点最大值，供提示词模板使用）；抓不到为 null */
     timeLimit: number | null;
+    /** 全测试点总时间限制（ms，Σ limits.time，与洛谷提交总耗时口径一致）；抓不到为 null */
+    totalTimeLimit: number | null;
+    /** 测试点总数（limits.time.length）；抓不到为 null */
+    testCases: number | null;
     /** 内存限制（MB，limits.memory 单位是 KB，向上取整）；抓不到为 null */
     memoryLimit: number | null;
     /** 洛谷题目页是否附有附件（attachments 数组非空） */
@@ -263,8 +267,8 @@ async function loadLuoguProblem(pid: string): Promise<LuoguProblem> {
     }
     const diff = Number(problem.difficulty);
     const limits = problem.limits ?? {};
-    const timeArr = Array.isArray(limits.time) ? limits.time.map(Number).filter(Number.isFinite) : [];
-    const memArr = Array.isArray(limits.memory) ? limits.memory.map(Number).filter(Number.isFinite) : [];
+    const timeArr: number[] = Array.isArray(limits.time) ? limits.time.map(Number).filter((x: number) => Number.isFinite(x) && x > 0) : [];
+    const memArr: number[] = Array.isArray(limits.memory) ? limits.memory.map(Number).filter((x: number) => Number.isFinite(x) && x > 0) : [];
     const result: LuoguProblem = {
         pid,
         title: name,
@@ -272,7 +276,9 @@ async function loadLuoguProblem(pid: string): Promise<LuoguProblem> {
         tags: tagNames,
         categories: categorize(chainNames),
         content: composeContent(problem.content, problem.samples),
-        timeLimit: timeArr.length ? Math.max(...timeArr) : null,
+        timeLimit: timeArr.length ? Math.round(Math.max(...timeArr)) : null,
+        totalTimeLimit: timeArr.length ? Math.round(timeArr.reduce((a, b) => a + b, 0)) : null,
+        testCases: timeArr.length ? timeArr.length : null,
         memoryLimit: memArr.length ? Math.ceil(Math.max(...memArr) / 1024) : null,
         hasAttachments: Array.isArray(problem.attachments) && problem.attachments.length > 0,
         fetchedAt: nowLocal(),

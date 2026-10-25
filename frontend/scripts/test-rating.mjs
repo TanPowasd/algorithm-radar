@@ -6,6 +6,7 @@ const score = await loadRatingModule('../src/score.js')
 const aggregate = await loadRatingModule('../src/aggregate.js')
 const clientModule = await loadRatingModule('../src/ratingClient.js')
 const checkpointModule = await loadRatingModule('../src/ratingCheckpoint.js')
+const v2data = await loadRatingModule('../src/v2data.js')
 const { IncrementalRatingEngine, RatingCancelled } = engineModule
 const options = { bootstrap: 12, seed: 'rating-test', tolerance: 1e-7 }
 let passed = 0
@@ -103,6 +104,56 @@ test('weighted score, problem-adaptive anchors, AC dominance, multi-round trajec
   near(tied.get('b'), 1000, 1e-9)
   const a = score.arenaRandom('same'), b = score.arenaRandom('same')
   assert.deepEqual(Array.from({ length: 20 }, a), Array.from({ length: 20 }, b))
+})
+
+test('Empirical-Bayes multi-testcase time anchor calibrates summed Luogu timeMs fairly', () => {
+  // 1) Prior anchor hierarchy: standard 10 * 1000ms = 10000ms -> 1000ms exact identity
+  assert.equal(score.priorTimeAnchorMs({ timeLimit: 1000, totalTimeLimit: 10000, testCases: 10 }), 1000)
+  assert.equal(score.priorTimeAnchorMs({ timeLimit: 2000, testCases: 56 }), 11200)
+  assert.equal(score.priorTimeAnchorMs({ timeLimit: 8000 }), 8000)
+  assert.equal(score.priorTimeAnchorMs({}), 1000)
+
+  // 2) Ynoi heavy 56-case problem (P12082): single limit 2000ms, summed limit 112000ms, peer ACs ~54s
+  const problems = {
+    P12082: { pid: 'P12082', timeLimit: 2000, totalTimeLimit: 112000, testCases: 56, memoryLimit: 512 },
+    P17240: { pid: 'P17240', timeLimit: 3500, totalTimeLimit: 259000, testCases: 74, memoryLimit: 512 },
+  }
+  const records = [
+    { id: 'y1', model: 'M1', pid: 'P12082', status: 'approved', createdAt: '2026-09-10T00:00:00Z',
+      submissions: [{ score: 100, timeMs: 50650, memoryMb: 128, result: 'AC' }] },
+    { id: 'y2', model: 'M2', pid: 'P12082', status: 'approved', createdAt: '2026-09-10T00:00:00Z',
+      submissions: [{ score: 100, timeMs: 54250, memoryMb: 128, result: 'AC' }] },
+    { id: 'y3', model: 'M3', pid: 'P12082', status: 'approved', createdAt: '2026-09-10T00:00:00Z',
+      submissions: [{ score: 100, timeMs: 65000, memoryMb: 128, result: 'AC' }] },
+    // Fast 0/60 WA and unapproved pending records MUST NOT pollute the peer AC anchor
+    { id: 'y-wa', model: 'FastFail', pid: 'P12082', status: 'approved', createdAt: '2026-09-10T00:00:00Z',
+      submissions: [{ score: 60, timeMs: 5, memoryMb: 4, result: 'WA' }] },
+    { id: 'y-pend', model: 'Pending', pid: 'P12082', status: 'pending', createdAt: '2026-09-10T00:00:00Z',
+      submissions: [{ score: 100, timeMs: 1, memoryMb: 4, result: 'AC' }] },
+    // Duplicate thinking variants of M3 get 1 model vote, not multiple votes
+    { id: 'y3-low', model: 'M3', pid: 'P12082', status: 'approved', createdAt: '2026-09-10T00:00:00Z',
+      submissions: [{ score: 100, timeMs: 65000, memoryMb: 128, result: 'AC' }] },
+    // IOI small-subtask problem (P17240): summed limit 259s, peer ACs 100ms vs 200ms
+    { id: 's1', model: 'M1', pid: 'P17240', status: 'approved', createdAt: '2026-09-10T00:00:00Z',
+      submissions: [{ score: 100, timeMs: 100, memoryMb: 64, result: 'AC' }] },
+    { id: 's2', model: 'M2', pid: 'P17240', status: 'approved', createdAt: '2026-09-10T00:00:00Z',
+      submissions: [{ score: 100, timeMs: 200, memoryMb: 64, result: 'AC' }] },
+    { id: 's3', model: 'M3', pid: 'P17240', status: 'approved', createdAt: '2026-09-10T00:00:00Z',
+      submissions: [{ score: 100, timeMs: 150, memoryMb: 64, result: 'AC' }] },
+  ]
+  const anchors = score.computeProblemTimeAnchors(records, problems)
+  // Exact 3-model EB log-mean check (M3 deduplicated; FastFail & Pending ignored)
+  const expectedP12082 = Math.exp((2 * Math.log(11200) + Math.log(50650) + Math.log(54250) + Math.log(65000)) / 5)
+  near(anchors.get('P12082'), expectedP12082, 1e-6)
+
+  const ds = v2data.toV2Dataset({ problems, records })
+  assert.deepEqual(Object.keys(ds.problems), ['P12082', 'P17240'])
+  const wtYnoi = score.timeWeight(54250, ds.problems.P12082)
+  assert.ok(wtYnoi > 0.90, `Ynoi median AC timeWeight ${wtYnoi} should not be docked to 0.77`)
+  // P17240 speed spread between 100ms and 200ms is preserved (instead of saturating at 1.248 vs 25900ms)
+  const s1Score = ds.records.find((r) => r.id === 's1').submissions[0].score
+  const s2Score = ds.records.find((r) => r.id === 's2').submissions[0].score
+  assert.ok(s1Score - s2Score > 1.0, `Expected meaningful speed spread on P17240: ${s1Score} vs ${s2Score}`)
 })
 
 test('Quasi-Rasch IRT eliminates easy-problem ceiling penalty, cherry-picking bias, and narrow 1-problem CIs', () => {

@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS problems (
     prompt      TEXT NOT NULL DEFAULT '',
     content     TEXT NOT NULL DEFAULT '',
     time_limit  INTEGER,
+    total_time_limit INTEGER,
+    test_cases  INTEGER,
     memory_limit INTEGER,
     has_attachments INTEGER NOT NULL DEFAULT 0,
     fetched_at  TEXT

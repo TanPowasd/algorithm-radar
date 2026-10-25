@@ -33,6 +33,8 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
     prompt: editProblem?.prompt || '',
     content: editProblem?.content || '',
     timeLimit: editProblem?.timeLimit ?? '',
+    totalTimeLimit: editProblem?.totalTimeLimit ?? '',
+    testCases: editProblem?.testCases ?? '',
     memoryLimit: editProblem?.memoryLimit ?? '',
     hasAttachments: Boolean(editProblem?.hasAttachments),
     manual: Boolean(editProblem?.manual),
@@ -68,6 +70,8 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
         tags: (info.tags || []).join('、'),
         content: info.content || form.content,
         timeLimit: info.timeLimit ?? form.timeLimit,
+        totalTimeLimit: info.totalTimeLimit ?? form.totalTimeLimit,
+        testCases: info.testCases ?? form.testCases,
         memoryLimit: info.memoryLimit ?? form.memoryLimit,
         hasAttachments: Boolean(info.hasAttachments),
         manual: false,
@@ -93,6 +97,8 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
         prompt: form.prompt,
         content: form.content,
         timeLimit: form.timeLimit === '' ? null : Number(form.timeLimit),
+        totalTimeLimit: form.totalTimeLimit === '' ? null : Number(form.totalTimeLimit),
+        testCases: form.testCases === '' ? null : Number(form.testCases),
         memoryLimit: form.memoryLimit === '' ? null : Number(form.memoryLimit),
         hasAttachments: form.hasAttachments,
         manual: form.manual,
@@ -172,12 +178,22 @@ export default function PublishModal({ onClose, initialPid, onPublished, editPro
           />
           <div className="grid2" style={{ marginTop: 8 }}>
             <div className="field">
-              <label>时间限制（ms，可空）</label>
+              <label>单点时间限制（ms，可空）</label>
               <input type="number" min="1" value={form.timeLimit ?? ''} onChange={(e) => set({ timeLimit: e.target.value })} placeholder="1000" />
             </div>
             <div className="field">
               <label>内存限制（MB，可空）</label>
               <input type="number" min="1" value={form.memoryLimit ?? ''} onChange={(e) => set({ memoryLimit: e.target.value })} placeholder="512" />
+            </div>
+          </div>
+          <div className="grid2" style={{ marginTop: 8 }}>
+            <div className="field">
+              <label>全测试点总时限（ms，抓取自动求和，可空）</label>
+              <input type="number" min="1" value={form.totalTimeLimit ?? ''} onChange={(e) => set({ totalTimeLimit: e.target.value })} placeholder="10000" />
+            </div>
+            <div className="field">
+              <label>测试点个数（抓取自动带入，可空）</label>
+              <input type="number" min="1" value={form.testCases ?? ''} onChange={(e) => set({ testCases: e.target.value })} placeholder="10" />
             </div>
           </div>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 'var(--fs-sm)', color: 'var(--text-2)' }}>

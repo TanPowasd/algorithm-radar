@@ -55,8 +55,12 @@ export interface ProblemEntry {
     content: string;
     /** compact 快照省略题面，用此标记区分未加载与确实没有题面。 */
     hasContent?: boolean;
-    /** 时间限制（ms）；未知为 null */
+    /** 单点时间限制（ms）；未知为 null */
     timeLimit: number | null;
+    /** 全测试点总时间限制（ms，Σ limits.time）；未知为 null */
+    totalTimeLimit: number | null;
+    /** 测试点个数；未知为 null */
+    testCases: number | null;
     /** 内存限制（MB）；未知为 null */
     memoryLimit: number | null;
     /** 洛谷题目页是否存在附件（复制提示词后前端据此弹下载提醒） */
@@ -267,6 +271,8 @@ export function sanitizeProblem(pidRaw: unknown, raw: any): ProblemEntry | null 
         prompt: text(raw.prompt, 4000, "推荐提示词"),
         content: text(raw.content, MAX_CONTENT, "题面内容"),
         timeLimit: intOrNull(raw.timeLimit, 1, 86_400_000, "时间限制"),
+        totalTimeLimit: intOrNull(raw.totalTimeLimit, 1, 864_000_000, "总时间限制"),
+        testCases: intOrNull(raw.testCases, 1, 100_000, "测试点数"),
         memoryLimit: intOrNull(raw.memoryLimit, 1, 1_048_576, "内存限制"),
         hasAttachments: Boolean(raw.hasAttachments),
         fetchedAt: text(raw.fetchedAt, 40, "抓取时间"),

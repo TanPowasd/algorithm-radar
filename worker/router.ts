@@ -225,6 +225,8 @@ async function maybeFetchLuogu(pid: string, info: Record<string, unknown>) {
         if (needContent) {
             info.content = fetched.content;
             info.timeLimit = fetched.timeLimit;
+            info.totalTimeLimit = fetched.totalTimeLimit;
+            info.testCases = fetched.testCases;
             info.memoryLimit = fetched.memoryLimit;
         }
         // 附件标记：抓取结果可信（attachments 数组）；管理员随后可手动覆盖

@@ -13,7 +13,7 @@
 import { POST_MIGRATION_STATEMENTS, SCHEMA_STATEMENTS } from "./schema";
 
 /** 与下方 MIGRATIONS 一一对应的版本号；改动迁移列表就必须 +1 */
-export const SCHEMA_VERSION = "v3.17";
+export const SCHEMA_VERSION = "v3.18";
 
 let ready: Promise<void> | null = null;
 
@@ -40,6 +40,9 @@ const MIGRATIONS: Array<[string, string, string]> = [
     ["arena_matches", "a_thinking", "ALTER TABLE arena_matches ADD COLUMN a_thinking TEXT NOT NULL DEFAULT ''"],
     ["arena_matches", "b_thinking", "ALTER TABLE arena_matches ADD COLUMN b_thinking TEXT NOT NULL DEFAULT ''"],
     ["arena_matches", "source_key", "ALTER TABLE arena_matches ADD COLUMN source_key TEXT NOT NULL DEFAULT ''"],
+    // v3.18：洛谷全测试点总时间限制（Σ limits.time）与测试点个数，供时间权重经验贝叶斯校准使用
+    ["problems", "total_time_limit", "ALTER TABLE problems ADD COLUMN total_time_limit INTEGER"],
+    ["problems", "test_cases", "ALTER TABLE problems ADD COLUMN test_cases INTEGER"],
 ];
 
 async function migrate(db: D1Database): Promise<void> {

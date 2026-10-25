@@ -232,6 +232,7 @@ try {
   ok('管理员建模型', (await call(admin, 'POST', '/api/models', { name: 'GPT-5', vendor: 'OpenAI' })).data?.ok)
   ok('管理员发布题目', (await call(admin, 'POST', '/api/problems', { pid: 'B1001', problem: {
     title: 'Test Problem', difficulty: 2, categories: ['simulation'], content: 'Full problem statement', prompt: 'Custom test prompt',
+    timeLimit: 2000, totalTimeLimit: 112000, testCases: 56, memoryLimit: 512,
   } })).data?.ok)
   const bobId = await idOf('bob')
   ok('bob 登录并提交测评（pending）', (await call(contrib, 'POST', '/api/login', user('bob', 'bobpass12345'))).data?.ok
@@ -300,6 +301,9 @@ try {
   ok('身份响应禁止共享缓存', compactA.headers.get('cache-control')?.includes('private') && compactA.headers.get('vary') === 'Cookie')
   const detail = await call(tmp, 'GET', '/api/problems/B1001')
   ok('公开详情含完整题面/定制模板', detail.data?.problem?.content === 'Full problem statement' && detail.data?.problem?.prompt === 'Custom test prompt')
+  ok('compact 与详情同步回传全测试点总时限与点数',
+    compactA.data?.problems?.B1001?.totalTimeLimit === 112000 && compactA.data?.problems?.B1001?.testCases === 56
+    && detail.data?.problem?.totalTimeLimit === 112000 && detail.data?.problem?.testCases === 56)
   ok('未发布题目详情404', (await call(tmp, 'GET', '/api/problems/P999999')).status === 404)
   const invalidTitle = await call(owner, 'PUT', '/api/problems/B1001', { problem: { title: 'bad\uFFFDtitle' } })
   ok('拒绝包含编码替换字符的题名', invalidTitle.status === 400 && invalidTitle.data?.error?.includes('UTF-8'))
