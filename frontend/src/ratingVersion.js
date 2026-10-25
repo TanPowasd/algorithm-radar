@@ -1,1 +1,1 @@
-export const RATING_VERSION = 1
+export const RATING_VERSION = 3

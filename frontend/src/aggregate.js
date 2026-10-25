@@ -5,6 +5,7 @@
  */
 
 import { vendorColorMap } from './palette'
+import { trajectoryScore } from './score.js'
 
 export const RESULTS = ['AC', 'WA', 'TLE', 'MLE', 'RE', 'CE', '未解出']
 export const THINKING_LEVELS = ['ultra', 'max', 'xhigh', 'high', 'medium', 'low', 'off']
@@ -109,10 +110,14 @@ export const avgRoundScore = (r) => {
   if (!scores.length) return null
   return scores.reduce((a, b) => a + b, 0) / scores.length
 }
-/** 趋势/矩阵口径取值：first=首轮分 final=末轮有分数 avgscore=全轮均分 */
+/** 该记录的多轮边际突破折现综合分（rating 模式专用；全部无有效分为 null） */
+export const trajectoryRecordScore = (r) =>
+  trajectoryScore((r && r.submissions ? r.submissions : []).map((s) => s && s.score))
+/** 趋势/矩阵口径取值：first=首轮分 final=末轮有分数 trajectory=多轮折现轨迹分 avgscore=全轮均分 */
 export function metricScore(r, metric) {
   if (metric === 'first') return firstRoundScore(r)
   if (metric === 'final') return finalRoundScore(r)
+  if (metric === 'trajectory') return trajectoryRecordScore(r)
   return avgRoundScore(r)
 }
 
@@ -172,6 +177,10 @@ export function bestThinkingCell(recs, mode = 'level', metric = 'avgscore') {
     } else {
       pick = bestLevelRecords(recs)
     }
+  } else if (metric === 'trajectory') {
+    // rating 模式下优先在有有效加权分的记录里取最高思考等级，避免旧空分记录遮挡有效成绩
+    const withVal = recs.filter((r) => trajectoryRecordScore(r) !== null)
+    pick = bestLevelRecords(withVal.length ? withVal : recs)
   } else {
     pick = bestLevelRecords(recs)
   }
@@ -180,9 +189,9 @@ export function bestThinkingCell(recs, mode = 'level', metric = 'avgscore') {
   const failed = pick.length - passed - gaveUp
   const kind = passed > 0 ? 'ac' : failed > 0 ? 'fail' : 'giveup'
   const info = roundsAvg(pick)
-  const useFinal = metric === 'final' || metric === 'first'
+  const usePerRecord = metric === 'final' || metric === 'first' || metric === 'trajectory'
   let value = null
-  if (useFinal) {
+  if (usePerRecord) {
     const vals = pick.map((r) => metricScore(r, metric)).filter((v) => v !== null)
     if (vals.length) value = vals.reduce((a, c) => a + c, 0) / vals.length
   } else {
@@ -330,7 +339,19 @@ export function matrixCell(records, series, pid) {
     }
     return n ? { avg: sum / n, n } : null
   })()
-  return { kind, passed, failed, gaveUp, total: recs.length, scoreInfo, finalInfo, recs }
+  const trajectoryInfo = (() => {
+    let sum = 0
+    let n = 0
+    for (const r of recs) {
+      const s = trajectoryRecordScore(r)
+      if (s !== null) {
+        sum += s
+        n += 1
+      }
+    }
+    return n ? { avg: sum / n, n } : null
+  })()
+  return { kind, passed, failed, gaveUp, total: recs.length, scoreInfo, finalInfo, trajectoryInfo, recs }
 }
 
 /** 明细表筛选 */

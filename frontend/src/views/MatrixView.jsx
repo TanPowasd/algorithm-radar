@@ -93,11 +93,11 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
   }, [approved])
 
   /**
-   * v2 首行「rating」= Chatbot Arena 模式（Bradley-Terry / Elo + 分差加权）：
-   *   1) 每题取各模型的加权分 s（= 该格显示的值）；
-   *   2) 同题两模型比一场，单场胜势积分 = 自身 s ÷（自身 s + 对手 s）（大胜 > 险胜）；
-   *   3) 用 Bradley-Terry 最大似然拟合 P(i 胜 j) = 1 ÷ (1 + 10^(−(Ri−Rj)/400))，MM 迭代，全体锚定 1000；
-   *   4) 自举重采样给 95% 区间；对局 < 10 标「对局少」。
+   * v2 首行「rating」= 连续准 Rasch / 1PL 项目反应理论（Quasi-Rasch IRT）：
+   *   1) 每道有效可比题（同题 ≥2 模型有分）取该格多轮轨迹综合分 V ∈ [0, 140)，映射为掌握度 y ∈ (0, 1)；
+   *   2) 联合估计模型潜能力 θ_m 与题目潜难度 β_p：E[y_{m,p}] = 1 ÷ (1 + e^(−(θ_m − β_p)))；
+   *   3) 阻尼牛顿法求解高斯先验最大后验（MAP），全体模型算术均值精确锚定 1000 分；
+   *   4) 随机化先验自举给 95% 区间；参评可比题 < 5 题标「样本少」。
    * 格子里的加权分不受影响。
    */
   const publicDefault = (!focusModels || focusModels.size === 0) && focusContributor == null && (data.scope || 'public') === 'public'
@@ -105,12 +105,13 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
   const incremental = useIncrementalRating({ records: approved, problems: data.problems, epoch: data.epoch || '0',
     scope: ratingScope, mode, enabled: unitScore && mode !== 'status', cachePublic: publicDefault })
   const ratings = incremental.ratings
+  const baseMetric = unitScore ? 'trajectory' : 'avgscore'
 
   // —— 列（AI）：按“每条记录全轮均分再平均”从高到低排 ——
   const series = useMemo(() => {
     const perModel = new Map()
     for (const r of approved) {
-      const v = metricScore(r, 'avgscore')
+      const v = metricScore(r, baseMetric)
       if (v === null) continue
       if (!perModel.has(seriesKey(r))) perModel.set(seriesKey(r), [])
       perModel.get(seriesKey(r)).push(v)
@@ -128,14 +129,14 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
     }
     return [...s].sort((a, b) => (avgOf.get(b) ?? -1) - (avgOf.get(a) ?? -1)
       || a.localeCompare(b, 'zh-Hans-CN'))
-  }, [approved, unitScore, ratings, onlyWithScore])
+  }, [approved, unitScore, ratings, onlyWithScore, baseMetric])
 
   // —— 行（题目）：按每题整体均分从高到低排 ——
   const problems = useMemo(() => {
     const list = Object.values(data.problems || {})
     const byPid = new Map()
     for (const r of approved) {
-      const v = metricScore(r, 'avgscore')
+      const v = metricScore(r, baseMetric)
       if (v === null) continue
       if (!byPid.has(r.pid)) byPid.set(r.pid, [])
       byPid.get(r.pid).push(v)
@@ -152,7 +153,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
       return (a.difficulty ?? 9) - (b.difficulty ?? 9) || a.pid.localeCompare(b.pid)
     })
     return list
-  }, [approved, data.problems])
+  }, [approved, data.problems, baseMetric])
 
   // 只缩小可见行，不改变整体统计、题目排名或其他视图的数据。
   const visibleProblems = useMemo(() => {
@@ -169,7 +170,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
       if (!b) { b = { sum: 0, n: 0, passed: 0, total: 0 }; byModel.set(key, b) }
       b.total += 1
       if (isPassed(r)) b.passed += 1
-      const v = metricScore(r, mode === 'final' ? 'final' : 'avgscore')
+      const v = metricScore(r, mode === 'final' ? 'final' : baseMetric)
       if (v !== null) { b.sum += v; b.n += 1 }
     }
     const map = new Map()
@@ -183,7 +184,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
       })
     }
     return map
-  }, [approved, series, mode])
+  }, [approved, series, mode, baseMetric])
 
   /* 十字高亮：命中行/列的格子打上 data-*-hit，靠 CSS 上色（避免逐格 re-render） */
   const clearHits = (table) => {
@@ -251,7 +252,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
         {searchInput && <button className="btn small ghost" onClick={clearSearch}>清除查找</button>}
         <label className="matrix-mode-select"><span className={compactHeader ? 'control-label-hidden' : undefined}>成绩口径</span>
           <select aria-label="单元格口径" value={mode} onChange={(event) => setMode(event.target.value)}>
-            {MODES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+            {MODES.map((item) => <option key={item.key} value={item.key}>{unitScore && item.key === 'avg' ? '全等级综合' : item.label}</option>)}
           </select>
         </label>
         {compactHeader && <span className={'matrix-count' + (!deferredQuery && !focusModels?.size && focusContributor == null && uiPreferences.features.stats ? ' control-label-hidden' : '')}>
@@ -305,9 +306,9 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
       </div>}
       <details className="matrix-hint">
         <summary>评分口径</summary>
-        <p>最佳等级取最高思考等级记录的有效轮次均分；最佳分数取成绩最高的记录。有分数轮次才参与均分。</p>
+        <p>{unitScore ? '最佳等级在有有效加权分的记录中取最高思考等级；多轮提交按边际突破折现（首轮全额计入，第 k 轮刷新历史最佳的增量乘 0.85^(k-1)，尝试未提升不倒扣分）。' : '最佳等级取最高思考等级记录的有效轮次均分；最佳分数取成绩最高的记录。有分数轮次才参与均分。'}</p>
         {rawScores && <p>AI 分数包含全部历史记录，使用洛谷原始分。</p>}
-        {unitScore && <p>加权分使用原始成绩与每轮时间、内存。rating 按同题模型的胜势积分拟合 Bradley–Terry，锚定 1000 分，显示 200 次自举的 95% 区间。</p>}
+        {unitScore && <p>单轮加权分综合三次正确性效用、题限自适应时空因子与正确率门控效能；rating 按同题模型的平滑胜势率拟合 Bradley–Terry，锚定 1000 分，显示 200 次自举的 95% 区间。</p>}
       </details>
     </div>
   )
@@ -332,19 +333,19 @@ const MatrixBody = memo(function MatrixBody({ series, summary, ratings, ratingSt
                   const ov = ratings.get(s)
                   if (!ov || ov.rating === null || ov.rating === undefined) {
                     return (
-                      <td key={s} className="mcell score-na" data-r="sum" data-c={'c' + si} title={info.total + ' 条记录 · 没有可比的对局'}>
+                      <td key={s} className="mcell score-na" data-r="sum" data-c={'c' + si} title={info.total + ' 条记录 · 暂无可比题目'}>
                         {emptyCell}
                       </td>
                     )
                   }
-                  const tip = 'Arena 天梯分 ' + fmtScore(ov.rating, decimal) + '（全体锚定 1000 分）'
-                    + '\n对局 ' + ov.games + ' 局 · 胜势率 ' + (ov.winShare === null ? '-' : (ov.winShare * 100).toFixed(1) + '%')
-                    + '（胜势积分合计 ' + fmtScore(ov.share, decimal) + '）'
+                  const tip = 'IRT 能力天梯分 ' + fmtScore(ov.rating, decimal) + '（全体均值锚定 1000 分）'
+                    + '\n参评 ' + (ov.problems ?? 0) + ' 题（同题比较 ' + ov.games + ' 次）· 基准胜率 ' + (ov.winShare === null ? '-' : (ov.winShare * 100).toFixed(1) + '%')
+                    + '（平均掌握度 ' + (ov.avgMastery == null ? '-' : (ov.avgMastery * 100).toFixed(1) + '%') + '）'
                     + (ratingStatus !== 'ready' || ov.lo === null || ov.hi === null ? '' : '\n95% 区间 ' + fmtScore(ov.lo, decimal) + ' ~ ' + fmtScore(ov.hi, decimal))
                     + '\n' + ov.status
                   return (
                     <td key={s} className="mcell" data-r="sum" data-c={'c' + si} title={tip}>
-                      {fmtScore(ov.rating, decimal)}{ov.status.indexOf('对局少') === 0 ? <span className="lv">对局少</span> : null}
+                      {fmtScore(ov.rating, decimal)}{(ov.lowSample ?? (ov.status.indexOf('样本少') === 0 || ov.status.indexOf('对局少') === 0)) ? <span className="lv">样本少</span> : null}
                     </td>
                   )
                 }
@@ -411,7 +412,7 @@ const MatrixRow = memo(function MatrixRow({ p, rank, pi, series, grouped, mode, 
                   }
                   if (mode === 'status') {
                     const c = matrixCell(recs, s, p.pid)
-                    const disabled = unitScore && !c.scoreInfo;
+                    const disabled = unitScore && !c.trajectoryInfo;
                     const cls = c.kind === 'ac' ? 'ac' : c.kind === 'fail' ? 'fail' : 'giveup'
                     const label = c.kind === 'ac' ? 'AC' : c.kind === 'fail' ? '未过' : '放弃'
                     return (
@@ -424,7 +425,7 @@ const MatrixRow = memo(function MatrixRow({ p, rank, pi, series, grouped, mode, 
                     )
                   }
                   if (isBest) {
-                    const c = bestThinkingCell(recs, active.best, 'avgscore')
+                    const c = bestThinkingCell(recs, active.best, unitScore ? 'trajectory' : 'avgscore')
                     if (c.value === null) {
                       const cls = c.kind === 'ac' ? 'ac' : c.kind === 'fail' ? 'fail' : 'giveup'
                       return (
@@ -447,13 +448,13 @@ const MatrixRow = memo(function MatrixRow({ p, rank, pi, series, grouped, mode, 
                     )
                   }
                   const c = matrixCell(recs, s, p.pid)
-                  const info = mode === 'final' ? c.finalInfo : c.scoreInfo
+                  const info = mode === 'final' ? c.finalInfo : (unitScore ? c.trajectoryInfo : c.scoreInfo)
                   if (!info) return <td key={s} className="mcell score-na" {...cellProps} aria-disabled={unitScore || undefined}>{emptyCell}</td>
                   const avg = fmtScore(info.avg, decimal)
                   return (
                     <td
                       key={s} className={`mcell ${scoreTierClass(Math.round(info.avg))}`} {...cellProps} {...cellKeyboard(p.pid, s)}
-                      title={`n=${info.n}（有分数轮次）`}
+                      title={unitScore && mode !== 'final' ? `n=${info.n}（有效加权记录）` : `n=${info.n}（有分数轮次）`}
                       onClick={() => onOpenDetail && onOpenDetail(p.pid, s)}
                     >{avg}</td>
                   )

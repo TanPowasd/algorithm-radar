@@ -83,7 +83,7 @@ if (largeBootstrap !== bootstrap && process.env.RATING_SKIP_LARGE_FULL !== '1') 
   })
 }
 console.log(JSON.stringify({
-  node: process.version, scoring: 'MM convergence <0.0001 Elo for three iterations; seed benchmark-v1',
+  node: process.version, scoring: 'Quasi-Rasch IRT damped Newton <0.0001 Elo for three iterations; seed benchmark-v1',
   note: largeBootstrap === bootstrap ? 'All profiles use the production bootstrap count.'
     : 'Large repeated profile reduces bootstrap count to bound runtime; an additional production-count cold run is reported separately.',
   profiles,

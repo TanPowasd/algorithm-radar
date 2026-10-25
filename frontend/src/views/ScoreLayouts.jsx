@@ -24,10 +24,12 @@ export default function ScoreLayouts({ layout, series, problems, grouped, rating
   const score = (model, pid) => {
     const records = grouped.get(model + '\u0000' + pid) || []
     if (!records.length) return null
-    if (mode === 'bestLevel' || mode === 'bestScore') return bestThinkingCell(records, mode === 'bestLevel' ? 'level' : 'score', 'avgscore').value
+    if (mode === 'bestLevel' || mode === 'bestScore') {
+      return bestThinkingCell(records, mode === 'bestLevel' ? 'level' : 'score', unitScore ? 'trajectory' : 'avgscore').value
+    }
     const cell = matrixCell(records, model, pid)
     if (mode === 'status') return cell.kind === 'ac' ? 'AC' : cell.kind === 'fail' ? '未过' : '放弃'
-    return (mode === 'final' ? cell.finalInfo : cell.scoreInfo)?.avg ?? null
+    return (mode === 'final' ? cell.finalInfo : (unitScore ? cell.trajectoryInfo : cell.scoreInfo))?.avg ?? null
   }
   if (layout === 'ranking') return <div className="ranking-list" aria-label="模型排名">
     <div className="ranking-list-head"><span>排名 / 模型</span><span>{mode === 'status' ? '通过率' : unitScore ? 'rating' : '平均分'}</span></div>
@@ -37,7 +39,7 @@ export default function ScoreLayouts({ layout, series, problems, grouped, rating
       const value = mode === 'status' ? raw?.passRate : unitScore ? info?.rating : raw?.avg
       return <div key={model} className="ranking-row">
         <span className="ranking-position">{index + 1}</span>
-        <div className="ranking-model"><strong>{model}</strong><span className="chain">{unitScore && mode !== 'status' ? (info ? info.games + ' 局' : '暂无可比对局') : (raw?.total || 0) + ' 条记录'}
+        <div className="ranking-model"><strong>{model}</strong><span className="chain">{unitScore && mode !== 'status' ? (info ? (info.problems ?? info.games) + ' 题' + (info.lowSample ? ' · 样本少' : '') : '暂无可比题目') : (raw?.total || 0) + ' 条记录'}
           {intervalsReady && info?.lo != null && <span className="ranking-ci"> · 95% {format(info.lo, false)}–{format(info.hi, false)}</span>}</span></div>
         <span className="ranking-value num">{mode === 'status' && value != null ? Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 5 }) + '%' : format(value, decimal)}</span>
         <button className="icon-btn" aria-label={'比较 ' + model} title={'比较 ' + model}

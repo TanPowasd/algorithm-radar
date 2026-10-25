@@ -3,7 +3,7 @@ import { useApp } from '../state'
 import PromptCopyButton from './PromptCopyButton'
 import DeleteRecordButton from './DeleteRecordButton'
 import PidLink from './PidLink'
-import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLabel, reviewerLabel, fmtClock, fmtDateTime, promptOf } from '../aggregate'
+import { difficultyName, isPassed, lastSub, subBadgeClass, seriesKey, providerLabel, reviewerLabel, fmtClock, fmtDateTime, promptOf, trajectoryRecordScore } from '../aggregate'
 import { THINKING_LABELS } from '../aggregate'
 import { useDialog } from '../hooks/useDialog'
 import { useProblem } from '../hooks/useProblem'
@@ -112,6 +112,9 @@ export default function ProblemDrawer({ pid, highlightModel, onClose, onSubmitCl
                     第{i + 1}轮：{s.result} {s.score !== null && s.score !== undefined ? `· ${scoreText(s.score, decimal)} 分` : ''} {s.note ? `· ${s.note}` : ''}
                   </div>
                 ))}
+                {Boolean(decimal) && (r.submissions || []).length > 1 && trajectoryRecordScore(r) !== null && (
+                  <div className="chain">多轮综合：{scoreText(trajectoryRecordScore(r), decimal)} 分（边际突破折现）</div>
+                )}
                 {r.note && <div className="chain">备注：{r.note}</div>}
               </div>
             )

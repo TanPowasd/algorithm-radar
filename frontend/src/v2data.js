@@ -15,9 +15,10 @@ export function toV2Dataset(raw) {
   const all = Array.isArray(src.records) ? src.records : []
   const kept = all.filter((r) => typeof (r && r.createdAt) === 'string' && r.createdAt >= V2_CUTOFF_ISO)
   const records = kept.map((r) => {
+    const problem = problems[r.pid]
     const submissions = (Array.isArray(r.submissions) ? r.submissions : []).map((s) => ({
       ...s,
-      score: weightedRoundScore(s && s.score, s),
+      score: weightedRoundScore(s && s.score, s, problem),
     }))
     return { ...r, submissions }
   })
