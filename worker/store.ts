@@ -1385,17 +1385,26 @@ export function arenaMatchPage(rows: ArenaMatch[], rawLimit: string | null, curs
 }
 
 /** 由战绩聚合积分榜（纯函数） */
-/** ELO 参数：起分 1500、K=24（与本地裁判引擎一致） */
+/**
+ * 局级 Bradley-Terry（BayesElo 共轭先验）全局收敛 ELO 参数：
+ *   · 基准分 ARENA_ELO_START = 1500；
+ *   · 先验锚点伪对局数 ARENA_ELO_PRIOR_GAMES = 2（等价于每位选手对 1500 锚点虚拟 1 胜 1 负，Beta(1, 1) 先验），
+ *     使严格凹惩罚对数后验存在唯一全局极大值，全胜（16:0）或全负（0:64）选手亦收敛于有限真实分值，
+ *     且结果与对局录入/发生先后顺序 100% 无关、互不连通子赛区互不漂移、双人对局评分严格互补（r_A + r_B ≡ 3000）。
+ */
 export const ARENA_ELO_START = 1500;
 export const ARENA_ELO_K = 24;
+export const ARENA_ELO_PRIOR_GAMES = 2;
+
+const ELO_LN10_OVER_400 = Math.LN10 / 400;
 
 /** 一轮（系列赛）的局比分：登记了就用，没登记按"胜者全胜"推断（16:0） */
 export function seriesScore(m: ArenaMatch): { aWins: number; bWins: number } {
     const games = Math.max(1, Number(m.games) || 1);
-    if (m.winner === "draw") return { aWins: 0, bWins: 0 };
     if (m.aWins !== null && m.bWins !== null && m.aWins + m.bWins > 0) {
         return { aWins: m.aWins, bWins: m.bWins };
     }
+    if (m.winner === "draw") return { aWins: 0, bWins: 0 };
     return m.winner === "A" ? { aWins: games, bWins: 0 } : { aWins: 0, bWins: games };
 }
 
@@ -1404,14 +1413,15 @@ function eloExpect(ra: number, rb: number): number {
 }
 
 /**
- * 排名：主键 = 局级 ELO（一轮 16 局逐局更新，赢强对手涨得多、多打不占便宜），
+ * 排名：主键 = 全局收敛局级 ELO（Bradley-Terry MAP，消除登场/录入先后顺序偏差，赢强对手涨得多、多打不占便宜），
  * 次序 = 局胜率 → 场均净胜；同时保留轮次（系列赛）口径供展示。
  */
 export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
     const map = new Map<string, ArenaStanding>();
     // 选手身份 = 名字 + 思考强度（同名不同思考强度算两个人）
+    const entityKey = (name: string, thinking: string): string => name.toLowerCase() + "\u0000" + thinking;
     const bucket = (name: string, thinking: string): ArenaStanding => {
-        const k = name.toLowerCase() + "\u0000" + thinking;
+        const k = entityKey(name, thinking);
         let s = map.get(k);
         if (!s) {
             s = {
@@ -1424,10 +1434,11 @@ export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
         }
         return s;
     };
-    // ELO 依赖先后顺序：按比赛时间正序回放
+    // 按固定时间顺序扫描一次，保证大小写混用时首次展示名确定可控
     const ordered = rows.slice().sort((x, y) =>
         String(x.playedAt).localeCompare(String(y.playedAt))
-        || String(x.createdAt).localeCompare(String(y.createdAt)));
+        || String(x.createdAt).localeCompare(String(y.createdAt))
+        || String(x.id).localeCompare(String(y.id)));
     for (const m of ordered) {
         const a = bucket(m.aName, m.aThinking);
         const b = bucket(m.bName, m.bThinking);
@@ -1455,13 +1466,77 @@ export function arenaStandings(rows: ArenaMatch[]): ArenaStanding[] {
         win.netTotal += m.margin;
         lose.netTotal -= m.margin;
         if (m.margin > win.bestWin) win.bestWin = m.margin;
-        for (let i = 0; i < games; i++) {
-            const ea = eloExpect(a.elo, b.elo);
-            const sa = i < aWins ? 1 : 0;
-            a.elo += ARENA_ELO_K * (sa - ea);
-            b.elo += ARENA_ELO_K * ((1 - sa) - (1 - ea));
+    }
+
+    // 全局 Bradley-Terry MAP 求解（按规范化键排序聚合，浮点加法顺序亦与输入顺序严格无关）
+    const keys = Array.from(map.keys()).sort();
+    const n = keys.length;
+    if (n > 0) {
+        const idx = new Map<string, number>();
+        for (let i = 0; i < n; i++) idx.set(keys[i], i);
+        const wins = new Float64Array(n).fill(ARENA_ELO_PRIOR_GAMES / 2);
+        const pairGames = new Map<number, number>();
+        for (const m of rows) {
+            const ia = idx.get(entityKey(m.aName, m.aThinking));
+            const ib = idx.get(entityKey(m.bName, m.bThinking));
+            if (ia === undefined || ib === undefined || ia === ib) continue;
+            const { aWins, bWins } = seriesScore(m);
+            let aw = aWins;
+            let bw = bWins;
+            if (aw + bw === 0 && m.winner === "draw") {
+                const half = 0.5 * Math.max(1, Number(m.games) || 1);
+                aw = half;
+                bw = half;
+            }
+            const g = aw + bw;
+            if (g <= 0) continue;
+            wins[ia] += aw;
+            wins[ib] += bw;
+            const u = ia < ib ? ia : ib;
+            const v = ia < ib ? ib : ia;
+            const pk = u * n + v;
+            pairGames.set(pk, (pairGames.get(pk) ?? 0) + g);
+        }
+        if (pairGames.size > 0) {
+            const adj: Array<Array<{ j: number; g: number }>> = Array.from({ length: n }, () => []);
+            const sortedPairs = Array.from(pairGames.keys()).sort((x, y) => x - y);
+            for (const pk of sortedPairs) {
+                const g = pairGames.get(pk)!;
+                const u = Math.floor(pk / n);
+                const v = pk % n;
+                adj[u].push({ j: v, g });
+                adj[v].push({ j: u, g });
+            }
+            const ratings = new Float64Array(n).fill(ARENA_ELO_START);
+            for (let iter = 0; iter < 500; iter++) {
+                let maxStep = 0;
+                for (let i = 0; i < n; i++) {
+                    const p0 = eloExpect(ratings[i], ARENA_ELO_START);
+                    let expWins = ARENA_ELO_PRIOR_GAMES * p0;
+                    let hess = ARENA_ELO_PRIOR_GAMES * ELO_LN10_OVER_400 * p0 * (1 - p0);
+                    const edges = adj[i];
+                    for (let e = 0; e < edges.length; e++) {
+                        const pij = eloExpect(ratings[i], ratings[edges[e].j]);
+                        const g = edges[e].g;
+                        expWins += g * pij;
+                        hess += g * ELO_LN10_OVER_400 * pij * (1 - pij);
+                    }
+                    if (hess > 1e-15) {
+                        const rawStep = (wins[i] - expWins) / hess;
+                        const step = rawStep > 150 ? 150 : rawStep < -150 ? -150 : rawStep;
+                        ratings[i] += step;
+                        const absStep = Math.abs(step);
+                        if (absStep > maxStep) maxStep = absStep;
+                    }
+                }
+                if (maxStep < 1e-9) break;
+            }
+            for (let i = 0; i < n; i++) {
+                map.get(keys[i])!.elo = Math.round(ratings[i]);
+            }
         }
     }
+
     const out = Array.from(map.values());
     for (const s of out) {
         s.winRate = s.matches ? s.wins / s.matches : 0;

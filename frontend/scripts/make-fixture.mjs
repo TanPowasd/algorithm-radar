@@ -245,6 +245,7 @@ const syntheticCoverage = (real) => {
     mk('selftest-r5', m2, p2, 'ultra', [{ score: null, result: 'CE' }, { score: 100, result: 'AC' }], '2026-06-05'),
     mk('selftest-r6', m2, p2, 'xhigh', [{ score: 55, result: 'TLE' }], '2026-06-06'),
     mk('selftest-r7', m2, p1, 'off', [{ score: 0, result: '放弃' }], '2026-06-07'),
+    mk('selftest-r8', m2, p1, 'max', [{ score: 85, result: 'WA' }], '2026-06-08'),
   ]
 }
 

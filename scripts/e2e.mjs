@@ -645,8 +645,8 @@ try {
     aName: 'A', bName: 'B', winner: 'A', games: 16, aWins: 16, bWins: 0, playedAt: '2026-01-01T00:00:01Z' } })
   const lab1 = await boardOf('elo-lab')
   const eloA16 = eloIn(lab1, 'A')
-  ok('ELO：16:0 后 A 高于起分且不越过理论上限 1692', eloA16 > 1600 && eloA16 <= 1692, 'A=' + eloA16)
-  ok('ELO：一局一更新，双方评分互补（和恒等于 3000）', Math.abs((eloA16 + eloIn(lab1, 'B')) - 3000) <= 1, 'A+B=' + (eloA16 + eloIn(lab1, 'B')))
+  ok('ELO：16:0 后 A 高于起分且先验正则收敛于有限分（≤1800）', eloA16 > 1600 && eloA16 <= 1800, 'A=' + eloA16)
+  ok('ELO：双人对局评分严格互补（和恒等于 3000）', Math.abs((eloA16 + eloIn(lab1, 'B')) - 3000) <= 1, 'A+B=' + (eloA16 + eloIn(lab1, 'B')))
   ok('ELO 榜按 ELO 降序', lab1[0]?.name === 'A' && lab1[0].elo >= lab1[1].elo)
   ok('局统计：A 局数 16、局胜 16、局胜率 100%',
     rowIn(lab1, 'A').games === 16 && rowIn(lab1, 'A').gameWins === 16 && rowIn(lab1, 'A').gameWinRate === 1,
@@ -666,6 +666,17 @@ try {
   const lab3 = await boardOf('elo-lab3')
   ok('ELO：赢强对手比赢弱对手涨得多', (eloIn(lab3, 'R') - 1500) > (eloIn(lab3, 'S') - 1500),
     'R=' + eloIn(lab3, 'R') + ' S=' + eloIn(lab3, 'S'))
+  await call(owner, 'POST', '/api/competitions', { competition: { slug: 'elo-lab3-rev', name: 'ELO 顺序无关校验' } })
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab3-rev', match: {
+    aName: 'S', bName: 'Q', winner: 'A', games: 16, aWins: 9, bWins: 7, playedAt: '2026-01-01T00:00:01Z' } })
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab3-rev', match: {
+    aName: 'R', bName: 'P', winner: 'A', games: 16, aWins: 9, bWins: 7, playedAt: '2026-01-01T00:00:02Z' } })
+  await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab3-rev', match: {
+    aName: 'P', bName: 'Q', winner: 'A', games: 16, aWins: 16, bWins: 0, playedAt: '2026-01-01T00:00:03Z' } })
+  const lab3Rev = await boardOf('elo-lab3-rev')
+  ok('ELO：全局 Bradley-Terry 与对局录入/发生时间顺序完全无关',
+    ['P', 'Q', 'R', 'S'].every((n) => eloIn(lab3, n) === eloIn(lab3Rev, n)),
+    JSON.stringify({ fwd: lab3.map((x) => [x.name, x.elo]), rev: lab3Rev.map((x) => [x.name, x.elo]) }))
   const okScore = await call(owner, 'POST', '/api/arena/matches', { competition: 'elo-lab', match: {
     aName: 'C', bName: 'D', winner: 'A', aWins: 5, bWins: 3 } })
   ok('只填局比分、不填局数 → 局数自动取 8', okScore.data?.match?.games === 8 && okScore.data?.match?.aWins === 5, JSON.stringify(okScore.data?.match || null))

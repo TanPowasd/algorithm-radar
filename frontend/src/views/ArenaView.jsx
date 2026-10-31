@@ -408,7 +408,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
         {activeTab === 'manage' && showAdmin && <ArenaRenameCard key={slug} slug={slug} standings={standings} canWrite={canWrite} toast={toast} onDone={load} />}
 
         {activeTab === 'standings' && <section className="mg-section">
-          <div className="card-head"><h3>实力榜（局级 ELO）</h3><span className="chain" style={{ marginLeft: 'auto' }}>按局级 ELO 排序 · 每轮 16 局逐局计入，赢强对手涨得多</span></div>
+          <div className="card-head"><h3>实力榜（局级 ELO）</h3><span className="chain" style={{ marginLeft: 'auto' }}>按全局收敛局级 ELO（Bradley-Terry）排序 · 与登场先后无关，赢强对手涨得多</span></div>
           {!standings.length && <div className="empty">还没有战绩，先登记一场</div>}
           {!!standings.length && (
             <div className="table-scroll">
