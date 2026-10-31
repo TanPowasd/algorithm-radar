@@ -293,7 +293,7 @@ export default function ArenaView({ slug: slugProp = 'kaggriculture', onSelect =
   return (
     <div className="arena-workspace management-layout">
         <PageHeading title={currentComp?.name || '比赛'} description={currentComp?.subtitle || '查看模型的对战实力与比赛记录。'} eyebrow="ALGORITHM RADAR / ARENA">
-          {currentComp?.rulesUrl && <a className="btn small ghost" href={currentComp.rulesUrl} target="_blank" rel="noopener noreferrer">比赛规则</a>}
+          {/^https?:\/\//i.test(currentComp?.rulesUrl || '') && <a className="btn small ghost" href={currentComp.rulesUrl} target="_blank" rel="noopener noreferrer">比赛规则</a>}
           {!onSelect && <Link className="btn small ghost" to="/arena">← 全部比赛</Link>}
         </PageHeading>
 

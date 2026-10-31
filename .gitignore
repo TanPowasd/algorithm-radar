@@ -42,3 +42,7 @@ Thumbs.db
 
 # 部署日志（本地产物）
 _deploy.log
+
+# 本地回放/miniflare 临时状态与编辑器计划文件（2026-10-31 移出版本库）
+.tmp-replay/
+.zcode/

@@ -169,5 +169,7 @@ export const POST_MIGRATION_STATEMENTS: string[] = [
     `CREATE INDEX IF NOT EXISTS idx_arena_comp_source ON arena_matches(competition_id, source_key, deleted_at)`,
     `CREATE INDEX IF NOT EXISTS idx_replay_comp_created ON arena_replays(competition_id, deleted_at, created_at DESC, id DESC)`,
     `INSERT OR IGNORE INTO meta(key, value) VALUES ('competitions_revision', '0')`,
+    // v3.19：login_guard 改为「用户ID小写|IP」键，清掉旧的按用户全局锁定行
+    `DELETE FROM login_guard WHERE instr(username, '|') = 0`,
     `INSERT OR IGNORE INTO meta(key, value) SELECT 'arena_revision:' || id, '0' FROM competitions`,
 ];

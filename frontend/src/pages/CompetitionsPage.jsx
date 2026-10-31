@@ -139,7 +139,7 @@ export default function CompetitionsPage() {
             </div>
             <div className="competition-actions">
               <Link className="btn primary" to={'/arena/' + c.slug} aria-label={'进入' + c.name}>进入比赛<ArrowUpRight size={16} aria-hidden="true" /></Link>
-              {c.rulesUrl && <a className="btn small ghost" href={c.rulesUrl} target="_blank" rel="noopener noreferrer">比赛规则</a>}
+              {/^https?:\/\//i.test(c.rulesUrl || '') && <a className="btn small ghost" href={c.rulesUrl} target="_blank" rel="noopener noreferrer">比赛规则</a>}
               {c.engineSha && <details className="competition-engine"><summary>引擎版本</summary><code>{c.engineSha}</code></details>}
             </div>
           </article>

@@ -6,7 +6,8 @@ import {
     adminSetPassword, approveUser, AuthUser, authenticate, changePassword, countUsers, createToken, csrfCookie,
     CSRF_COOKIE, CSRF_HEADER, constantTimeEqual, cookieValue, deleteUser, findById, isAtLeast,
     listActiveContributors, listUsers, newCsrfToken, registerUser, rejectUser,
-    renewAfter, sessionCookie, SESSION_COOKIE, SessionData, setRole, setupOwner, updateNickname, verifyToken,
+    renewAfter, revokeAllSessions, sessionCookie, SESSION_COOKIE, SessionData, setRole, setupOwner, updateNickname, verifyToken,
+    configurePasswordHashing,
 } from "./auth";
 import { ApiError, DIFFICULTY_NAMES, forbidden, tooMany, unauthorized } from "./util";
 import * as store from "./store";
@@ -24,6 +25,8 @@ export interface Env {
     SNAPSHOT_BUCKET?: R2Bucket;
     /** 公网首次初始化站长用的一次性口令（wrangler secret put SETUP_TOKEN） */
     SETUP_TOKEN?: string;
+    /** 可选：PBKDF2 目标迭代次数（付费档建议 600000）；旧哈希登录时自动升级 */
+    PBKDF2_ITERATIONS?: string;
 }
 
 interface RouteCtx {
@@ -91,6 +94,10 @@ function pruneBuckets(now: number): void {
         }
     }
     // 仍然超量（全是活跃键）时不再处理：宁可占内存也不给攻击者重置计数的机会
+}
+
+function isLoopbackIp(ip: string): boolean {
+    return /^127\./.test(ip) || ip === "::1" || ip === "::ffff:127.0.0.1";
 }
 
 function clientIp(req: Request): string {
@@ -285,7 +292,7 @@ const routes: Route[] = [
         const userCount = await countUsers(ctx.env.DB);
         // 会话签发超过阈值时自动续签（重发 Cookie）
         if (ctx.session && Date.now() / 1000 - ctx.session.iat > renewAfter()) {
-            ctx.cookies.push(sessionCookie(await createToken(ctx.env.DB, ctx.session.user), false, ctx.secure));
+            ctx.cookies.push(sessionCookie(await createToken(ctx.env.DB, ctx.session.user, ctx.session.oi), false, ctx.secure));
         }
         // canSetup 面向「唯一初始化场景」：不泄露 SETUP_TOKEN 是否已配置（渗透报告 medium-4）
         return {
@@ -312,10 +319,13 @@ const routes: Route[] = [
         if (await countUsers(ctx.env.DB) > 0) {
             throw new ApiError(409, "站长账号已初始化，请直接登录");
         }
-        const localOk = isLocalHost(ctx.url)
-            // wrangler dev 挂了自定义域路由后 req.url 会呈现为域名（如 http://k4u.top），
-            // 本地判定只能退而求其次：生产上 Cloudflare 恒定注入 CF-Connecting-IP，缺失即本地 dev
-            || clientIp(ctx.req) === "local";
+        // wrangler dev 挂了自定义域路由后 req.url 会呈现为域名（如 http://k4u.top），
+        // 本地判定只能退而求其次：生产上 Cloudflare 恒定注入 CF-Connecting-IP，缺失即本地 dev（wrangler dev 也会带 CF-Ray，不能用它判断）；
+        // 配置了 SETUP_TOKEN 时一律要求口令，不再依赖请求头推断——生产环境务必 wrangler secret put SETUP_TOKEN
+        // 新版 wrangler dev 会注入 CF-Connecting-IP=回环地址；生产上 Cloudflare 填的永远是公网客户端 IP
+        const ip0 = clientIp(ctx.req);
+        const looksLocal = isLocalHost(ctx.url) || ip0 === "local" || isLoopbackIp(ip0);
+        const localOk = !ctx.env.SETUP_TOKEN && looksLocal;
         // 恒定时间比较 SETUP_TOKEN（渗透报告 medium-4；普通 === 存在时序侧信道）
         const tokenOk = tokenMatches(ctx.env.SETUP_TOKEN, ctx.body?.setupToken);
         if (!localOk && !tokenOk) {
@@ -332,11 +342,13 @@ const routes: Route[] = [
             || !tryAcquire("login:" + ip, 20, 600_000)) {
             throw tooMany("登录尝试过于频繁，请 10 分钟后再试");
         }
-        const user = await authenticate(ctx.env.DB, str(ctx.body?.username), str(ctx.body?.password));
+        const user = await authenticate(ctx.env.DB, str(ctx.body?.username), str(ctx.body?.password), ip);
         return loginResponse(ctx, user);
     } },
 
-    { method: "POST", path: "/api/logout", role: null, handler: (ctx) => {
+    /** 退出登录；带 { all: true } 时吊销该账号在所有设备上的会话（已签发令牌立即失效） */
+    { method: "POST", path: "/api/logout", role: null, handler: async (ctx) => {
+        if (ctx.user && ctx.body?.all === true) await revokeAllSessions(ctx.env.DB, ctx.user.uid);
         ctx.cookies.push(sessionCookie("", true, ctx.secure));
         return { ok: true };
     } },
@@ -535,12 +547,12 @@ const routes: Route[] = [
             store.contributorStats(ctx.env.DB),
             store.legacyContributorStats(ctx.env.DB),
         ]);
-        const byAuthor = new Map(stats.map((s) => [s.author, s]));
+        const byUid = new Map(stats.map((s) => [s.uid, s]));
         const contributors: Array<{
             uid: number | null; username: string; nickname: string; role: string; joinedAt: string;
             contributions: number; problems: number; models: number; lastDate: string;
         }> = users.map((u) => {
-            const b = byAuthor.get(u.username);
+            const b = byUid.get(u.id);
             return {
                 uid: u.id,
                 username: u.username,
@@ -747,8 +759,10 @@ const routes: Route[] = [
         });
     } },
 
-    { method: "POST", path: "/api/import", role: "admin", handler: async (ctx) => {
-        const actor = requireRole(ctx, "admin");
+    /** 导入（覆盖 / 合并）：覆盖会清空全部记录、题目与模型，合并可写入任意归属与审核状态，
+     *  二者都等价于整库改写，权限与「清空收录目录」对齐为站长（2026-10-31 安全修复，原为管理员） */
+    { method: "POST", path: "/api/import", role: "owner", handler: async (ctx) => {
+        const actor = requireRole(ctx, "owner");
         const mode = str(ctx.body?.mode) || "merge";
         const data = ctx.body?.data && typeof ctx.body.data === "object" ? ctx.body.data : ctx.body;
         const r = await store.importBundle(ctx.env.DB, data, mode);
@@ -921,6 +935,28 @@ const BODY_LIMITS: Array<[string, number]> = [
 ];
 const DEFAULT_BODY_LIMIT = 64 * 1024;
 
+/** 读取请求体，累计字节超过 limit 立即取消并返回 null */
+async function readBodyCapped(req: Request, limit: number): Promise<string | null> {
+    if (!req.body) return "";
+    const reader = req.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > limit) {
+            await reader.cancel().catch(() => {});
+            return null;
+        }
+        chunks.push(value);
+    }
+    const all = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { all.set(c, off); off += c.byteLength; }
+    return new TextDecoder().decode(all);
+}
+
 /** 非安全方法的统一入口守卫（在角色检查之后、handler 之前） */
 export async function handleApi(req: Request, env: Env, waitUntil?: (task: Promise<unknown>) => void): Promise<Response> {
     const url = new URL(req.url);
@@ -943,6 +979,7 @@ export async function handleApi(req: Request, env: Env, waitUntil?: (task: Promi
     };
 
     try {
+        configurePasswordHashing(env.PBKDF2_ITERATIONS);
         await ensureSchema(env.DB);
 
         // CSRF 双提交（对齐旧站）：非 GET 必须带 X-CSRF-Token 且与 radar_csrf Cookie 一致
@@ -986,8 +1023,9 @@ export async function handleApi(req: Request, env: Env, waitUntil?: (task: Promi
             const limit = BODY_LIMITS.find(([prefix]) => url.pathname.startsWith(prefix))?.[1] ?? DEFAULT_BODY_LIMIT;
             const len = Number(req.headers.get("Content-Length") || "0");
             if (len > limit) return json({ error: "请求体过大" }, 413);
-            const text = await req.text();
-            if (text && new TextEncoder().encode(text).length > limit) return json({ error: "请求体过大" }, 413);
+            // 流式读取并按字节计数：无 Content-Length（分块传输）时也能在超限瞬间断开，不先整包读进内存
+            const text = await readBodyCapped(req, limit);
+            if (text === null) return json({ error: "请求体过大" }, 413);
             if (text) {
                 try {
                     ctx.body = JSON.parse(text);

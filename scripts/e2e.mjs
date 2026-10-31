@@ -257,6 +257,11 @@ try {
   await call(replacementBob, 'POST', '/api/login', user('bob', 'newbobpass123'))
   const replacementView = await call(replacementBob, 'GET', '/api/data?view=compact')
   ok('同名重注册不能读取旧账号 pending', oldBobPending?.id && !replacementView.data?.records?.some((r) => r.id === oldBobPending.id))
+  const rosterNow = (await call(tmp, 'GET', '/api/contributors')).data?.contributors ?? []
+  ok('同名重注册不继承旧账号已审核贡献（归入全民制作人）',
+    (rosterNow.find((c) => c.username === 'bob')?.contributions ?? -1) === 0
+    && (rosterNow.find((c) => c.role === 'legacy')?.contributions ?? 0) >= 1,
+    JSON.stringify(rosterNow.filter((c) => c.username === 'bob' || c.role === 'legacy')))
   ok('管理员删站长 → 拒绝', (await call(admin, 'DELETE', `/api/admin/users/${await idOf('boss')}`)).data?.error === '不能删除站长账号')
   ok('管理员删自己 → 拒绝', (await call(admin, 'DELETE', `/api/admin/users/${await idOf('alice')}`)).data?.error === '不能删除自己的账号')
   ok('管理员删待审账号 dave → 拒绝', (await call(admin, 'DELETE', `/api/admin/users/${await idOf('dave')}`)).data?.error === '管理员只能删除已激活的贡献者账号')
@@ -855,6 +860,34 @@ try {
   const memoAfterWrite = (await call(tmp, 'GET', '/api/competitions/history-lab')).data
   ok('修订号改变后积分memo包含新选手', memoAfterWrite?.standings?.some((row) => row.name === 'cache-a')
     && memoAfterWrite?.standings?.some((row) => row.name === 'cache-b'))
+
+  // ---- 2026-10-31 安全修复回归 ----
+  const ipA = { 'CF-Connecting-IP': '203.0.113.9' }, ipB = { 'CF-Connecting-IP': '203.0.113.10' }
+  const lockJar = await prime(new Jar())
+  for (let i = 0; i < 5; i++) await call(lockJar, 'POST', '/api/login', user('gina', 'wrong-password-x'), ipA)
+  ok('同一 IP 连错 5 次被锁', (await call(lockJar, 'POST', '/api/login', user('gina', 'ginapass12345'), ipA)).status === 429)
+  const otherIp = await prime(new Jar())
+  const otherLogin = await call(otherIp, 'POST', '/api/login', user('gina', 'ginapass12345'), ipB)
+  ok('锁定只针对该 IP，真主人换 IP 仍可登录（不再能锁死他人）', otherLogin.data?.ok === true,
+    `HTTP ${otherLogin.status} ${JSON.stringify(otherLogin.data)}`)
+  const ghost = await call(await prime(new Jar()), 'POST', '/api/login', user('no-such-user-zz', 'whatever123'), ipB)
+  ok('不存在的用户与错误密码同样返回 401', ghost.status === 401 && ghost.data?.error === '用户 ID 或口令错误')
+
+  ok('管理员导入 → 拒绝（导入仅站长）',
+    (await call(admin, 'POST', '/api/import', { mode: 'replace', data: { records: [] } })).status === 403)
+
+  const reserved = await call(await prime(new Jar()), 'POST', '/api/auth/register',
+    { username: '全民制作人', nickname: 'x', password: 'reservedpass1' }, { 'CF-Connecting-IP': '203.0.113.11' })
+  ok('保留用户 ID 不能注册', reserved.status === 400)
+
+  const evil = await call(owner, 'POST', '/api/competitions', { competition: { slug: 'evil-cup', name: 'Evil', rulesUrl: 'javascript:alert(1)' } })
+  ok('比赛规则链接拒绝 javascript:', evil.status === 400)
+
+  const devA = await prime(new Jar()), devB = await prime(new Jar())
+  await call(devA, 'POST', '/api/login', user('gina', 'ginapass12345'), { 'CF-Connecting-IP': '203.0.113.12' })
+  await call(devB, 'POST', '/api/login', user('gina', 'ginapass12345'), { 'CF-Connecting-IP': '203.0.113.13' })
+  ok('退出所有设备', (await call(devA, 'POST', '/api/logout', { all: true })).data?.ok
+    && (await call(devB, 'GET', '/api/session')).data?.loggedIn === false)
 
 } catch (e) {
   failures.push(`流程异常：${e.message}`)

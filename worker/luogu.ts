@@ -92,29 +92,32 @@ function problemUrl(pid: string): URL {
     return assertSafeUrl(target.toString());
 }
 
+const MAX_REDIRECTS = 4;
+
 async function httpGet(target: URL): Promise<string> {
     const headers: Record<string, string> = {
         "User-Agent": UA,
         "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
         "Accept-Language": "zh-CN,zh;q=0.9",
     };
-    // 第一步：manual 接住 302 下发的 __client_id Cookie
-    const first = await fetch(target, { headers, redirect: "manual" });
-    if (first.status >= 300 && first.status < 400) {
-        const setCookie = first.headers.get("set-cookie") || "";
-        const pair = setCookie.split(";")[0].trim();
-        const location = assertSafeUrl(first.headers.get("location") || target.toString());
-        if (pair) headers["Cookie"] = pair;
-        const second = await fetch(location, { headers, redirect: "follow" });
-        if (!second.ok) {
-            throw badRequest(`洛谷返回 HTTP ${second.status}（可能被风控）；请手动填写题目信息`);
+    // 全程 manual 跳转：第一跳接住 302 下发的 __client_id Cookie，之后每一跳都过 host 白名单
+    // （2026-10-31 安全修复：原先第二跳 redirect:"follow"，后续跳转不再校验）
+    let url = target;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        const res = await fetch(url, { headers, redirect: "manual" });
+        if (res.status >= 300 && res.status < 400) {
+            const setCookie = res.headers.get("set-cookie") || "";
+            const pair = setCookie.split(";")[0].trim();
+            if (pair) headers["Cookie"] = pair;
+            url = assertSafeUrl(new URL(res.headers.get("location") || url.toString(), url).toString());
+            continue;
         }
-        return second.text();
+        if (!res.ok) {
+            throw badRequest(`洛谷返回 HTTP ${res.status}（可能被风控）；请手动填写题目信息`);
+        }
+        return res.text();
     }
-    if (!first.ok) {
-        throw badRequest(`洛谷返回 HTTP ${first.status}（可能被风控）；请手动填写题目信息`);
-    }
-    return first.text();
+    throw badRequest("洛谷跳转次数过多；请手动填写题目信息");
 }
 
 export interface LuoguProblem {
