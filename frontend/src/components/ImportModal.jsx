@@ -3,7 +3,7 @@ import { useApp } from '../state'
 import { api } from '../api/client'
 import { useDialog } from '../hooks/useDialog'
 
-/** 导入旧站导出的 JSON（管理员） */
+/** 导入旧站导出的 JSON（仅站长：覆盖/合并都等价于整库改写） */
 export default function ImportModal({ onClose }) {
   const dialogRef = useDialog(onClose)
   const { toast, refreshAll } = useApp()

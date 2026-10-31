@@ -388,6 +388,11 @@ function boot(){
   }
   var params = new URLSearchParams(location.hash.slice(1)), src = params.get("src"), t = params.get("t");
   var wantT = t !== null && /^\d+$/.test(t) ? Number(t) : null;
+  // 只加载本站回放接口（2026-10-31 安全修复：#src= 原先可指向任意地址，靠 CSP connect-src 'self' 兜底）
+  if (src && !/^\/api\/arena\/replays\/[A-Za-z0-9-]{1,64}$/.test(src)){
+    fail(new Error("只能播放本站回放（/api/arena/replays/<id>），其余请用本地文件打开"));
+    src = null;
+  }
   if (src){
     var remoteLoad = ++S.loadSeq;
     document.getElementById("loadbox").textContent = "加载回放…";

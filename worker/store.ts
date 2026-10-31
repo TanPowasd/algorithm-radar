@@ -15,6 +15,9 @@ import {
 } from "./util";
 import { fetchLuoguProblem } from "./luogu";
 
+/** 单个贡献者同时待审的记录上限 */
+export const MAX_PENDING_PER_USER = 300;
+
 export interface Snapshot {
     revision: number;
     /** 缓存分代：清库/覆盖导入等破坏性操作会换掉它，避免 revision 归零后撞上旧 ETag */
@@ -195,7 +198,13 @@ export async function snapshot(db: D1Database, userId: number | null, adminLike:
 
 /** 贡献者名册聚合：一条 SQL 出「每位 author 的记录数 / 覆盖题数 / 覆盖模型数 / 最近日期」，
  *  口径 = 收录制可见集合（approved + 题目已收录 + 模型已收录），与游客视角一致。 */
-export interface AuthorStat { author: string; total: number; problems: number; models: number; lastDate: string }
+export interface AuthorStat { uid: number; total: number; problems: number; models: number; lastDate: string }
+
+/** 记录归属于某个活跃账号的判定（2026-10-31 安全修复）：
+ *  有 author_id 只认 author_id；历史数据 author_id 为空时才按用户名匹配，且要求账号创建早于记录——
+ *  否则删号后同名重注册、或注册一个与历史作者同名的新号，就能把别人的贡献算到自己名下。 */
+const RECORD_OWNED_BY_USER = "(u.id = r.author_id OR (r.author_id IS NULL AND r.author = u.username COLLATE NOCASE" +
+    " AND u.created_at <= r.created_at))";
 
 /** 名册里的「全民制作人」条目：author 不在活跃用户表（历史导入 / 已删账号）的可见记录整体聚合。
  *  用子查询排除活跃用户，避免把用户名当绑定参数传（人数可能超 100 个参数上限）。 */
@@ -207,7 +216,7 @@ export async function legacyContributorStats(db: D1Database): Promise<LegacyStat
         " MAX(r.date) AS lastDate" +
         " FROM records r JOIN problems p ON p.pid = r.pid JOIN models m ON m.name = r.model" +
         " WHERE r.status = 'approved' AND r.deleted_at IS NULL" +
-        " AND COALESCE(NULLIF(r.author, ''), '—') NOT IN (SELECT username FROM users WHERE status = 'active')")
+        " AND NOT EXISTS (SELECT 1 FROM users u WHERE u.status = 'active' AND " + RECORD_OWNED_BY_USER + ")")
         .first<any>();
     return {
         total: Number(row?.total) || 0,
@@ -219,15 +228,16 @@ export async function legacyContributorStats(db: D1Database): Promise<LegacyStat
 
 export async function contributorStats(db: D1Database): Promise<AuthorStat[]> {
     const { results } = await db.prepare(
-        "SELECT COALESCE(NULLIF(r.author, ''), '—') AS author," +
+        "SELECT u.id AS uid," +
         " COUNT(*) AS total, COUNT(DISTINCT r.pid) AS problems," +
         " COUNT(DISTINCT r.model) AS models, MAX(r.date) AS lastDate" +
         " FROM records r JOIN problems p ON p.pid = r.pid JOIN models m ON m.name = r.model" +
+        " JOIN users u ON u.status = 'active' AND " + RECORD_OWNED_BY_USER +
         " WHERE r.status = 'approved' AND r.deleted_at IS NULL" +
-        " GROUP BY author",
+        " GROUP BY u.id",
     ).all<any>();
     return (results || []).map((r) => ({
-        author: String(r.author ?? "—"),
+        uid: Number(r.uid),
         total: Number(r.total) || 0,
         problems: Number(r.problems) || 0,
         models: Number(r.models) || 0,
@@ -308,6 +318,16 @@ export async function addRecord(db: D1Database, raw: any, user: { uid: number; u
     }
     const countRow = await db.prepare("SELECT COUNT(*) AS n FROM records WHERE deleted_at IS NULL").first<{ n: number }>();
     if ((countRow?.n ?? 0) >= MAX_RECORDS) throw badRequest(`记录数量已达上限（${MAX_RECORDS}）`);
+    // 单人待审上限（2026-10-31 安全修复）：全站上限含待审记录，没有单人配额时一个贡献者就能灌满、
+    // 让所有人都无法提交。管理员直接通过，不受此限。
+    if (!user.isAdminLike) {
+        const mine = await db.prepare(
+            "SELECT COUNT(*) AS n FROM records WHERE author_id = ?1 AND status = 'pending' AND deleted_at IS NULL")
+            .bind(user.uid).first<{ n: number }>();
+        if ((mine?.n ?? 0) >= MAX_PENDING_PER_USER) {
+            throw badRequest(`你还有 ${MAX_PENDING_PER_USER} 条记录待审核，请等管理员处理后再提交`);
+        }
+    }
     await requirePublished(db, rec.pid);
     await requirePublishedModel(db, rec.model);
     const prev = await findProblem(db, rec.pid);
@@ -1095,6 +1115,16 @@ export async function getCompetition(db: D1Database, key: string): Promise<Compe
     return row ? mapCompetitionRow(row) : null;
 }
 
+/** 只接受 http/https 链接（拒绝 javascript:/data: 等会被前端渲染成可执行 href 的协议）；空串原样放行 */
+function safeHttpUrl(raw: string): string {
+    if (!raw) return "";
+    let u: URL;
+    try { u = new URL(raw); } catch { throw badRequest("规则链接不是合法 URL"); }
+    if (u.protocol !== "https:" && u.protocol !== "http:") throw badRequest("规则链接只能是 http/https 地址");
+    if (u.username || u.password) throw badRequest("规则链接不能带账号密码");
+    return u.toString();
+}
+
 export async function addCompetition(db: D1Database, raw: any): Promise<Competition> {
     const body = raw && typeof raw === "object" ? raw : {};
     const slug = String(body.slug ?? "").trim().toLowerCase();
@@ -1102,7 +1132,7 @@ export async function addCompetition(db: D1Database, raw: any): Promise<Competit
     const name = String(body.name ?? "").trim().replace(/\s+/g, " ").slice(0, ARENA_NAME_MAX);
     if (!name) throw badRequest("比赛名称不能为空");
     const subtitle = String(body.subtitle ?? "").trim().slice(0, ARENA_NOTE_MAX);
-    const rulesUrl = String(body.rulesUrl ?? body.rules_url ?? "").trim().slice(0, 300);
+    const rulesUrl = safeHttpUrl(String(body.rulesUrl ?? body.rules_url ?? "").trim().slice(0, 300));
     const engineSha = String(body.engineSha ?? body.engine_sha ?? "").trim().slice(0, 64);
     const scoreModel = String(body.scoreModel ?? body.score_model ?? "1v1_cash").trim();
     if (!COMPETITION_SCORE_MODELS.includes(scoreModel)) throw badRequest("评分模型只能是 " + COMPETITION_SCORE_MODELS.join(" / "));

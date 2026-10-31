@@ -19,6 +19,8 @@ export interface AuthUser {
 export interface SessionData {
     user: AuthUser;
     iat: number;
+    /** 首次登录时刻（旧令牌无此字段时取 iat） */
+    oi: number;
     exp: number;
 }
 
@@ -27,9 +29,19 @@ export const CSRF_COOKIE = "radar_csrf";
 export const CSRF_HEADER = "X-CSRF-Token";
 const SESSION_TTL = 43200;       // 12h
 const RENEW_AFTER = 3600;        // 签发 1h 后续签
+/** 会话绝对寿命：续签只能延长到首次登录后 7 天，之后必须重新输入密码（防止被盗令牌无限续签） */
+const SESSION_MAX_AGE = 7 * 86400;
 const USERNAME_RE = /^[\w\u4e00-\u9fff-]{2,24}$/;
-// 账号级登录失败锁定（渗透报告 medium-2 的跨 isolate 部分）：连续 5 次失败锁定 15 分钟。
-// D1 计数可被并发请求竞态突破 1~2 次（尽力而为），并发高频爆破仍需 CF Rate Limiting / DO。
+/** 保留用户 ID：与系统聚合名、角色称谓同名会在名册/审计里造成冒名 */
+const RESERVED_USERNAMES = new Set([
+    "全民制作人", "站长", "管理员", "系统", "官方", "admin", "administrator", "owner", "root", "system",
+    "legacy", "anonymous", "null", "undefined",
+].map((n) => n.toLowerCase()));
+// 登录失败锁定：按「用户 ID + 客户端 IP」计数，连续 5 次失败锁定该组合 15 分钟。
+// 2026-10-31 安全修复：旧实现按用户 ID 全局锁定，而名册公开了全部用户 ID，任何人连错 5 次
+// 就能把站长锁 15 分钟并无限续锁（拒绝服务）。现在攻击者只能锁住自己的 IP；
+// 分布式爆破由 IP 级 AUTH_LIMIT + 进程内长窗兜底。
+// D1 计数可被并发请求竞态突破 1~2 次（尽力而为）。
 const MAX_LOGIN_FAILS = 5;
 const LOGIN_LOCK_MINUTES = 15;
 
@@ -72,10 +84,29 @@ async function pbkdf2(password: string, salt: Uint8Array, iters: number): Promis
     return new Uint8Array(bits);
 }
 
+/** 目标迭代次数。默认 100k（Workers 免费档 CPU 限额下的保守值）；付费档可在 wrangler.toml [vars]
+ *  设 PBKDF2_ITERATIONS（OWASP 2023 对 PBKDF2-SHA256 建议 600000），旧哈希会在下次登录成功时自动升级。 */
+let targetIterations = 100000;
+export function configurePasswordHashing(iters: unknown): void {
+    const n = Number(iters);
+    if (Number.isInteger(n) && n >= 100000 && n <= 2_000_000) targetIterations = n;
+}
+
 export async function hashPassword(password: string): Promise<string> {
     const salt = crypto.getRandomValues(new Uint8Array(16));
-    const dk = await pbkdf2(password, salt, 100000);
-    return `pbkdf2_sha256$100000$${b64urlEncode(salt)}$${b64urlEncode(dk)}`;
+    const dk = await pbkdf2(password, salt, targetIterations);
+    return `pbkdf2_sha256$${targetIterations}$${b64urlEncode(salt)}$${b64urlEncode(dk)}`;
+}
+
+function hashIterations(stored: string): number {
+    const parts = (stored || "").split("$");
+    return parts.length === 4 ? parseInt(parts[1], 10) || 0 : 0;
+}
+
+/** 对不存在的用户也跑一次同成本的 PBKDF2，消除「用户是否存在」的响应时间差 */
+const DUMMY_SALT = new Uint8Array(16);
+async function burnPasswordTime(password: string): Promise<void> {
+    await pbkdf2(password, DUMMY_SALT, targetIterations);
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
@@ -125,15 +156,17 @@ export function resetSecretCache(): void {
     secretCache = null;
 }
 
-export async function createToken(db: D1Database, user: AuthUser): Promise<string> {
+export async function createToken(db: D1Database, user: AuthUser, originalIat?: number): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
     // 密码版本以库内实时值为准（登录/续签/改密后签发的令牌都携带最新 pv）
     const pvRow = await db.prepare("SELECT password_version FROM users WHERE id = ?1")
         .bind(user.uid).first<{ password_version: number }>();
     const pv = Number(pvRow?.password_version ?? 0);
+    // oi = 首次登录时刻：续签时沿用，用于会话绝对寿命判定
+    const oi = Number.isFinite(originalIat) && originalIat! > 0 ? originalIat! : now;
     const payload = {
         uid: user.uid, u: user.username, n: user.nickname ?? "", r: user.role,
-        pv, iat: now, exp: now + SESSION_TTL,
+        pv, iat: now, oi, exp: Math.min(now + SESSION_TTL, oi + SESSION_MAX_AGE),
     };
     const body = b64urlEncode(enc.encode(JSON.stringify(payload)));
     const key = await crypto.subtle.importKey("raw", await sessionSecret(db) as BufferSource,
@@ -156,7 +189,10 @@ export async function verifyToken(db: D1Database, token: string | null | undefin
         const ok = await crypto.subtle.verify("HMAC", key, sig as BufferSource, enc.encode(bodyStr) as BufferSource);
         if (!ok) return null;
         const payload = JSON.parse(new TextDecoder().decode(b64urlDecode(bodyStr)));
-        if (typeof payload.exp !== "number" || payload.exp <= Math.floor(Date.now() / 1000)) return null;
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (typeof payload.exp !== "number" || payload.exp <= nowSec) return null;
+        const oi = Number(payload.oi) || Number(payload.iat) || 0;
+        if (!oi || nowSec - oi > SESSION_MAX_AGE) return null;
         // 会话状态回查用户表：改密（password_version+1）或封禁/降权后旧令牌立即失效，
         // 角色/昵称也以库内最新为准
         const row = await db
@@ -174,6 +210,7 @@ export async function verifyToken(db: D1Database, token: string | null | undefin
                 role: row.role,
             },
             iat: Number(payload.iat) || 0,
+            oi,
             exp: payload.exp,
         };
     } catch {
@@ -182,6 +219,11 @@ export async function verifyToken(db: D1Database, token: string | null | undefin
 }
 
 export const sessionTtl = () => SESSION_TTL;
+
+/** 吊销该用户全部会话（退出所有设备）：递增 password_version，所有已签发令牌立即失效 */
+export async function revokeAllSessions(db: D1Database, uid: number): Promise<void> {
+    await db.prepare("UPDATE users SET password_version = password_version + 1 WHERE id = ?1").bind(uid).run();
+}
 export const renewAfter = () => RENEW_AFTER;
 
 /** 修改密码：校验旧密码 → 更新哈希并递增 password_version（其他设备会话立即失效） */
@@ -277,6 +319,9 @@ export function validateUsernamePassword(userId: string, password: string) {
     if (!userId || !USERNAME_RE.test(userId)) {
         throw badRequest("用户 ID 需 2–24 位，仅限中英文、数字、下划线和连字符");
     }
+    if (RESERVED_USERNAMES.has(userId.toLowerCase())) {
+        throw badRequest("该用户 ID 为系统保留，请换一个");
+    }
     if (!password || password.length < 8 || password.length > 64) {
         throw badRequest("密码长度需在 8–64 位之间");
     }
@@ -319,43 +364,44 @@ export async function setupOwner(db: D1Database, userId: string, password: strin
     return user;
 }
 
-export async function authenticate(db: D1Database, userId: string, password: string): Promise<AuthUser> {
-    // 登录前先查账号级锁定状态（按 username COLLATE NOCASE，与查询口径一致）
+/** 登录失败计数键：用户 ID（小写）+ 客户端 IP */
+function guardKey(userId: string, ip: string): string {
+    return `${userId.toLowerCase()}|${ip || "unknown"}`;
+}
+
+export async function authenticate(db: D1Database, userId: string, password: string, ip = "unknown"): Promise<AuthUser> {
+    const key = guardKey(userId, ip);
     const lockRow = await db.prepare(
-        "SELECT fail_count, locked_until FROM login_guard WHERE username = ?1 COLLATE NOCASE")
-        .bind(userId).first<{ fail_count: number; locked_until: string | null }>();
+        "SELECT fail_count, locked_until FROM login_guard WHERE username = ?1")
+        .bind(key).first<{ fail_count: number; locked_until: string | null }>();
     const now = Date.now();
     if (lockRow && lockRow.locked_until && Date.parse(lockRow.locked_until) > now) {
-        throw tooMany("失败次数过多，账号已临时锁定，请 15 分钟后再试");
+        throw tooMany("失败次数过多，已临时锁定，请 15 分钟后再试");
     }
     const user = await findByUsername(db, userId);
-    if (!user) throw unauthorized("用户 ID 或口令错误");
-    if (!(await verifyPassword(password, user.password_hash))) {
-        // 口令错误：累计失败次数，达到阈值锁定（跨 isolate 持久化）
-        const fails = (lockRow?.fail_count ?? 0) + 1;
-        if (fails >= MAX_LOGIN_FAILS) {
-            await db.prepare(
-                "INSERT INTO login_guard(username, fail_count, locked_until, updated_at) VALUES (?1, ?2, ?3, ?4) " +
-                "ON CONFLICT(username) DO UPDATE SET fail_count = ?2, locked_until = ?3, updated_at = ?4")
-                .bind(user.username, fails, new Date(now + LOGIN_LOCK_MINUTES * 60_000).toISOString(), new Date().toISOString()).run();
-        } else if (lockRow && lockRow.locked_until && Date.parse(lockRow.locked_until) <= now) {
-            // 锁定期已过：重置计数并从 1 重新累计（否则窗口内只剩 MAX-1 次机会）
-            await db.prepare(
-                "INSERT INTO login_guard(username, fail_count, locked_until, updated_at) VALUES (?1, ?2, NULL, ?3) " +
-                "ON CONFLICT(username) DO UPDATE SET fail_count = ?2, locked_until = NULL, updated_at = ?3")
-                .bind(user.username, 1, new Date().toISOString()).run();
-        } else {
-            await db.prepare(
-                "INSERT INTO login_guard(username, fail_count, locked_until, updated_at) VALUES (?1, ?2, NULL, ?3) " +
-                "ON CONFLICT(username) DO UPDATE SET fail_count = ?2, locked_until = NULL, updated_at = ?3")
-                .bind(user.username, fails, new Date().toISOString()).run();
-        }
+    const passwordOk = user
+        ? await verifyPassword(password, user.password_hash)
+        : (await burnPasswordTime(password), false);
+    if (!user || !passwordOk) {
+        // 不论用户是否存在都累计失败次数（同样的响应、同样的计数，避免枚举）
+        const expired = !!(lockRow && lockRow.locked_until && Date.parse(lockRow.locked_until) <= now);
+        const fails = expired ? 1 : (lockRow?.fail_count ?? 0) + 1;
+        const lockedUntil = fails >= MAX_LOGIN_FAILS ? new Date(now + LOGIN_LOCK_MINUTES * 60_000).toISOString() : null;
+        await db.prepare(
+            "INSERT INTO login_guard(username, fail_count, locked_until, updated_at) VALUES (?1, ?2, ?3, ?4) " +
+            "ON CONFLICT(username) DO UPDATE SET fail_count = ?2, locked_until = ?3, updated_at = ?4")
+            .bind(key, fails, lockedUntil, new Date().toISOString()).run();
         throw unauthorized("用户 ID 或口令错误");
     }
     if (user.status === "pending") throw unauthorized("账号待站长审核，请稍后再试");
     if (user.status === "rejected") throw unauthorized("注册申请已被拒绝");
-    // 登录成功：清除失败计数与锁定
-    await db.prepare("DELETE FROM login_guard WHERE username = ?1").bind(user.username).run();
+    // 登录成功：清除本 IP 的失败计数
+    await db.prepare("DELETE FROM login_guard WHERE username = ?1").bind(key).run();
+    // 哈希迭代数低于当前目标时顺手升级（只有此刻拿得到明文口令）
+    if (hashIterations(user.password_hash) < targetIterations) {
+        await db.prepare("UPDATE users SET password_hash = ?1 WHERE id = ?2")
+            .bind(await hashPassword(password), user.id).run();
+    }
     return { uid: user.id, username: user.username, nickname: user.nickname ?? "", role: user.role };
 }
 
@@ -428,7 +474,9 @@ export async function deleteUser(db: D1Database, id: number, actor: AuthUser): P
     }
     await db.prepare("DELETE FROM users WHERE id = ?1").bind(id).run();
     // 顺手清掉登录失败锁定记录，避免同名新账号继承旧计数
-    await db.prepare("DELETE FROM login_guard WHERE username = ?1").bind(user.username).run();
+    // 清掉该用户 ID 在所有 IP 下的失败计数（键为 "<id小写>|<ip>"），避免同名新账号继承
+    await db.prepare("DELETE FROM login_guard WHERE substr(username, 1, ?1) = ?2")
+        .bind(user.username.length + 1, user.username.toLowerCase() + "|").run();
     return user;
 }
 

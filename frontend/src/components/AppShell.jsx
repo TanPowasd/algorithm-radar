@@ -73,7 +73,7 @@ export default function AppShell({ onOpenAuth, onOpenPublish, onOpenImport, hud 
             <Link className={linkClass(location.pathname === '/admin')} to="/admin" title={collapsed ? '审核台' : undefined}><ShieldCheck size={18} /><span>审核台</span></Link>
             <Link className={linkClass(location.pathname === '/users')} to="/users" title={collapsed ? '用户管理' : undefined}><Users size={18} /><span>用户管理</span></Link>
             {onOpenPublish && <button type="button" className="shell-nav-link" onClick={onOpenPublish}><BookOpenText size={18} /><span>发布新题</span></button>}
-            {onOpenImport && <button type="button" className="shell-nav-link" onClick={onOpenImport}><Library size={18} /><span>导入历史数据</span></button>}
+            {onOpenImport && session?.role === 'owner' && <button type="button" className="shell-nav-link" onClick={onOpenImport}><Library size={18} /><span>导入历史数据</span></button>}
           </div>
         </details>}
       </nav>
