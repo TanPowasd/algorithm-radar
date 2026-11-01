@@ -36,3 +36,14 @@ table.matrix .sum-sub { letter-spacing: 0; }
 
 @media (prefers-reduced-motion: reduce) { .matrix-frame::before, .matrix-frame::after { transition: none; } }
 :root[data-motion="off"] .matrix-frame::before, :root[data-motion="off"] .matrix-frame::after { transition: none; }
+
+/* 横向滚动条移到矩阵上方：顶部同步滚动条可见时隐藏底部原生滚动条 */
+.top-scrollbar { overflow-x: scroll; overflow-y: hidden; height: 12px; margin-bottom: 6px; border-radius: 6px; background: var(--surface-2); }
+@supports not selector(::-webkit-scrollbar) { .top-scrollbar { scrollbar-width: thin; scrollbar-color: var(--muted) var(--surface-2); } }
+.top-scrollbar > div { height: 1px; }
+.top-scrollbar::-webkit-scrollbar { height: 12px; background: transparent; }
+.top-scrollbar::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 55%, transparent); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+.top-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+.matrix-frame:has(.top-scrollbar) .matrix-wrap { scrollbar-width: none; }
+.matrix-frame:has(.top-scrollbar) .matrix-wrap::-webkit-scrollbar { display: none; }
+.matrix-frame:has(.top-scrollbar)::before, .matrix-frame:has(.top-scrollbar)::after { top: 58px; }

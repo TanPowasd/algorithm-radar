@@ -26,5 +26,5 @@ export function useScrollEdges() {
     if (node.firstElementChild) observer?.observe(node.firstElementChild)
     return () => { cancelAnimationFrame(frame); node.removeEventListener('scroll', measure); observer?.disconnect() }
   }, [node])
-  return [ref, edges]
+  return [ref, edges, node]
 }

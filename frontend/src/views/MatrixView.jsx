@@ -9,6 +9,7 @@ import { useIncrementalRating } from '../hooks/useIncrementalRating'
 import PidLink from '../components/PidLink'
 import { useUrlState } from '../hooks/useUrlState'
 import { useScrollEdges } from '../hooks/useScrollEdges'
+import TopScrollbar from '../components/TopScrollbar'
 import { DEFAULT_UI_PREFERENCES } from '../uiPreferences'
 import MotionRegion from '../components/MotionRegion'
 const ScoreLayouts = lazy(() => import('./ScoreLayouts'))
@@ -44,7 +45,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
   const requestedMode = url.get('mode', 'bestLevel')
   const mode = MODES.some((item) => item.key === requestedMode) ? requestedMode : 'bestLevel'
   const tableRef = useRef(null)
-  const [wrapRef, scrollEdges] = useScrollEdges()
+  const [wrapRef, scrollEdges, wrapNode] = useScrollEdges()
   const hoverFrame = useRef(null)
   const hoverNodes = useRef([])
   const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 700)
@@ -273,10 +274,11 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
           url={url} onOpenDetail={onOpenDetail} onQuickAdd={canSubmit ? onQuickAdd : undefined} /></Suspense>
         : <div className={'matrix-frame' + (scrollEdges.left ? ' edge-left' : '') + (scrollEdges.right ? ' edge-right' : '')}>
         {(scrollEdges.left || scrollEdges.right) && <div className="matrix-scroll-hint" aria-hidden="true">
-          <span>共 {series.length} 个模型 · Shift + 滚轮或拖动底部滚动条横向查看</span>
+          <span>共 {series.length} 个模型 · Shift + 滚轮或拖动上方滚动条横向查看</span>
           <button type="button" className="icon-btn" tabIndex={-1} disabled={!scrollEdges.left} onClick={() => document.getElementById('matrix-wrap')?.scrollBy({ left: -480, behavior: 'smooth' })} aria-label="向左滚动"><ChevronLeft size={16} aria-hidden="true" /></button>
           <button type="button" className="icon-btn" tabIndex={-1} disabled={!scrollEdges.right} onClick={() => document.getElementById('matrix-wrap')?.scrollBy({ left: 480, behavior: 'smooth' })} aria-label="向右滚动"><ChevronRight size={16} aria-hidden="true" /></button>
         </div>}
+        {(scrollEdges.left || scrollEdges.right) && <TopScrollbar target={wrapNode} label="评测矩阵横向滚动条" />}
         <div className="matrix-wrap" id="matrix-wrap" ref={wrapRef} tabIndex={0} role="region" aria-label="评测矩阵，可横向滚动">
         <table className="matrix" ref={tableRef} onMouseMove={onMove} onMouseLeave={onLeave}>
           <thead>
