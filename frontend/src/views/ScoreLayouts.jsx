@@ -33,7 +33,7 @@ export default function ScoreLayouts({ layout, series, problems, grouped, rating
     return (mode === 'final' ? cell.finalInfo : (unitScore ? cell.trajectoryInfo : cell.scoreInfo))?.avg ?? null
   }
   if (layout === 'ranking') return <div className="ranking-list" aria-label="模型排名">
-    <div className="ranking-list-head"><span>排名 / 模型</span><span>{mode === 'status' ? '通过率' : unitScore ? 'rating' : '平均分'}</span></div>
+    <div className="ranking-list-head"><span>排名 / 模型</span><span>{mode === 'status' ? '通过率' : unitScore ? '天梯分' : '平均分'}</span></div>
     {series.map((model, index) => {
       const info = ratings.get(model)
       const raw = summary.get(model)

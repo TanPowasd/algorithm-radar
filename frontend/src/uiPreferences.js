@@ -1,7 +1,7 @@
 export const UI_STORAGE_KEY = 'radar.ui.preferences.v1'
 
 export const DEFAULT_UI_PREFERENCES = {
-  style: 'clean', fontSize: 16, sidebarCollapsed: false, motion: 'system',
+  style: 'clean', fontSize: 16, sidebarCollapsed: false, motion: 'system', precision: 'compact',
   features: {
     competitions: true, records: true, contributors: true, prompts: true,
     rollboard: true, stats: true, scoreLegend: true, thinkingLabels: true, shortcuts: false,
@@ -31,8 +31,14 @@ export function normalizeUiPreferences(value) {
     fontSize: [16, 18, 20].includes(source.fontSize) ? source.fontSize : 16,
     sidebarCollapsed: typeof source.sidebarCollapsed === 'boolean' ? source.sidebarCollapsed : false,
     motion: source.motion === 'off' ? 'off' : 'system',
+    precision: source.precision === 'full' ? 'full' : 'compact',
     features,
   }
+}
+
+/** 分数显示位数：精简模式统一 1 位小数；完整模式保留原有口径（原始分 2 位、加权分 5 位）。 */
+export function scoreDigits(preferences, fullDigits) {
+  return preferences?.precision === 'full' ? fullDigits : 1
 }
 
 export function readUiPreferences() {

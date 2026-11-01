@@ -1,0 +1,49 @@
+/* 2026-11 桌面端可读性与交互打磨：最后加载，只做覆盖，不改结构契约。 */
+
+/* 矩阵横向滚动提示：两侧还有内容时显示渐隐边缘与左右按钮 */
+.matrix-frame { position: relative; }
+.matrix-frame::before, .matrix-frame::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 28px; pointer-events: none; z-index: 6;
+  opacity: 0; transition: opacity .15s ease;
+}
+.matrix-frame::after { right: 0; background: linear-gradient(to left, color-mix(in srgb, var(--text) 12%, transparent), transparent); }
+.matrix-frame::before { left: var(--matrix-head-width, 250px); background: linear-gradient(to right, color-mix(in srgb, var(--text) 10%, transparent), transparent); }
+.matrix-frame.edge-right::after, .matrix-frame.edge-left::before { opacity: 1; }
+.matrix-frame:has(.matrix-scroll-hint)::before, .matrix-frame:has(.matrix-scroll-hint)::after { top: 40px; }
+.matrix-scroll-hint { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-height: 32px; margin-bottom: 8px; color: var(--muted); font-size: var(--fs-xs); }
+.matrix-scroll-hint span { margin-right: 6px; }
+.matrix-scroll-hint .icon-btn { width: 30px; height: 30px; min-height: 30px; padding: 0; display: inline-grid; place-items: center; }
+.matrix-scroll-hint .icon-btn:disabled { opacity: .35; cursor: default; }
+
+/* 题目列：名次与题名同一行，行高从三行压到两行 */
+table.matrix .row-head .mrank { margin-right: 8px; vertical-align: 2px; }
+table.matrix tbody .row-head .r-title { display: inline; }
+table.matrix tbody .row-head .matrix-problem { display: inline; max-width: calc(100% - 34px); vertical-align: bottom; }
+table.matrix tbody .row-head .matrix-row-meta { display: block; margin-top: 4px; }
+
+/* 冻结列滚动时投下阴影，明确“这列是固定的” */
+.matrix-frame.edge-left table.matrix .row-head { box-shadow: 6px 0 10px -8px color-mix(in srgb, var(--text) 35%, transparent); }
+
+/* 单元格悬停：除描边外整行整列轻微提亮已有；补键盘焦点可见 */
+table.matrix td.mcell:focus-visible, table.matrix .row-head:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* 天梯分行：标准误更醒目、小字不再挤成一团 */
+table.matrix .sum-sub { letter-spacing: 0; }
+
+/* 滚榜控制条图标与文字对齐 */
+.roll-controls .btn { display: inline-flex; align-items: center; gap: 6px; }
+.roll-controls .btn svg { flex-shrink: 0; }
+
+@media (prefers-reduced-motion: reduce) { .matrix-frame::before, .matrix-frame::after { transition: none; } }
+:root[data-motion="off"] .matrix-frame::before, :root[data-motion="off"] .matrix-frame::after { transition: none; }
+
+/* 横向滚动条移到矩阵上方：顶部同步滚动条可见时隐藏底部原生滚动条 */
+.top-scrollbar { overflow-x: scroll; overflow-y: hidden; height: 12px; margin-bottom: 6px; border-radius: 6px; background: var(--surface-2); }
+@supports not selector(::-webkit-scrollbar) { .top-scrollbar { scrollbar-width: thin; scrollbar-color: var(--muted) var(--surface-2); } }
+.top-scrollbar > div { height: 1px; }
+.top-scrollbar::-webkit-scrollbar { height: 12px; background: transparent; }
+.top-scrollbar::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 55%, transparent); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+.top-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+.matrix-frame:has(.top-scrollbar) .matrix-wrap { scrollbar-width: none; }
+.matrix-frame:has(.top-scrollbar) .matrix-wrap::-webkit-scrollbar { display: none; }
+.matrix-frame:has(.top-scrollbar)::before, .matrix-frame:has(.top-scrollbar)::after { top: 58px; }

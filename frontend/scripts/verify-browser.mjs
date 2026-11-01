@@ -325,7 +325,7 @@ async function performanceSamples() {
       const metrics = await page.evaluate(() => ({ ...window.__metrics, resources: performance.getEntriesByType('resource')
         .filter((entry) => entry.name.endsWith('.js')).map((entry) => ({ name: entry.name, transferSize: entry.transferSize })) }))
       const interactions = []
-      for (const [name, key] of [['AI 分数', 'score'], ['rating', 'rating'], ['测评明细', 'table']]) {
+      for (const [name, key] of [['AI 分数', 'score'], ['天梯分', 'rating'], ['测评明细', 'table']]) {
         const start = performance.now(); await clickTab(page, name, key); interactions.push(performance.now() - start)
       }
       const initialScripts = metrics.resources.map((entry) => path.basename(new URL(entry.name).pathname))
@@ -403,7 +403,7 @@ async function refinementChecks() {
       await page.getByRole('button', { name: '完成', exact: true }).click()
       await expect(page.locator('html')).toHaveAttribute('data-motion', 'off')
       await page.evaluate(() => { window.__motionCalls.length = 0 })
-      await clickTab(page, 'rating', 'rating')
+      await clickTab(page, '天梯分', 'rating')
       assert.deepEqual(await page.evaluate(() => window.__motionCalls), [])
       assert.equal(await page.locator('main.layout').evaluate((element) => getComputedStyle(element).animationName), 'none')
       await page.reload({ waitUntil: 'networkidle' })
@@ -439,7 +439,7 @@ async function websiteChecks() {
   try {
     await check('three assessment tabs, one competition entry and browser back preserve the previous view', async () => {
       await goto(page, '/?v=score')
-      await clickTab(page, 'rating', 'rating')
+      await clickTab(page, '天梯分', 'rating')
       await clickTab(page, '测评明细', 'table')
       await page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('link', { name: '比赛', exact: true }).click()
       await expect(page.getByRole('heading', { name: '比赛', exact: true })).toBeVisible()

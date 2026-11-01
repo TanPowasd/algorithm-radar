@@ -65,6 +65,7 @@ const {
 const { makeVendorOf, vendorColorMap, levelSwatchStyle } = await import('../src/palette.js')
 const { rollEvents, rollSnapshot, rankTeams, nextAcIndex, nextDayIndex } = await import('../src/rollboard.js')
 const { createRefreshCoordinator } = await import('../src/refreshCoordinator.js')
+const { normalizeUiPreferences: normUiPrefs, scoreDigits } = await import('../src/uiPreferences.js')
 
 const React = (await import('react')).default
 const { renderToString } = await import('react-dom/server')
@@ -1007,8 +1008,10 @@ check('当前 rating 使用加权分与时间线；原始分页保留全部历�
   assert.ok(!rating.includes('<span class="mname">No-perf</span>'))
   assert.ok(original.includes('<span class="mname">Old-only</span>'))
   assert.ok(original.includes('<span class="mname">No-perf</span>'))
-  assert.ok(original.includes('80.00'))
-  assert.ok(!original.includes('80.00000'))
+  // 默认“精简”精度：格内 1 位小数，悬停 title 保留 5 位完整值
+  assert.ok(original.includes('>80.0<'))
+  assert.ok(original.includes('80.00000 分'))
+  assert.ok(!original.includes('>80.00<'))
   assert.ok(rating.includes(weightedRoundScore(80, { timeMs: 1000, memoryMb: 125 }).toFixed(5)))
   const weighted = toV2Dataset(currentSnapshot)
   assert.equal(weighted.records.length, 3)
@@ -1027,6 +1030,14 @@ check('当前 App 保留首页别名、旧链接重定向及全部辅助路由',
   assert.match(source, /path="\/old" element=\{<Navigate to="\/" replace \/>\}/)
   assert.ok(!source.includes('HomePage'), '旧分析页只做组件回归，不重新接回现行路由')
   assert.ok(source.includes('lazy(() => import(') && source.includes('<Suspense'))
+})
+
+check('数值精度偏好：默认精简 1 位，完整模式恢复原始分 2 位 / 加权分 5 位', () => {
+  assert.equal(scoreDigits(normUiPrefs(null), 5), 1)
+  assert.equal(scoreDigits(normUiPrefs({ precision: 'full' }), 2), 2)
+  assert.equal(scoreDigits(normUiPrefs({ precision: 'full' }), 5), 5)
+  assert.equal(normUiPrefs({ precision: 'weird' }).precision, 'compact')
+  assert.ok(srcOf('components/SettingsDialog.jsx').includes('数值精度'))
 })
 
 check('当前评分页不重复拉数据，rating 只通过后台增量 hook 计算', () => {

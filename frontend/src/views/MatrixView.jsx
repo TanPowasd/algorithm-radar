@@ -1,5 +1,5 @@
 import { lazy, memo, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { ListOrdered, Columns3, Table2, RefreshCw } from 'lucide-react'
+import { ListOrdered, Columns3, Table2, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useApp } from '../state'
 import {
   bestThinkingCell, difficultyName, isApproved, isPassed, matrixCell, metricScore, scoreTierClass,
@@ -8,6 +8,8 @@ import {
 import { useIncrementalRating } from '../hooks/useIncrementalRating'
 import PidLink from '../components/PidLink'
 import { useUrlState } from '../hooks/useUrlState'
+import { useScrollEdges } from '../hooks/useScrollEdges'
+import TopScrollbar from '../components/TopScrollbar'
 import { DEFAULT_UI_PREFERENCES } from '../uiPreferences'
 import MotionRegion from '../components/MotionRegion'
 const ScoreLayouts = lazy(() => import('./ScoreLayouts'))
@@ -43,6 +45,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
   const requestedMode = url.get('mode', 'bestLevel')
   const mode = MODES.some((item) => item.key === requestedMode) ? requestedMode : 'bestLevel'
   const tableRef = useRef(null)
+  const [wrapRef, scrollEdges, wrapNode] = useScrollEdges()
   const hoverFrame = useRef(null)
   const hoverNodes = useRef([])
   const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 700)
@@ -269,7 +272,14 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
         : layout !== 'matrix' ? <Suspense fallback={<div className="empty" role="status">加载布局…</div>}><ScoreLayouts layout={layout} series={series} problems={visibleProblems} grouped={grouped}
           ratings={incremental.ratings} intervalsReady={incremental.status === 'ready'} summary={summary} mode={mode} unitScore={unitScore} decimal={decimal}
           url={url} onOpenDetail={onOpenDetail} onQuickAdd={canSubmit ? onQuickAdd : undefined} /></Suspense>
-        : <div className="matrix-wrap" id="matrix-wrap" tabIndex={0} role="region" aria-label="评测矩阵，可横向滚动">
+        : <div className={'matrix-frame' + (scrollEdges.left ? ' edge-left' : '') + (scrollEdges.right ? ' edge-right' : '')}>
+        {(scrollEdges.left || scrollEdges.right) && <div className="matrix-scroll-hint" aria-hidden="true">
+          <span>共 {series.length} 个模型 · Shift + 滚轮或拖动上方滚动条横向查看</span>
+          <button type="button" className="icon-btn" tabIndex={-1} disabled={!scrollEdges.left} onClick={() => document.getElementById('matrix-wrap')?.scrollBy({ left: -480, behavior: 'smooth' })} aria-label="向左滚动"><ChevronLeft size={16} aria-hidden="true" /></button>
+          <button type="button" className="icon-btn" tabIndex={-1} disabled={!scrollEdges.right} onClick={() => document.getElementById('matrix-wrap')?.scrollBy({ left: 480, behavior: 'smooth' })} aria-label="向右滚动"><ChevronRight size={16} aria-hidden="true" /></button>
+        </div>}
+        {(scrollEdges.left || scrollEdges.right) && <TopScrollbar target={wrapNode} label="评测矩阵横向滚动条" />}
+        <div className="matrix-wrap" id="matrix-wrap" ref={wrapRef} tabIndex={0} role="region" aria-label="评测矩阵，可横向滚动">
         <table className="matrix" ref={tableRef} onMouseMove={onMove} onMouseLeave={onLeave}>
           <thead>
             <tr>
@@ -288,7 +298,7 @@ export default function MatrixView({ onOpenDetail, onQuickAdd, canSubmit, decima
           unitScore={unitScore} decimal={decimal} blankEmpty={blankEmpty} emptyCell={emptyCell}
           canSubmit={canSubmit} onQuickAdd={onQuickAdd} onOpenDetail={onOpenDetail} showThinking={uiPreferences.features.thinkingLabels} />
         </table>
-      </div>}
+      </div></div>}
       </MotionRegion>
       {uiPreferences.features.scoreLegend && <div className="matrix-guide">
         {mode === 'status' ? <div className="matrix-scale" aria-label="通过状态图例">
@@ -320,7 +330,7 @@ const MatrixBody = memo(function MatrixBody({ series, summary, ratings, ratingSt
   mode, active, isBest, unitScore, decimal, blankEmpty, emptyCell, canSubmit, onQuickAdd, onOpenDetail, showThinking }) {
   return (<tbody>
             <tr className="sum-row">
-              <th className="row-head" data-r="sum">{unitScore && mode !== 'status' ? <>rating<span className="sum-sub">方差 (±SD)</span></> : unitScore ? 'rating' : '整体'}</th>
+              <th className="row-head" data-r="sum">{unitScore && mode !== 'status' ? <>天梯分<span className="sum-sub">±标准误</span></> : unitScore ? '天梯分' : '整体'}</th>
               {series.map((s, si) => {
                 const info = summary.get(s)
                 if (mode === 'status') {
@@ -339,14 +349,14 @@ const MatrixBody = memo(function MatrixBody({ series, summary, ratings, ratingSt
                       </td>
                     )
                   }
-                  const tip = 'IRT 能力天梯分 ' + fmtScore(ov.rating, decimal) + '（全体均值锚定 1000 分）'
+                  const tip = 'IRT 能力天梯分 ' + fmtScore(ov.rating, 5) + '（全体均值锚定 1000 分）'
                     + '\n参评 ' + (ov.problems ?? 0) + ' 题（同题比较 ' + ov.games + ' 次）· 基准胜率 ' + (ov.winShare === null ? '-' : (ov.winShare * 100).toFixed(1) + '%')
                     + '（平均掌握度 ' + (ov.avgMastery == null ? '-' : (ov.avgMastery * 100).toFixed(1) + '%') + '）'
-                    + (ratingStatus !== 'ready' || ov.lo === null || ov.hi === null ? '' : '\n估计方差 ' + fmtScore(ov.variance, decimal) + '（标准误 ±' + fmtScore(ov.sd, decimal) + '）\n95% 区间 ' + fmtScore(ov.lo, decimal) + ' ~ ' + fmtScore(ov.hi, decimal))
+                    + (ratingStatus !== 'ready' || ov.lo === null || ov.hi === null ? '' : '\n估计方差 ' + fmtScore(ov.variance, 5) + '（标准误 ±' + fmtScore(ov.sd, 5) + '）\n95% 区间 ' + fmtScore(ov.lo, 5) + ' ~ ' + fmtScore(ov.hi, 5))
                     + '\n' + ov.status
                   return (
                     <td key={s} className="mcell" data-r="sum" data-c={'c' + si} title={tip}>
-                      {fmtScore(ov.rating, decimal)}{(ov.lowSample ?? (ov.status.indexOf('样本少') === 0 || ov.status.indexOf('对局少') === 0)) ? <span className="lv">样本少</span> : null}<span className="sum-sub">{ratingStatus === 'ready' && ov.variance != null ? `${fmtDisp(ov.variance)} (±${fmtDisp(ov.sd)})` : ''}</span>
+                      {fmtScore(ov.rating, decimal)}{(ov.lowSample ?? (ov.status.indexOf('样本少') === 0 || ov.status.indexOf('对局少') === 0)) ? <span className="lv">样本少</span> : null}<span className="sum-sub">{ratingStatus === 'ready' && ov.sd != null ? `±${fmtDisp(ov.sd)}` : ''}</span>
                     </td>
                   )
                 }
@@ -443,7 +453,7 @@ const MatrixRow = memo(function MatrixRow({ p, rank, pi, series, grouped, mode, 
                     return (
                       <td
                         key={s} className={`mcell ${scoreTierClass(Math.round(c.value))}`} {...cellProps} {...cellKeyboard(p.pid, s)}
-                        title={`${s} · ${p.pid}\n思考等级 ${lv}（${c.n} 条记录 / ${c.rounds} 个有分数轮次）\n同题同模型共 ${c.total} 条记录，本格只取${active.best === 'level' ? '等级最高' : '分数最高'}的那批`}
+                        title={`${s} · ${p.pid}　${Number(c.value).toFixed(5)} 分\n思考等级 ${lv}（${c.n} 条记录 / ${c.rounds} 个有分数轮次）\n同题同模型共 ${c.total} 条记录，本格只取${active.best === 'level' ? '等级最高' : '分数最高'}的那批`}
                         onClick={() => onOpenDetail && onOpenDetail(p.pid, s)}
                       >{v}{showThinking && <span className="lv">{lv}</span>}</td>
                     )
@@ -455,7 +465,7 @@ const MatrixRow = memo(function MatrixRow({ p, rank, pi, series, grouped, mode, 
                   return (
                     <td
                       key={s} className={`mcell ${scoreTierClass(Math.round(info.avg))}`} {...cellProps} {...cellKeyboard(p.pid, s)}
-                      title={unitScore && mode !== 'final' ? `n=${info.n}（有效加权记录）` : `n=${info.n}（有分数轮次）`}
+                      title={`${s} · ${p.pid}　${Number(info.avg).toFixed(5)} 分\n` + (unitScore && mode !== 'final' ? `n=${info.n}（有效加权记录）` : `n=${info.n}（有分数轮次）`)}
                       onClick={() => onOpenDetail && onOpenDetail(p.pid, s)}
                     >{avg}</td>
                   )
