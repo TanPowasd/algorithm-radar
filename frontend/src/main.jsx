@@ -19,6 +19,7 @@ import './management.css'
 import './reading-ui.css'
 import './interaction-ui.css'
 import './refinement-ui.css'
+import './polish-ui.css'
 
 /* 首帧前就把主题/版心写到 <html> 上，避免明暗切换闪白 */
 try {

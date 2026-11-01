@@ -14,8 +14,8 @@ const FILTER_KEYS = ['keyword', 'series', 'difficulty', 'category', 'result', 't
 
 function diffClass(d) { return `d-${d ?? 0}` }
 
-/** 分数文案：v2（decimal）显示 5 位小数；老版保持原样 */
-const scoreText = (score, decimal) => (score === null || score === undefined ? '' : (decimal ? Number(score).toFixed(5) : String(score)))
+/** 分数文案：v2（decimal）按指定位数（true 兼容 5 位）；悬停提示始终给 5 位完整值；老版保持原样 */
+const scoreText = (score, decimal) => (score === null || score === undefined ? '' : (decimal ? Number(score).toFixed(typeof decimal === 'number' ? decimal : 5) : String(score)))
 const scoreTitle = (score, decimal) => (score === null || score === undefined ? '无分' : (decimal ? Number(score).toFixed(5) : String(score)))
 
 export default function RecordsTable({ onOpenDetail, onEdit, isAdmin, blankEmpty = false, defaultExpanded = false, decimal = false }) {

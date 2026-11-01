@@ -8,7 +8,7 @@ import { AppContext, useApp } from '../state'
 import { toV2Dataset } from '../v2data'
 import { useUrlState } from '../hooks/useUrlState'
 import { useHotkeys } from '../hooks/useHotkeys'
-import { DEFAULT_UI_PREFERENCES } from '../uiPreferences'
+import { DEFAULT_UI_PREFERENCES, scoreDigits } from '../uiPreferences'
 import PageHeading from '../components/PageHeading'
 import MotionRegion from '../components/MotionRegion'
 
@@ -21,13 +21,14 @@ const ProblemDrawer = lazy(() => import('../components/ProblemDrawer'))
 const RecordFormModal = lazy(() => import('../components/RecordFormModal'))
 const PublishModal = lazy(() => import('../components/PublishModal'))
 const ImportModal = lazy(() => import('../components/ImportModal'))
-const TABS = [{ key: 'score', label: 'AI 分数' }, { key: 'rating', label: 'rating' },
+const TABS = [{ key: 'score', label: 'AI 分数' }, { key: 'rating', label: '天梯分' },
   { key: 'table', label: '测评明细' }]
 
 export default function K4uV2Page() {
   const app = useApp()
   const url = useUrlState()
-  const features = (app.uiPreferences || DEFAULT_UI_PREFERENCES).features
+  const prefs = app.uiPreferences || DEFAULT_UI_PREFERENCES
+  const features = prefs.features
   const visibleTabs = TABS.filter((tab) => tab.key !== 'table' || features.records)
   const requested = url.get('v', 'rating')
   const view = visibleTabs.some((tab) => tab.key === requested) ? requested : 'rating'
@@ -139,10 +140,10 @@ export default function K4uV2Page() {
               : <Suspense fallback={<div className="empty" role="status">加载中...</div>}>
                 {(view === 'score' || view === 'rating') && <MatrixView key={view}
                   onOpenDetail={openDetail} onQuickAdd={app.isContributor ? openForm : undefined}
-                  canSubmit={app.isContributor} decimal={view === 'score' ? 2 : 5} blankEmpty onlyWithScore
+                  canSubmit={app.isContributor} decimal={scoreDigits(prefs, view === 'score' ? 2 : 5)} blankEmpty onlyWithScore
                   unitScore={view === 'rating'} rawScores={view === 'score'} compactHeader toolbarExtra={filters} />}
                 {view === 'table' && <RecordsTable onOpenDetail={openDetail} onEdit={editRecord}
-                  isAdmin={app.isAdmin} blankEmpty defaultExpanded decimal />}
+                  isAdmin={app.isAdmin} blankEmpty defaultExpanded decimal={scoreDigits(prefs, 5)} />}
               </Suspense>}
           </MotionRegion>
         </AppContext.Provider>
@@ -152,7 +153,7 @@ export default function K4uV2Page() {
         {drawer && <AppContext.Provider value={{ ...app, data: drawer.raw ? source : dataset }}>
           <ProblemDrawer pid={drawer.pid} highlightModel={drawer.model} onClose={() => setDrawer(null)}
             onSubmitClick={app.isContributor ? () => openForm(drawer.pid) : undefined}
-            onEditRecord={editRecord} blankEmpty decimal={drawer.raw ? 2 : 5} />
+            onEditRecord={editRecord} blankEmpty decimal={scoreDigits(prefs, drawer.raw ? 2 : 5)} />
         </AppContext.Provider>}
         {formState && <RecordFormModal perfFields editRecord={formState.edit} lockPid={formState.lockPid} onClose={() => setFormState(null)} />}
         {publishOpen && <PublishModal onClose={() => setPublishOpen(false)} />}

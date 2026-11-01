@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { useApp } from '../state'
+import { RotateCcw, ChevronLeft, ChevronRight, Play, Pause, SkipForward, Flag, CalendarDays } from 'lucide-react'
 import {
   filterByModels, filterByContributor, isApproved, seriesColorMap, THINKING_LABELS,
 } from '../aggregate'
@@ -112,15 +113,15 @@ export default function RollBoardView({ onOpenDetail }) {
       </div>
 
       <div className="roll-controls">
-        <button className="btn small" onClick={restart} title="从 0 开始回放">⏮ 重播</button>
-        <button className="btn small" disabled={k === 0} onClick={() => setK((v) => Math.max(0, v - 1))} title="上一笔（←）">◀</button>
+        <button className="btn small" onClick={restart} title="从 0 开始回放"><RotateCcw size={15} aria-hidden="true" />重播</button>
+        <button className="btn small" disabled={k === 0} onClick={() => setK((v) => Math.max(0, v - 1))} title="上一笔（←）" aria-label="上一笔"><ChevronLeft size={16} aria-hidden="true" /></button>
         <button className="btn small primary" onClick={() => setPlaying((p) => !p)} title="播放/暂停（空格）">
-          {playing ? '❚❚ 暂停' : '▶ 播放'}
+          {playing ? <><Pause size={15} aria-hidden="true" />暂停</> : <><Play size={15} aria-hidden="true" />播放</>}
         </button>
-        <button className="btn small" disabled={k >= total} onClick={() => setK((v) => Math.min(total, v + 1))} title="下一笔（→）">▶</button>
-        <button className="btn small ghost" onClick={() => setK(total)} title="直接跳到终盘">⏭ 终盘</button>
-        <button className="btn small ghost" onClick={jumpAc} title="跳到下一次解题（J）">⚑ 下一个 AC</button>
-        <button className="btn small ghost" onClick={jumpDay} title="按测评日期批量推进（D）">📅 推进一天</button>
+        <button className="btn small" disabled={k >= total} onClick={() => setK((v) => Math.min(total, v + 1))} title="下一笔（→）" aria-label="下一笔"><ChevronRight size={16} aria-hidden="true" /></button>
+        <button className="btn small ghost" onClick={() => setK(total)} title="直接跳到终盘"><SkipForward size={15} aria-hidden="true" />终盘</button>
+        <button className="btn small ghost" onClick={jumpAc} title="跳到下一次解题（J）"><Flag size={15} aria-hidden="true" />下一个 AC</button>
+        <button className="btn small ghost" onClick={jumpDay} title="按测评日期批量推进（D）"><CalendarDays size={15} aria-hidden="true" />推进一天</button>
         <div className="seg" role="group" aria-label="倍速">
           {SPEEDS.map((s) => (
             <button key={s} className={speed === s ? 'active' : ''} onClick={() => setSpeed(s)}>{s}×</button>

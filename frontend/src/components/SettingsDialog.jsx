@@ -59,6 +59,9 @@ export default function SettingsDialog({ onClose, hud }) {
             <label className="settings-row"><span>内容宽度<small>矩阵的横向滚动保留在表格内部</small></span>
               <select value={widthMode} onChange={(event) => {setWidthMode(event.target.value); setRestored(false)}}><option value="full">全宽</option><option value="narrow">居中</option></select>
             </label>
+            <label className="settings-row"><span>数值精度<small>精简显示 1 位小数，悬停单元格仍可看到完整数值</small></span>
+              <select value={uiPreferences.precision || 'compact'} onChange={(event) => changePreferences({precision: event.target.value})}><option value="compact">精简 · 1 位小数</option><option value="full">完整 · 2～5 位小数</option></select>
+            </label>
             <label className="settings-row"><span>切换动画<small>页面与视图轻柔过渡，跟随系统的动态效果偏好</small></span>
               <select value={uiPreferences.motion || 'system'} onChange={(event) => changePreferences({motion: event.target.value})}><option value="system">跟随系统</option><option value="off">关闭动画</option></select>
             </label>
